@@ -31,6 +31,7 @@ CONFIRM_SCHEMA = {"type": "object", "properties": {"matches": {"type": "array", 
 class SearchQuery:
     text: str | None = None
     photo: bytes | None = None
+    person_id: str | None = None  # an enrolled person, who consented when enrolled
     consent: bool = False
     camera_id: str | None = None
     since: float | None = None
@@ -109,9 +110,12 @@ def _hit(e, blobs, score: float, method: str, confirmed: bool = False) -> Search
                      e.id, e.track_id, e.cls)
 
 
-def _faces(q: SearchQuery, rows, blobs, faces: FaceIndex, image) -> list[SearchHit]:
+def _faces(rows, blobs, faces: FaceIndex, image=None, person_id: str | None = None) -> list[SearchHit]:
     probe = type(faces)(cfg=faces.cfg, settings=faces.settings)
-    probe.enroll("query", "photo", image, consent=True)
+    if person_id:
+        probe.load([e for e in faces.people() if e.person_id == person_id])
+    else:
+        probe.enroll("query", "photo", image, consent=True)
     hits = []
     for e in rows:
         if e.kind != "track_end" or e.cls != "person" or not e.keyframe_key:
@@ -154,8 +158,15 @@ def _confirm(hits: list[SearchHit], caption: str, blobs, llm: LLM, keys: dict[st
 
 def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces: FaceIndex | None = None,
            cfg: SignalTuning = SignalTuning(), now: float | None = None, tz: str = "Asia/Kolkata") -> SearchResult:
-    if q.text is None and q.photo is None:
-        raise ValueError("search with words or a photo")
+    if q.text is None and q.photo is None and q.person_id is None:
+        raise ValueError("search with words, a photo or an enrolled person")
+    if q.person_id is not None:
+        if faces is None or not any(e.person_id == q.person_id for e in faces.people()):
+            raise ValueError("that person is not enrolled")
+        rows = repo.query_events(camera_id=q.camera_id, kinds=["track_end"], cls="person", since=q.since,
+                                 until=q.until, limit=20000)
+        query = {"person_id": q.person_id, "camera_id": q.camera_id, "since": q.since, "until": q.until}
+        return SearchResult(query, _faces(rows, blobs, faces, person_id=q.person_id)[:cfg.search_top_n * 2])
     now = time.time() if now is None else now
     image = _decode(q.photo) if q.photo is not None else None
     if q.photo is not None and image is None:
@@ -167,7 +178,7 @@ def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces:
         query = {"photo": "face", "camera_id": q.camera_id, "since": q.since, "until": q.until, "classes": ["person"]}
         rows = repo.query_events(camera_id=q.camera_id, kinds=["track_end"], cls="person", since=q.since,
                                  until=q.until, limit=20000)
-        return SearchResult(query, _faces(q, rows, blobs, faces, image)[:cfg.search_top_n * 2])
+        return SearchResult(query, _faces(rows, blobs, faces, image)[:cfg.search_top_n * 2])
 
     if image is not None:
         query = {"photo": "appearance", "looks_like": q.text, "not_like": None, "camera_id": q.camera_id,
@@ -206,8 +217,11 @@ def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces:
             scored.append((s, e))
     scored.sort(key=lambda x: -x[0])
     problem = None
+    unindexed = sum(1 for e in rows if e.embedding is None) - (cfg.search_embed_on_demand - budget[0])
+    if unindexed > 0:
+        problem = f"Still indexing {unindexed} recent moments, so some may be missing. Try again in a minute."
     if not scored and closest:
-        problem = "No sure matches. These are the closest moments."
+        problem = " ".join(x for x in ["No sure matches. These are the closest moments.", problem] if x)
         scored = sorted(closest, key=lambda x: -x[0])[:6]
 
     hits, seen_tracks, kept_scenes = [], set(), []

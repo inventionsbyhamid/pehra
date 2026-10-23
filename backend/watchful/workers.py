@@ -346,6 +346,7 @@ class WorkerManager:
                     h.status.fps, h.status.stats = msg["fps"], msg["stats"]
                     if msg.get("stopped"):
                         h.status.running = False
+                self._publish(msg["camera_id"], msg)
             elif kind == "candidate":
                 self._on_candidate(msg["pack"])
 

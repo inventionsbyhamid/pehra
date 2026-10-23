@@ -106,7 +106,7 @@ class SignalTuning(_Section):
     zone_embed_every_s: float = 3.0
     search_top_n: int = 12  # best matches the AI double checks
     search_dedupe_s: float = 10.0  # scene matches closer than this on one camera count once
-    search_embed_on_demand: int = 200  # unindexed matches embedded during a search, at most
+    search_embed_on_demand: int = 24  # unindexed moments embedded during a search; the rest wait for the indexer
 
 
 class PerceiveTuning(_Section):

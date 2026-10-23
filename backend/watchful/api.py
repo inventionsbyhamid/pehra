@@ -444,13 +444,13 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
                             consent=str(form.get("consent", "")).lower() == "true")
         else:
             data = await request.json()
-            q = SearchQuery(text=data.get("text"), camera_id=data.get("camera_id"), since=data.get("since"),
-                            until=data.get("until"), classes=data.get("classes") or [])
-        if q.text is None and q.photo is None:
+            q = SearchQuery(text=data.get("text"), person_id=data.get("person_id"), camera_id=data.get("camera_id"),
+                            since=data.get("since"), until=data.get("until"), classes=data.get("classes") or [])
+        if q.text is None and q.photo is None and q.person_id is None:
             raise HTTPException(400, "Type what to look for, or add a photo.")
         try:
             r = await run_in_threadpool(search, q, w.repo, w.blobs, w.embedder, w.search_llm,
-                                        w.faces if q.photo is not None else None, w.tuning.signals, None,
+                                        w.faces if q.photo is not None or q.person_id else None, w.tuning.signals, None,
                                         w.settings.timezone)
         except ConsentRequired:
             raise HTTPException(400, "Searching with a photo of a person needs their consent.")

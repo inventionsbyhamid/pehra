@@ -109,3 +109,23 @@ def test_photo_finds_the_same_face(world):
     photo = jpg(cv2.imread(str(sample_path("basketball1.png"))))
     r = search(SearchQuery(photo=photo, consent=True), repo, blobs, Stub(), faces=FaceIndex())
     assert [(x.track_id, x.method) for x in r.results] == [(9, "face")]
+
+
+def test_enrolled_person_search(world):
+    repo, blobs = world
+    player = cv2.imread(str(sample_path("basketball2.png")))[60:300, 30:150]
+    blobs.put("p.jpg", jpg(player), "image/jpeg")
+    repo.add_events([ev("track_end", 500, None, tid=9, cls="person", key="p.jpg"),
+                     ev("track_end", 600, None, tid=10, cls="person")])
+    faces = FaceIndex()
+    faces.enroll("per_1", "Player", cv2.imread(str(sample_path("basketball1.png"))), consent=True)
+    r = search(SearchQuery(person_id="per_1"), repo, blobs, Stub(), faces=faces)
+    assert [(x.track_id, x.method) for x in r.results] == [(9, "face")]
+
+
+def test_unindexed_moments_are_reported_not_waited_for(world):
+    from watchful.tuning import SignalTuning
+    repo, blobs = world
+    repo.add_events([ev("scene", 100 + i * 20, None) for i in range(5)])
+    r = search(SearchQuery(text="a red car"), repo, blobs, Stub(), cfg=SignalTuning(search_embed_on_demand=2))
+    assert "still indexing 3" in (r.problem or "").lower()
