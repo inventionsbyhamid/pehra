@@ -1,6 +1,9 @@
 import numpy as np
 
-from watchful.vision.appearance import SAME_THRESHOLD, TrackSighting, link_tracks, same_person, signature
+from watchful.tuning import AppearanceTuning
+from watchful.vision.appearance import TrackSighting, link_tracks, same_person, signature
+
+SAME_THRESHOLD = AppearanceTuning().same
 
 BOX = (20.0, 10.0, 60.0, 160.0)
 

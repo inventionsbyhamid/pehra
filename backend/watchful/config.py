@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     models_dir: Path = Path("models")
     analysis_fps: float = 5.0
     analysis_width: int = 960
+    tuning_file: Path | None = None
     detector: Literal["yolox_tiny", "yolox_s"] = "yolox_tiny"
     dnn_engine: Literal["auto", "new", "classic"] = "auto"
     night_mode: Literal["auto", "on", "off"] = "auto"

@@ -7,10 +7,10 @@ import cv2
 import numpy as np
 
 from watchful.config import Settings
+from watchful.tuning import PoseTuning
 from watchful.vision.models import load_net
 
-INPUT = 256
-ENLARGE = 1.25
+INPUT = 256  # the model's input size
 L_SHOULDER, R_SHOULDER, L_HIP, R_HIP = 11, 12, 23, 24
 L_WRIST, R_WRIST, NOSE = 15, 16, 0
 
@@ -34,10 +34,10 @@ def torso_signals(lm: np.ndarray) -> tuple[float, float, float]:
 
 
 class PoseEstimator:
-    def __init__(self, conf: float = 0.5, settings: Settings | None = None):
+    def __init__(self, cfg: PoseTuning = PoseTuning(), settings: Settings | None = None):
         self.net = load_net("pose", settings)
         self.names = self.net.getUnconnectedOutLayersNames()
-        self.conf = conf
+        self.cfg = cfg
 
     def _run(self, image: np.ndarray, center: tuple[float, float], side: float, angle: float):
         m = cv2.getRotationMatrix2D(center, angle, INPUT / side)
@@ -58,10 +58,10 @@ class PoseEstimator:
     def estimate(self, image: np.ndarray, box) -> PoseResult | None:
         x, y, w, h = box
         center = (x + w / 2, y + h / 2)
-        side = max(w, h) * ENLARGE
+        side = max(w, h) * self.cfg.enlarge
         angles = (90.0, -90.0) if w > h else (0.0,)
         conf, lm = max((self._run(image, center, side, a) for a in angles), key=lambda r: r[0])
-        if conf < self.conf:
+        if conf < self.cfg.conf:
             return None
         angle, hip_y, body_height = torso_signals(lm)
         return PoseResult(lm, angle, hip_y, body_height, conf)

@@ -3,16 +3,15 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-SAME_THRESHOLD = 0.35
-CONTINUITY_S = 600.0
+from watchful.tuning import AppearanceTuning
 
 
-def signature(image: np.ndarray, box) -> np.ndarray:
-    """Hue and saturation histogram of the torso: rows 20% to 60% of the box, middle 60% of its width."""
+def signature(image: np.ndarray, box, cfg: AppearanceTuning = AppearanceTuning()) -> np.ndarray:
+    """Hue and saturation histogram of the torso region of a person box."""
     x, y, w, h = box
     H, W = image.shape[:2]
-    x0, x1 = int(max(0, x + 0.2 * w)), int(min(W, x + 0.8 * w))
-    y0, y1 = int(max(0, y + 0.2 * h)), int(min(H, y + 0.6 * h))
+    x0, x1 = int(max(0, x + cfg.torso_side * w)), int(min(W, x + (1 - cfg.torso_side) * w))
+    y0, y1 = int(max(0, y + cfg.torso_top * h)), int(min(H, y + cfg.torso_bottom * h))
     if x1 <= x0 or y1 <= y0:
         return np.zeros((30, 32), np.float32)
     hsv = cv2.cvtColor(image[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
@@ -76,7 +75,7 @@ def _new(s: TrackSighting) -> PersonGroup:
                        person_id=s.person_id, members=[s])
 
 
-def link_tracks(items: list[TrackSighting]) -> list[PersonGroup]:
+def link_tracks(items: list[TrackSighting], cfg: AppearanceTuning = AppearanceTuning()) -> list[PersonGroup]:
     """Group a day's person tracks: face matches first, then clothing and time."""
     items = sorted(items, key=lambda s: s.first_ts)
     groups: list[PersonGroup] = []
@@ -91,9 +90,9 @@ def link_tracks(items: list[TrackSighting]) -> list[PersonGroup]:
     for s in items:
         if s.person_id:
             continue
-        best, best_d = None, SAME_THRESHOLD
+        best, best_d = None, cfg.same
         for g in groups:
-            if _overlaps(s, g) or (g.person_id and _gap(s, g) > CONTINUITY_S):
+            if _overlaps(s, g) or (g.person_id and _gap(s, g) > cfg.continuity_s):
                 continue
             d = _distance(s, g)
             if d < best_d:
@@ -106,7 +105,7 @@ def link_tracks(items: list[TrackSighting]) -> list[PersonGroup]:
         for b in groups[i + 1:]:
             if a.person_id and b.person_id:
                 continue
-            if min(_distance(m, b) for m in a.members) < SAME_THRESHOLD:
+            if min(_distance(m, b) for m in a.members) < cfg.same:
                 a.ambiguous = b.ambiguous = True
     for g in groups:
         order = sorted(range(len(g.members)), key=lambda i: g.members[i].first_ts)

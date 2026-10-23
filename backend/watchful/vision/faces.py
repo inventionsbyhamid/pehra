@@ -5,9 +5,8 @@ import cv2
 import numpy as np
 
 from watchful.config import Settings
+from watchful.tuning import FaceTuning
 from watchful.vision.models import model_path
-
-FACE_REGION = 0.4  # faces are looked for in the top 40% of a person box
 
 
 class ConsentRequired(Exception):
@@ -37,9 +36,11 @@ class FaceMatch:
 class FaceIndex:
     """YuNet finds faces, SFace compares them with people the owner enrolled with consent."""
 
-    def __init__(self, threshold_cosine: float = 0.363, settings: Settings | None = None):
-        self.threshold = threshold_cosine
-        self.detector = cv2.FaceDetectorYN.create(str(model_path("yunet", settings)), "", (320, 320), 0.7)
+    def __init__(self, cfg: FaceTuning = FaceTuning(), settings: Settings | None = None):
+        self.cfg = cfg
+        self.threshold = cfg.cosine
+        self.detector = cv2.FaceDetectorYN.create(str(model_path("yunet", settings)), "", (320, 320),
+                                                  cfg.detect_score)
         self.recognizer = cv2.FaceRecognizerSF.create(str(model_path("sface", settings)), "")
         self._people: dict[str, Enrollment] = {}
 
@@ -81,7 +82,7 @@ class FaceIndex:
         x, y, w, h = box
         H, W = image.shape[:2]
         x0, y0 = int(max(0, x)), int(max(0, y))
-        x1, y1 = int(min(W, x + w)), int(min(H, y + FACE_REGION * h))
+        x1, y1 = int(min(W, x + w)), int(min(H, y + self.cfg.region * h))
         if x1 - x0 < 10 or y1 - y0 < 10:
             return None
         crop = image[y0:y1, x0:x1]

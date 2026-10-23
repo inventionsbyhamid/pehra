@@ -3,10 +3,10 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from watchful.tuning import TrackTuning
 from watchful.vision.detect import Detection
 
 Box = tuple[float, float, float, float]
-HIGH_SCORE = 0.5
 
 
 def iou(a: Box, b: Box) -> float:
@@ -95,17 +95,18 @@ def _greedy(tracks: list[Track], preds: dict[int, Box], dets: list[Detection], t
 class Tracker:
     """Kalman plus IoU tracking by detection, two passes like ByteTrack."""
 
-    def __init__(self, iou_threshold: float = 0.3, max_age_s: float = 2.0, min_hits: int = 2):
-        self.iou_threshold = iou_threshold
-        self.max_age_s = max_age_s
-        self.min_hits = min_hits
+    def __init__(self, cfg: TrackTuning = TrackTuning()):
+        self.cfg = cfg
+        self.iou_threshold = cfg.iou
+        self.max_age_s = cfg.max_age_s
+        self.min_hits = cfg.min_hits
         self.tracks: list[Track] = []
         self._next_id = 1
 
     def update(self, dets: list[Detection], ts: float) -> TrackUpdate:
         preds = {t.id: t.predict(ts) for t in self.tracks}
-        high = [d for d in dets if d.score >= HIGH_SCORE]
-        low = [d for d in dets if d.score < HIGH_SCORE]
+        high = [d for d in dets if d.score >= self.cfg.high_score]
+        low = [d for d in dets if d.score < self.cfg.high_score]
         matches, rest, new_dets = _greedy(self.tracks, preds, high, self.iou_threshold)
         low_matches, rest, _ = _greedy(rest, preds, low, self.iou_threshold)
 

@@ -1,27 +1,16 @@
 # YOLOX pre and post processing adapted from the OpenCV Model Zoo demo (object_detection_yolox)
 # and YOLOX demo/ONNXRuntime/onnx_inference.py, both Apache 2.0.
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import numpy as np
 
 from watchful.config import Settings
+from watchful.tuning import DetectTuning
 from watchful.vision.models import load_net
 
-COCO = [
-    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
-    "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog",
-    "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
-    "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite",
-    "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle",
-    "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
-    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant",
-    "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
-    "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors",
-    "teddy bear", "hair drier", "toothbrush",
-]
-WATCH_CLASSES = {"person", "bicycle", "car", "motorcycle", "bus", "truck", "backpack", "handbag",
-                 "suitcase", "dog", "cat"}
+COCO = (Path(__file__).resolve().parents[1] / "data" / "coco80.txt").read_text().split("\n")[:80]
 
 # input size and channel order per model, as each source's own demo feeds it
 MODEL_INPUT = {"yolox_tiny": (416, False), "yolox_s": (640, True)}
@@ -46,13 +35,18 @@ def _grids(size: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 class Detector:
-    def __init__(self, model: str = "yolox_tiny", conf: float = 0.4, nms: float = 0.45,
-                 classes: set[str] = WATCH_CLASSES, settings: Settings | None = None):
+    def __init__(self, model: str = "yolox_tiny", classes: set[str] | None = None,
+                 cfg: DetectTuning = DetectTuning(), settings: Settings | None = None):
         self.size, self.rgb = MODEL_INPUT[model]
         self.net = load_net(model, settings)
-        self.conf, self.nms = conf, nms
-        self.class_ids = np.array([i for i, c in enumerate(COCO) if c in classes], dtype=np.int64)
+        self.conf, self.nms = cfg.conf, cfg.nms
+        self.set_classes(classes)
         self.grids, self.strides = _grids(self.size)
+
+    def set_classes(self, classes: set[str] | None) -> None:
+        """None means all 80 classes."""
+        ids = [i for i, c in enumerate(COCO) if classes is None or c in classes]
+        self.class_ids = np.array(ids, dtype=np.int64)
 
     def detect(self, image: np.ndarray) -> list[Detection]:
         if len(self.class_ids) == 0:

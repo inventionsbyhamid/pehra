@@ -1,4 +1,5 @@
 from watchful.vision.detect import Detection
+from watchful.tuning import TrackTuning
 from watchful.vision.track import Tracker
 
 DT = 0.2
@@ -34,7 +35,7 @@ def test_two_tracks_cross_keep_ids():
 
 
 def test_track_ends_after_gap():
-    tr = Tracker(max_age_s=2.0)
+    tr = Tracker(TrackTuning(max_age_s=2.0))
     for i in range(5):
         tr.update([det(100, 100)], ts=i * DT)
     ended = []
@@ -44,7 +45,7 @@ def test_track_ends_after_gap():
 
 
 def test_short_blip_never_starts():
-    tr = Tracker(min_hits=2)
+    tr = Tracker(TrackTuning(min_hits=2))
     started = tr.update([det(100, 100)], ts=0).started
     for i in range(1, 15):
         up = tr.update([], ts=i * DT)

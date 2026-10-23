@@ -1,0 +1,16 @@
+{
+  "people": ["person"],
+  "someone": ["person"],
+  "anyone": ["person"],
+  "vehicle": ["car", "truck", "bus", "motorcycle", "bicycle"],
+  "vehicles": ["car", "truck", "bus", "motorcycle", "bicycle"],
+  "bike": ["bicycle", "motorcycle"],
+  "scooter": ["motorcycle"],
+  "van": ["truck", "car"],
+  "bag": ["backpack", "handbag", "suitcase"],
+  "luggage": ["suitcase", "backpack"],
+  "package": ["suitcase", "backpack", "handbag"],
+  "animal": ["dog", "cat", "bird", "horse", "sheep", "cow"],
+  "pet": ["dog", "cat"],
+  "phone": ["cell phone"]
+}

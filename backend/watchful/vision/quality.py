@@ -1,8 +1,7 @@
 import cv2
 import numpy as np
 
-DARK_V = 60
-_clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+from watchful.tuning import QualityTuning
 
 
 def sharpness(image: np.ndarray) -> float:
@@ -10,13 +9,14 @@ def sharpness(image: np.ndarray) -> float:
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
-def is_dark(image: np.ndarray) -> bool:
-    return float(cv2.cvtColor(image, cv2.COLOR_BGR2HSV)[..., 2].mean()) < DARK_V
+def is_dark(image: np.ndarray, cfg: QualityTuning = QualityTuning()) -> bool:
+    return float(cv2.cvtColor(image, cv2.COLOR_BGR2HSV)[..., 2].mean()) < cfg.dark_v
 
 
-def brighten(image: np.ndarray) -> np.ndarray:
+def brighten(image: np.ndarray, cfg: QualityTuning = QualityTuning()) -> np.ndarray:
+    clahe = cv2.createCLAHE(clipLimit=cfg.clahe_clip, tileGridSize=(cfg.clahe_tiles, cfg.clahe_tiles))
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    lab[..., 0] = _clahe.apply(lab[..., 0])
+    lab[..., 0] = clahe.apply(lab[..., 0])
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
 

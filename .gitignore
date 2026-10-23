@@ -1,5 +1,5 @@
 .env*
-data/
+/data/
 models/*.onnx
 models/*/
 node_modules/
