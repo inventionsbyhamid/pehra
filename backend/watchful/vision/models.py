@@ -58,5 +58,9 @@ def sample_path(name: str, settings: Settings | None = None) -> Path:
     return base / "samples" / name
 
 
+ENGINES = {"auto": cv2.dnn.ENGINE_AUTO, "new": cv2.dnn.ENGINE_NEW, "classic": cv2.dnn.ENGINE_CLASSIC}
+
+
 def load_net(name: str, settings: Settings | None = None) -> cv2.dnn.Net:
-    return cv2.dnn.readNetFromONNX(str(model_path(name, settings)), cv2.dnn.ENGINE_AUTO)
+    engine = ENGINES[settings.dnn_engine if settings else "auto"]
+    return cv2.dnn.readNetFromONNX(str(model_path(name, settings)), engine)

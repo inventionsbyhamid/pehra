@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     analysis_fps: float = 5.0
     analysis_width: int = 960
     detector: Literal["yolox_tiny", "yolox_s"] = "yolox_tiny"
+    dnn_engine: Literal["auto", "new", "classic"] = "auto"
     night_mode: Literal["auto", "on", "off"] = "auto"
     embedder: Literal["embeddinggemma2", "siglip2"] = "siglip2"
 
