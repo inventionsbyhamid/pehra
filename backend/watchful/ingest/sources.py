@@ -16,6 +16,7 @@ class Frame:
     image: np.ndarray
     ts: float
     index: int
+    pos: float | None = None  # position in the source file, for files and demo loops
 
 
 class FrameSource(Protocol):
@@ -85,7 +86,7 @@ class FileSource:
                 if wait > 0:
                     time.sleep(wait)
             self._index += 1
-            return Frame(fit_width(image, self.width), self.start_epoch + clock, self._index)
+            return Frame(fit_width(image, self.width), self.start_epoch + clock, self._index, t)
 
     def close(self) -> None:
         self.cap.release()

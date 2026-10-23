@@ -1,0 +1,44 @@
+{
+  "enters": {
+    "description": "Something comes into a zone",
+    "defaults": {"classes": ["person"]},
+    "watch": {"name": "Enters $zone", "subject": {"classes": "$classes"},
+              "conditions": [{"signal": "entered", "zones": ["$zone"]}],
+              "verify": "Is it really coming into the $zone?"}
+  },
+  "leaves": {
+    "description": "Something leaves a zone",
+    "defaults": {"classes": ["person"]},
+    "watch": {"name": "Leaves $zone", "subject": {"classes": "$classes"},
+              "conditions": [{"signal": "exited", "zones": ["$zone"]}],
+              "verify": "Is it really leaving the $zone?"}
+  },
+  "stays_too_long": {
+    "description": "Someone stays in a zone longer than a number of seconds",
+    "defaults": {"classes": ["person"], "value": 60},
+    "watch": {"name": "Stays in $zone", "subject": {"classes": "$classes"},
+              "conditions": [{"signal": "dwell_s", "zones": ["$zone"], "op": ">=", "value": "$value"}],
+              "severity": "warning", "verify": "Is someone still in the $zone?"}
+  },
+  "too_many": {
+    "description": "More than a number of things in a zone at once",
+    "defaults": {"classes": ["person"], "value": 5},
+    "watch": {"name": "Too many in $zone", "subject": {"classes": "$classes"},
+              "conditions": [{"signal": "count", "zones": ["$zone"], "op": ">=", "value": "$value"}],
+              "severity": "warning", "verify": "Are there really that many in the $zone?"}
+  },
+  "fall": {
+    "description": "A person falls and stays down",
+    "defaults": {},
+    "watch": {"name": "Fall", "subject": {"classes": ["person"]},
+              "conditions": [{"signal": "posture", "op": "is", "value": "fallen"}],
+              "severity": "critical", "verify": "Has this person fallen and not got up?"}
+  },
+  "about_to_fall": {
+    "description": "A person loses balance and starts to fall",
+    "defaults": {},
+    "watch": {"name": "About to fall", "subject": {"classes": ["person"]},
+              "conditions": [{"signal": "posture", "op": "is", "value": "falling"}],
+              "severity": "warning", "verify": "Is this person losing balance or falling?"}
+  }
+}

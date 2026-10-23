@@ -37,6 +37,7 @@ class Tick:
     tracks: list[TrackState]
     events: list[EventRow]
     ended: list[TrackState] = field(default_factory=list)
+    pos: float | None = None
 
 
 @dataclass
@@ -98,7 +99,7 @@ class Reasoner:
         if p.tamper:
             events.append(EventRow(None, self.camera.id, p.ts, f"tamper_{p.tamper.kind}", None, None, None,
                                    {"detail": p.tamper.detail}, None, None, None, None))
-        return Tick(p.ts, p.size, p.moving, active, events, ended)
+        return Tick(p.ts, p.size, p.moving, active, events, ended, p.pos)
 
     @staticmethod
     def _apply(s: TrackState, o: Observation) -> None:

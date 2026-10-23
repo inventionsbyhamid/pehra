@@ -52,6 +52,7 @@ class Perception:
     moving: bool
     observations: list[Observation]
     tamper: TamperEvent | None = None
+    pos: float | None = None
 
 
 @dataclass
@@ -131,7 +132,7 @@ class Perceiver:
             self.counts["frames_skipped"] += 1
         self.counts["ms_total"] += (time.perf_counter() - start) * 1000
         h, w = image.shape[:2]
-        return Perception(ts, (w, h), motion.moving, observations, tamper)
+        return Perception(ts, (w, h), motion.moving, observations, tamper, frame.pos)
 
     def _observe(self, image: np.ndarray, t: Track, ts: float, started: bool) -> Observation:
         m = self.memo.setdefault(t.id, _TrackMemo())
