@@ -1,9 +1,12 @@
 import hashlib
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from watchful.rules.signals import REGISTRY, SignalContext, SignalValue, Sighting, TrackHistory
 from watchful.rules.watch import Condition, Watch
 from watchful.tuning import Tuning
+from watchful.vision.appearance import same_person
 from watchful.vision.detect import COCO
 from watchful.vision.perceive import Needs
 from watchful.vision.reason import Tick, TrackState
@@ -103,7 +106,8 @@ class RuleEngine:
                 continue
             subjects = [s for s in tick.tracks if self._matches(w, s, now, tick)]
             ctx = SignalContext(camera_id, self.zones, tick, self.tuning.signals, self.history, self.sightings,
-                                subjects, self.embedder, image, self.state.setdefault(wid, {}))
+                                subjects, self.embedder, image, self.state.setdefault(wid, {}),
+                                self.tuning.appearance.same)
             scene = [(c, REGISTRY[c.signal].fn(ctx, c, None)) for c in w.conditions
                      if REGISTRY[c.signal].level == "scene"]
             per_track = [c for c in w.conditions if REGISTRY[c.signal].level == "track"]
@@ -135,8 +139,45 @@ class RuleEngine:
                 return False
         return self._appearance_matches(w, s, now)
 
+    def _text_vector(self, sub):
+        if sub.looks_like_embedding:
+            return np.asarray(sub.looks_like_embedding, np.float32)
+        if self.embedder is None:
+            return None
+        cache = self.state.setdefault("_texts", {})
+        if sub.looks_like not in cache:
+            cache[sub.looks_like] = self.embedder.text(sub.looks_like)
+        return cache[sub.looks_like]
+
     def _appearance_matches(self, w: Watch, s: TrackState, now: float) -> bool:
-        return not (w.subject.looks_like or w.subject.same_as)
+        sub, cfg = w.subject, self.tuning.signals
+        if sub.looks_like:
+            q = self._text_vector(sub)
+            if q is None or s.embedding is None or float(np.dot(s.embedding, q)) < cfg.looks_like_threshold:
+                return False
+        if sub.same_as:
+            target = sub.same_as
+            if target.expires_at and now > target.expires_at:
+                return False
+            if target.embedding is not None and s.embedding is not None:
+                if float(np.dot(np.asarray(target.embedding, np.float32), s.embedding)) < cfg.same_as_threshold:
+                    return False
+            elif target.signature is not None and s.signature is not None:
+                if same_person(target.signature, s.signature) >= self.tuning.appearance.same:
+                    return False
+            else:
+                return False
+        return True
+
+    @staticmethod
+    def _method(w: Watch) -> str | None:
+        if w.subject.who not in ("anyone", "unknown", "known"):
+            return "face"
+        if w.subject.same_as:
+            return "appearance"
+        if w.subject.looks_like:
+            return "description"
+        return None
 
     @staticmethod
     def _combine(w: Watch, values: list[tuple[Condition, SignalValue]]) -> _Result:
@@ -167,8 +208,12 @@ class RuleEngine:
         else:
             basis = f"{camera_id}|{wid}|{int(tick.ts // max(w.cooldown_s, 1))}"
         keys = [k for k in ([s.best_key or s.keyframe_key] if s else []) if k]
-        return Candidate(wid, camera_id, tick.ts, s.track_id if s else None, w.severity,
-                         {"signals": r.signals, "reasons": r.reasons, "score": r.score}, keys,
+        if w.subject.same_as and w.subject.same_as.crop_key:
+            keys.append(w.subject.same_as.crop_key)
+        evidence = {"signals": r.signals, "reasons": r.reasons, "score": r.score}
+        if self._method(w):
+            evidence["method"] = self._method(w)
+        return Candidate(wid, camera_id, tick.ts, s.track_id if s else None, w.severity, evidence, keys,
                          hashlib.sha1(basis.encode()).hexdigest(), w.name, w.verify)
 
     def _remember(self, tick: Tick) -> None:
