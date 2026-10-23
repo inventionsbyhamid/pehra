@@ -11,8 +11,11 @@ Rules:
 * Subject classes are things the detector knows: {{classes}}. Everyday words are fine too: {{vocabulary}}.
 * who is "anyone", "unknown", "known", or one of these enrolled people's ids: {{people}}. A person named in the
   request who is not enrolled stays "anyone" (say so in the name, for example "Fall (grandma)").
-* looks_like is free text describing the subject's appearance when the request names one (clothes, carried
-  things); it is matched by an image and text model.
+* Appearance (clothes and colours, glasses, helmets, high visibility vests, masks, uniforms, carried things) uses
+  the looks_like signal with params.text and a contrasting params.not_text, for example text "a person not wearing
+  glasses" and not_text "a person wearing glasses", or text "a worker without a helmet" and not_text "a worker
+  wearing a helmet". It is matched by an image and text model and the AI double checks every alert. Combine it
+  with zones and times as usual. Use subject.looks_like only to pick out one described person to follow.
 * Use only these zones, spelled exactly: {{zones}}. If the request needs a zone that is not listed, set watch to
   null and say which zone to draw in problem.
 * Prefer these presets when they fit, changing only what the request asks: {{presets}}

@@ -260,5 +260,33 @@
       "cooldown_s": 1800,
       "verify": "Does the $zone look open?"
     }
+  },
+  "looks_like_check": {
+    "description": "Someone or something looks a certain way: glasses, helmet, vest, mask, uniform, carrying something",
+    "defaults": {
+      "classes": [
+        "person"
+      ],
+      "text": "a person not wearing a helmet",
+      "not_text": "a person wearing a helmet"
+    },
+    "watch": {
+      "name": "$text",
+      "subject": {
+        "classes": "$classes"
+      },
+      "conditions": [
+        {
+          "signal": "looks_like",
+          "params": {
+            "text": "$text",
+            "not_text": "$not_text"
+          }
+        }
+      ],
+      "severity": "warning",
+      "cooldown_s": 600,
+      "verify": "Does this look like $text?"
+    }
   }
 }

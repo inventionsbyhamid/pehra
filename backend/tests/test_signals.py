@@ -86,7 +86,7 @@ class StubEmbedder:
         self.texts = texts
 
     def text(self, q):
-        return np.array(self.texts[q], np.float32)
+        return np.array(self.texts.get(q, [0.6, 0.6]), np.float32)
 
     def image(self, crop):
         v = np.array([crop.mean() / 255.0, 1 - crop.mean() / 255.0], np.float32)
@@ -123,3 +123,20 @@ def test_zone_looks_like_needs_hold():
         got.append((i, e.on_tick("cam", tick(t0 + i, []), t0 + i, bright)))
     fired = [i for i, c in got if c]
     assert fired and fired[0] >= 10
+
+
+def test_looks_like_contrast_for_people_without_glasses():
+    w = preset("looks_like_check", text="a person not wearing glasses", not_text="a person wearing glasses")
+    emb = StubEmbedder({"a person not wearing glasses": [1.0, 0.0], "a person wearing glasses": [0.0, 1.0]})
+    t0 = at(12)
+    without = person(1, {}, t0, embedding=np.array([0.9, 0.1], np.float32) / np.linalg.norm([0.9, 0.1]))
+    with_glasses = person(2, {}, t0, embedding=np.array([0.1, 0.9], np.float32) / np.linalg.norm([0.1, 0.9]))
+    got = run(w, [(t0, [without, with_glasses])], embedder=emb)
+    assert [c.track_id for c in got] == [1] and any("not wearing glasses" in r for r in got[0].evidence["reasons"])
+
+
+def test_compiler_prompt_offers_appearance_checks():
+    from watchful.agent.prompting import render
+    from watchful.rules.signals import catalog
+    text = render("compile", catalog=catalog(), classes=[], vocabulary=[], zones=[], presets=[], people={})
+    assert "looks_like" in text and "glasses" in text and "helmet" in text

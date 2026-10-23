@@ -149,11 +149,23 @@ class RuleEngine:
             cache[sub.looks_like] = self.embedder.text(sub.looks_like)
         return cache[sub.looks_like]
 
+    def _class_vector(self, cls: str):
+        if self.embedder is None:
+            return None
+        cache = self.state.setdefault("_texts", {})
+        key = f"a photo of a {cls}"
+        if key not in cache:
+            cache[key] = self.embedder.text(key)
+        return cache[key]
+
     def _appearance_matches(self, w: Watch, s: TrackState, now: float) -> bool:
         sub, cfg = w.subject, self.tuning.signals
         if sub.looks_like:
-            q = self._text_vector(sub)
-            if q is None or s.embedding is None or float(np.dot(s.embedding, q)) < cfg.looks_like_threshold:
+            # closer to the description than to a plain picture of the class, so no fixed similarity is assumed
+            q, base = self._text_vector(sub), self._class_vector(s.cls)
+            if q is None or base is None or s.embedding is None:
+                return False
+            if float(np.dot(s.embedding, q)) - float(np.dot(s.embedding, base)) < cfg.contrast_margin:
                 return False
         if sub.same_as:
             target = sub.same_as

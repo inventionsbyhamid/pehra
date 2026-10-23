@@ -100,6 +100,7 @@ class SignalTuning(_Section):
     looks_like_threshold: float = 0.1
     same_as_threshold: float = 0.8
     zone_margin: float = 0.02
+    contrast_margin: float = 0.01  # how much closer to text than to not_text an object must look
     zone_embed_every_s: float = 3.0
     search_top_n: int = 12  # best description matches the AI double checks
 

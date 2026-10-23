@@ -34,6 +34,17 @@ def test_compiler_unknown_zone_is_a_problem():
     assert r.watch is None and "garage" in r.problem
 
 
+def test_compiler_survives_a_cut_off_reply_and_drops_doubled_appearance():
+    doubled = json.dumps({"watch": {"name": "No helmet", "subject": {"classes": ["person"], "looks_like": "no helmet"},
+                                    "conditions": [{"signal": "looks_like", "params": {"text": "a worker without a "
+                                                    "helmet", "not_text": "a worker wearing a helmet"}}],
+                                    "verify": "?"}, "problem": None})
+    llm = FakeLLM(['{"watch": {"name": "x", "verify": "unterminated', "not json either", doubled])
+    r = compile_watch("worker without a helmet", [], llm)
+    assert r.watch is not None and r.watch.subject.looks_like is None
+    assert all("unterminated" not in m.text for m in llm.calls[2][1])
+
+
 def test_compiler_retries_after_invalid_json():
     r = compile_watch("car enters the parking lot", ["parking lot"], FakeLLM(["not json", watch_json()]))
     assert r.watch is not None
