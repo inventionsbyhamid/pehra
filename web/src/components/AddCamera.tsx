@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, uploadVideo } from "../api";
+import { tabKeys } from "../hooks";
 import { ScanProgress } from "./ScanProgress";
 
 type Mode = "upload" | "stream" | "webcam";
@@ -89,9 +90,9 @@ export function AddCamera({ onAdded }: { onAdded: () => void }) {
         <h2 id="add-title" className="h2">Add a camera</h2>
         <p className="muted small">Watch a live stream, this browser's webcam, or check a recording in seconds.</p>
       </div>
-      <div className="segmented" role="tablist" aria-label="How to add a camera">
+      <div className="segmented" role="tablist" aria-label="How to add a camera" onKeyDown={tabKeys(tabs.map((t) => t.id), mode, pick)}>
         {tabs.map((t) => (
-          <button key={t.id} role="tab" type="button" aria-selected={mode === t.id} aria-controls={`add-${t.id}`}
+          <button key={t.id} role="tab" type="button" aria-selected={mode === t.id} aria-controls={`add-${t.id}`} tabIndex={mode === t.id ? 0 : -1}
             onClick={() => pick(t.id)}>{t.label}</button>
         ))}
       </div>

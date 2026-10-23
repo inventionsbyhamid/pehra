@@ -38,3 +38,16 @@ export function useTitle(title: string) {
     document.title = title ? `${title} | Watchful` : "Watchful";
   }, [title]);
 }
+
+// Arrow keys move between tabs, as screen reader users expect from a tab list.
+export function tabKeys<T extends string>(ids: readonly T[], current: T, select: (id: T) => void) {
+  return (e: React.KeyboardEvent<HTMLElement>) => {
+    const i = ids.indexOf(current);
+    const next = e.key === "ArrowRight" ? ids[(i + 1) % ids.length] : e.key === "ArrowLeft" ? ids[(i - 1 + ids.length) % ids.length] : null;
+    if (!next) return;
+    e.preventDefault();
+    select(next);
+    const tabs = e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]');
+    tabs[ids.indexOf(next)]?.focus();
+  };
+}

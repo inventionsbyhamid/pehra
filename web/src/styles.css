@@ -223,7 +223,7 @@ input[type="file"]::file-selector-button:hover { background: var(--panel-2); }
   border: 0; background: transparent; padding: 7px 13px; border-radius: var(--r-sm); cursor: pointer;
   color: var(--ink-2); font-weight: 600;
 }
-.segmented button[aria-selected="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
+.segmented button[aria-selected="true"], .segmented button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
 
 .switch { position: relative; width: 42px; height: 24px; flex: none; }
 .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }

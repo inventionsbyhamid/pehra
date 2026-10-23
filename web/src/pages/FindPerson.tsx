@@ -4,7 +4,7 @@ import { api } from "../api";
 import { WatchAgainButton } from "../components/PersonActions";
 import { Thumb } from "../components/Thumb";
 import { dayLabel, plain, span } from "../format";
-import { useLoad, useTitle } from "../hooks";
+import { tabKeys, useLoad, useTitle } from "../hooks";
 import type { Sighting } from "../types";
 
 type Mode = "person" | "description" | "photo";
@@ -99,9 +99,10 @@ export default function FindPerson() {
       <div className="find-grid">
         <form className="panel stack" onSubmit={search} aria-labelledby="find-how">
           <h2 id="find-how" className="sr-only">Search</h2>
-          <div className="segmented" role="tablist" aria-label="Search by">
+          <div className="segmented" role="tablist" aria-label="Search by" onKeyDown={tabKeys(["description", "person", "photo"] as const, mode, setMode)}>
             {([["description", "Description"], ["person", "Enrolled person"], ["photo", "Photo"]] as const).map(([m, label]) => (
-              <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => { setMode(m); setError(null); }}>{label}</button>
+              <button key={m} type="button" role="tab" aria-selected={mode === m} tabIndex={mode === m ? 0 : -1}
+                onClick={() => { setMode(m); setError(null); }}>{label}</button>
             ))}
           </div>
 

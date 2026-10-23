@@ -159,6 +159,28 @@ test("flows desktop", async ({ page }) => {
     await page.waitForTimeout(5000);
     await shot(page, "desktop-17-webcam", false);
   }
+  // states the demo footage rarely produces, rendered from a rewritten alerts response
+  for (const [state, name] of [["awaiting_human", "desktop-19-decision-mocked"], ["unverified", "desktop-20-unverified-mocked"]] as const) {
+    if (!want(state)) continue;
+    await page.route("**/api/alerts?*", async (route) => {
+      const res = await route.fetch();
+      const list = await res.json();
+      if (list[0]) {
+        list[0] = { ...list[0], status: state, severity: "critical", feedback: null };
+        if (state === "awaiting_human") {
+          list[0].trace = [...list[0].trace.slice(0, -1), { step: 3, tool: "ask_human", args: { question: "Should someone check on this person now?" }, why: "Serious, so a person decides", result: "", ms: 800 }];
+        } else {
+          list[0].trace = [];
+        }
+      }
+      await route.fulfill({ response: res, json: list });
+    });
+    await page.goto("/alerts");
+    await page.locator(".alert-row").first().click();
+    await page.waitForTimeout(2000);
+    await shot(page, name, false);
+    await page.unroute("**/api/alerts?*");
+  }
   if (want("find-result")) {
     await page.goto("/find");
     await page.getByLabel("What do they look like?").fill("a person in a dark jacket");

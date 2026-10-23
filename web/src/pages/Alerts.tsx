@@ -190,9 +190,9 @@ export default function Alerts() {
       <div className={`alerts-layout${id ? " has-selection" : ""}`}>
         <section className="alerts-list stack" aria-label="Alert list">
           <div className="row filters">
-            <div className="segmented" role="tablist" aria-label="Which alerts">
-              <button role="tab" aria-selected={filter === "all"} onClick={() => setFilter("all")}>All</button>
-              <button role="tab" aria-selected={filter === "needs"} onClick={() => setFilter("needs")}>
+            <div className="segmented" role="group" aria-label="Which alerts">
+              <button aria-pressed={filter === "all"} onClick={() => setFilter("all")}>All</button>
+              <button aria-pressed={filter === "needs"} onClick={() => setFilter("needs")}>
                 Needs a look{needs.length > 0 && <span className="num"> ({needs.length})</span>}
               </button>
             </div>

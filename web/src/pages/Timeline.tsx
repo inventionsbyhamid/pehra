@@ -186,8 +186,8 @@ export default function TimelinePage() {
           <section className="section" aria-labelledby="events-title">
             <div className="section-head">
               <h2 id="events-title">Events</h2>
-              <div className="segmented" role="tablist" aria-label="Which events">
-                {FILTERS.map((f) => <button key={f.id} role="tab" aria-selected={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>)}
+              <div className="segmented" role="group" aria-label="Which events">
+                {FILTERS.map((f) => <button key={f.id} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>)}
               </div>
             </div>
             {events.length === 0 ? <div className="empty"><p>No events of this kind yet.</p></div> : (
