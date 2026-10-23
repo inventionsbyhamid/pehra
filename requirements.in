@@ -10,3 +10,4 @@ itsdangerous==2.2.0
 python-multipart==0.0.32
 pytest==9.1.1
 moto==5.2.4
+tokenizers==0.23.3

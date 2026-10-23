@@ -43,6 +43,33 @@ MODEL_FILES: dict[str, ModelFile] = {
         "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"),
 }
 
+SIGLIP2 = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/"
+
+
+@dataclass(frozen=True)
+class EmbedderSpec:
+    """Image and text towers in one space, run on the OpenCV DNN engine."""
+    folder: str
+    files: dict[str, str]  # local name to url
+    license: str
+    size: int
+    mean: float
+    std: float
+    max_tokens: int
+    pad_id: int
+    lowercase: bool
+    output: str
+
+
+EMBEDDERS: dict[str, EmbedderSpec] = {
+    "siglip2": EmbedderSpec(
+        "siglip2",
+        {"vision.onnx": SIGLIP2 + "onnx/vision_model.onnx", "text.onnx": SIGLIP2 + "onnx/text_model.onnx",
+         "tokenizer.json": SIGLIP2 + "tokenizer.json"},
+        "Apache-2.0 (Google SigLIP 2, ONNX by onnx-community)",
+        224, 0.5, 0.5, 64, 0, True, "pooler_output"),
+}
+
 SAMPLE_BASE = "https://raw.githubusercontent.com/opencv/opencv/5.x/samples/data/"
 SAMPLES = {name: SAMPLE_BASE + name for name in ("vtest.avi", "basketball1.png", "basketball2.png", "messi5.jpg")}
 
@@ -58,6 +85,11 @@ def sample_path(name: str, settings: Settings | None = None) -> Path:
 
 
 ENGINES = {"auto": cv2.dnn.ENGINE_AUTO, "new": cv2.dnn.ENGINE_NEW, "classic": cv2.dnn.ENGINE_CLASSIC}
+
+
+def embedder_path(name: str, file: str, settings: Settings | None = None) -> Path:
+    base = settings.models_dir if settings else Path("models")
+    return base / EMBEDDERS[name].folder / file
 
 
 def load_net(name: str, settings: Settings | None = None) -> cv2.dnn.Net:
