@@ -93,6 +93,13 @@ class SignalTuning(_Section):
     zone_embed_every_s: float = 3.0
 
 
+class PerceiveTuning(_Section):
+    keyframe_every_s: float = 2.0
+    embed_every_s: float = 10.0
+    max_embeds_per_track: int = 3
+    jpeg_quality: int = 80
+
+
 class ScanTuning(_Section):
     min_chunk_s: float = 4.0
 
@@ -115,6 +122,7 @@ class Tuning(_Section):
     quality: QualityTuning = QualityTuning()
     tamper: TamperTuning = TamperTuning()
     signals: SignalTuning = SignalTuning()
+    perceive: PerceiveTuning = PerceiveTuning()
     scan: ScanTuning = ScanTuning()
     clips: ClipTuning = ClipTuning()
 
