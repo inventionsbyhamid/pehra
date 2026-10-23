@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 
 from watchful.vision.models import sample_path
+from watchful.tuning import TamperTuning
 from watchful.vision.tamper import TamperMonitor
 
 
@@ -16,7 +17,7 @@ def noisy(img, seed):
 
 
 def run(frames):
-    mon = TamperMonitor(check_every_s=1.0, hold_s=5.0)
+    mon = TamperMonitor(TamperTuning(check_every_s=1.0, hold_s=5.0))
     events = []
     for ts, img in enumerate(frames):
         e = mon.update(img, float(ts))
