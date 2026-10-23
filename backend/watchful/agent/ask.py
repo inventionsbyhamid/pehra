@@ -113,7 +113,10 @@ def keyframes_tool(ctx: AskContext, event_ids: list[str]) -> tuple[str, list]:
         e = ctx.repo.get_event(eid)
         if e and e.keyframe_key:
             ref = f"img{len(ctx.images) + 1}"
-            ctx.images[ref] = ctx.blobs.get(e.keyframe_key)
+            try:
+                ctx.images[ref] = ctx.blobs.get(e.keyframe_key)
+            except (OSError, KeyError):
+                continue
             refs.append(ref)
     return (f"images {', '.join(refs)}" if refs else "no images for those events"), refs
 

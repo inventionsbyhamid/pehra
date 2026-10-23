@@ -174,3 +174,26 @@ def test_clip_buffer_holds_compressed_frames(tmp_path):
     rec = ClipRecorder(LocalBlobStore(tmp_path), fps=5)
     rec.on_frame(Frame(np.zeros((540, 960, 3), np.uint8), 1.0, 1))
     assert isinstance(rec.buffer[0][1], bytes) and len(rec.buffer[0][1]) < 100_000
+
+
+def test_video_without_a_readable_length_is_rejected(tmp_path, monkeypatch):
+    import watchful.api as api
+    app, c = app_client(tmp_path)
+    monkeypatch.setattr(api, "_ffprobe", lambda path: {"streams": [{"codec_type": "video"}], "format": {"duration": "N/A"}})
+    r = c.post("/api/uploads", files={"file": ("live.ts", b"0" * 1000, "video/mp2t")})
+    assert r.status_code == 400 and "long" in r.json()["detail"]
+
+
+def test_missing_pictures_do_not_break_search(tmp_path):
+    from watchful.search import SearchQuery, search
+    repo, blobs = SqliteRepository(tmp_path / "w.db"), LocalBlobStore(tmp_path)
+    repo.add_events([EventRow(None, "cam", 1.0, "scene", None, None, None, {}, "gone.jpg", None, None, None)])
+
+    class Stub:
+        def text(self, q):
+            return np.array([1.0, 0.0], np.float32)
+
+        def image(self, crop):
+            return np.array([1.0, 0.0], np.float32)
+
+    assert search(SearchQuery(text="anything"), repo, blobs, Stub()).results == []

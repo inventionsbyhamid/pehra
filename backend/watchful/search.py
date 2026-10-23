@@ -62,8 +62,18 @@ class SearchResult:
     problem: str | None = None
 
 
-def _decode(data: bytes):
-    return cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+def _decode(data: bytes | None):
+    return cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR) if data else None
+
+
+def _get(blobs, key: str | None) -> bytes | None:
+    """A stored picture, or None when retention already removed it."""
+    if not key:
+        return None
+    try:
+        return blobs.get(key)
+    except (OSError, KeyError):
+        return None
 
 
 def _num(v) -> float | None:
@@ -120,7 +130,7 @@ def _faces(rows, blobs, faces: FaceIndex, image=None, person_id: str | None = No
     for e in rows:
         if e.kind != "track_end" or e.cls != "person" or not e.keyframe_key:
             continue
-        img = _decode(blobs.get(e.keyframe_key))
+        img = _decode(_get(blobs, e.keyframe_key))
         m = probe.identify(img, (0, 0, img.shape[1], img.shape[0])) if img is not None else None
         if m:
             hits.append(_hit(e, blobs, m.score, "face", True))
@@ -132,7 +142,7 @@ def _vector(e, repo, blobs, embedder, budget: list[int]):
         return np.asarray(e.embedding, np.float32)
     if budget[0] <= 0 or not e.keyframe_key:
         return None
-    img = _decode(blobs.get(e.keyframe_key))
+    img = _decode(_get(blobs, e.keyframe_key))
     if img is None:
         return None
     budget[0] -= 1
@@ -142,7 +152,9 @@ def _vector(e, repo, blobs, embedder, budget: list[int]):
 
 
 def _confirm(hits: list[SearchHit], caption: str, blobs, llm: LLM, keys: dict[str, str]) -> list[SearchHit]:
-    images = [blobs.get(keys[h.event_id]) for h in hits]
+    images = [b for b in (_get(blobs, keys.get(h.event_id)) for h in hits) if b]
+    if len(images) != len(hits):
+        return hits  # a picture is gone; keep the ranking rather than confirm the wrong numbers
     prompt = (f"These {len(images)} pictures from home cameras are numbered from 1 in order. Which of them show "
               f"{caption}? Reply with JSON {{\"matches\": [numbers]}}.")
     try:

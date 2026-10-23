@@ -320,9 +320,14 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         if probe is None:
             dest.unlink(missing_ok=True)
             raise HTTPException(400, "That file is not a video we can read.")
-        if float(probe.get("format", {}).get("duration", 0)) > s.max_upload_minutes * 60:
+        try:
+            duration = float(probe.get("format", {}).get("duration"))
+        except (TypeError, ValueError):
+            duration = None
+        if duration is None or duration <= 0 or duration > s.max_upload_minutes * 60:
             dest.unlink(missing_ok=True)
-            raise HTTPException(400, f"Videos can be up to {s.max_upload_minutes} minutes long.")
+            raise HTTPException(400, f"Videos can be up to {s.max_upload_minutes} minutes long, and we need to "
+                                     "be able to read how long this one is.")
         cam = w.repo.add_camera(Camera(None, name or file.filename or "Upload", "file", str(dest)))
         return {"camera_id": cam.id, "scan_id": w.manager.scan_upload(cam.id)}
 
@@ -549,7 +554,8 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
             if e is None:
                 raise HTTPException(404, "No such sighting.")
             fill["same_as"] = SameAs(event_id=e.id, signature=e.signature, embedding=e.embedding,
-                                     crop_key=e.keyframe_key, expires_at=time.time() + body.hours * 3600).model_dump()
+                                     crop_key=e.keyframe_key,
+                                     expires_at=time.time() + min(max(body.hours, 1), 24) * 3600).model_dump()
         else:
             raise HTTPException(400, "Pick a person, a description or a sighting.")
         ids = []
