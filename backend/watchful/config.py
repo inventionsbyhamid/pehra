@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     ai_model_verify: str | None = None
     ai_model_ask: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    ai_max_tokens: int = 800
+    ai_max_tokens: int = 1500
     bedrock_model: str | None = None
     aws_region: str = "us-east-1"
     s3_bucket: str | None = None

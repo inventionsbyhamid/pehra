@@ -170,7 +170,7 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
         response.set_cookie(COOKIE, _w(request).signer.dumps(body.user), max_age=SESSION_DAYS * 86400,
                             httponly=True, samesite="lax", secure=secure)
-        return {"user": body.user}
+        return {"user": body.user, "timezone": s.timezone}
 
     @app.post("/api/logout")
     def logout(response: Response):
@@ -178,8 +178,8 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         return {"ok": True}
 
     @app.get("/api/me", dependencies=auth)
-    def me(user: str = Depends(_user)):
-        return {"user": user}
+    def me(request: Request, user: str = Depends(_user)):
+        return {"user": user, "timezone": _w(request).settings.timezone}
 
     # cameras
     @app.get("/api/cameras", dependencies=auth)
@@ -525,12 +525,12 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
     @app.websocket("/ws/cameras/{camera_id}")
     async def live(ws: WebSocket, camera_id: str):
         w = ws.app.state.w
+        await ws.accept()
         try:
             w.signer.loads(ws.cookies.get(COOKIE, ""), max_age=SESSION_DAYS * 86400)
         except BadSignature:
             await ws.close(code=4401)
             return
-        await ws.accept()
         sub = w.manager.subscribe(camera_id)
         try:
             while True:
@@ -550,12 +550,12 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
     @app.websocket("/ws/cameras/{camera_id}/push")
     async def push(ws: WebSocket, camera_id: str):
         w = ws.app.state.w
+        await ws.accept()
         try:
             w.signer.loads(ws.cookies.get(COOKIE, ""), max_age=SESSION_DAYS * 86400)
         except BadSignature:
             await ws.close(code=4401)
             return
-        await ws.accept()
         if not w.manager.status(camera_id).running:
             w.manager.start(camera_id)
         try:

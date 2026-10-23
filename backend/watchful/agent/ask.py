@@ -13,6 +13,9 @@ from watchful.tuning import AppearanceTuning
 from watchful.vision.appearance import TrackSighting, link_tracks
 
 PERSON_KINDS = ["track_start", "track_end", "enter", "exit"]
+STEP_SCHEMA = {"type": "object", "properties": {"tool": {"type": "string"}, "args": {"type": "object"},
+                                                "why": {"type": "string"}}, "required": ["tool", "args"]}
+MAX_ITEMS = 8
 CONFIDENCE = ["low", "medium", "high"]
 
 
@@ -123,7 +126,7 @@ TOOLS = {
 
 def _ground(a: dict, ctx: AskContext) -> Answer:
     items, ambiguous = [], False
-    for it in a.get("items") or []:
+    for it in (a.get("items") or [])[:MAX_ITEMS]:
         e = ctx.repo.get_event(str(it.get("event_id", "")))
         if e is None:
             continue
@@ -142,7 +145,8 @@ def ask(question: str, camera_id: str | None, ctx: AskContext, llm: LLM, now: fl
         deadline_s: float = 45) -> Answer:
     start = time.monotonic()
     tools = "\n".join(f"* {d}" for d, _ in TOOLS.values()) + "\n* answer(text, items, confidence): finish"
-    system = render("ask", tools=tools, now=_clock(now, ctx.tz), tz=ctx.tz)
+    stamp = datetime.fromtimestamp(now, ZoneInfo(ctx.tz)).strftime("%A %Y-%m-%d %H:%M:%S")
+    system = render("ask", tools=tools, now=f"{stamp} (ts {now:.0f})", tz=ctx.tz)
     messages = [Msg("user", question)]
     trace: list[TraceStep] = []
     for n in range(1, max_steps + 1):
@@ -151,7 +155,8 @@ def ask(question: str, camera_id: str | None, ctx: AskContext, llm: LLM, now: fl
             break
         t0 = time.monotonic()
         try:
-            raw = llm.complete(system, messages, images=list(ctx.images.values())[-6:], timeout_s=min(20.0, left))
+            raw = llm.complete(system, messages, images=list(ctx.images.values())[-6:], json_schema=STEP_SCHEMA,
+                               timeout_s=min(20.0, left))
             step = parse_json(raw)
             tool, args = step["tool"], step.get("args") or {}
         except (TimeoutError, AIError, AILimitReached, ValueError, KeyError):

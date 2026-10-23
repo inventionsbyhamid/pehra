@@ -48,3 +48,19 @@ def test_app_routes_fall_back_to_the_web_app(server):
     r = httpx.get(f"http://{server}/cameras/cam_123")
     assert r.status_code == 200 and "watchful app" in r.text
     assert httpx.get(f"http://{server}/api/nope").status_code in (401, 404)
+
+
+def test_signed_out_socket_closes_with_4401(server):
+    from websockets.exceptions import ConnectionClosed
+    with connect(f"ws://{server}/ws/cameras/cam_1") as ws:
+        try:
+            ws.recv(timeout=5)
+            assert False, "expected a close"
+        except ConnectionClosed as e:
+            assert e.rcvd.code == 4401
+
+
+def test_me_reports_the_timezone(server):
+    with httpx.Client(base_url=f"http://{server}") as c:
+        r = c.post("/api/login", json={"user": "judge", "password": "pw"})
+        assert r.json()["timezone"] == "Asia/Kolkata" and c.get("/api/me").json()["timezone"] == "Asia/Kolkata"

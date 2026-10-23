@@ -21,10 +21,10 @@ def render(name: str, **values) -> str:
 def parse_json(raw: str) -> dict:
     """The first JSON object in a reply, tolerating code fences and stray text."""
     raw = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
-    start, end = raw.find("{"), raw.rfind("}")
-    if start < 0 or end < start:
+    start = raw.find("{")
+    if start < 0:
         raise ValueError("no JSON object in the reply")
-    data = json.loads(raw[start:end + 1])
+    data, _ = json.JSONDecoder().raw_decode(raw[start:])
     if not isinstance(data, dict):
         raise ValueError("the reply is not a JSON object")
     return data

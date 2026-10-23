@@ -79,3 +79,10 @@ def test_lookalikes_cap_confidence(ctx):
                         items=[{"label": "maid", "event_id": e1.id, "start_ts": at(9, 2)}])])
     a = ask("when did the maid come into the kitchen", "cam", ctx, llm, now=at(12, 0))
     assert a.confidence == "low" and "look alike" in a.text
+
+
+def test_prompt_has_the_full_date_and_a_schema(ctx):
+    llm = FakeLLM([step("answer", text="Nothing.", items=[], confidence="high")])
+    ask("anyone today?", "cam", ctx, llm, now=at(12, 0))
+    system, _, _, schema = llm.calls[0]
+    assert "2026-10-23" in system and str(int(at(12, 0))) in system and schema is not None

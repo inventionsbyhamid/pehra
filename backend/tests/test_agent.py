@@ -118,3 +118,9 @@ def test_user_text_has_no_dashes():
     from watchful.agent.prompting import plain
     assert plain("Outside the left-walkway zone — never crossed – ok") == "Outside the left walkway zone, never crossed, ok"
     assert plain("At 9-10 am") == "At 9 to 10 am"
+
+
+def test_parse_json_takes_the_first_of_several_objects():
+    from watchful.agent.prompting import parse_json
+    raw = 'Sure. {"tool": "people", "args": {}} then {"tool": "answer", "args": {"text": "x"}}'
+    assert parse_json(raw)["tool"] == "people"
