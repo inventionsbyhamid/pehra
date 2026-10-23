@@ -336,8 +336,6 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         return [asdict(x) for x in _w(request).repo.list_watches(camera_id)]
 
     def _save_watch(w: State, cam: Camera, text: str, watch: Watch) -> WatchRow:
-        if watch.subject.looks_like and not watch.subject.looks_like_embedding:
-            watch.subject.looks_like_embedding = w.embedder.text(watch.subject.looks_like).tolist()
         row = w.repo.add_watch(WatchRow(None, cam.id, text, watch.model_dump(), True))
         if cam.kind in LIVE_KINDS:
             w.manager.restart(cam.id)

@@ -1,3 +1,4 @@
+import threading
 from typing import Protocol
 
 import cv2
@@ -32,17 +33,23 @@ class OnnxEmbedder:
                                               cv2.dnn.ENGINE_AUTO)
         self._text_net = None
         self._tokenizer = None
+        self._lock = threading.Lock()  # one network, shared by the indexer, searches and scans
 
     def image(self, crop: np.ndarray) -> np.ndarray:
         s = self.spec
         x = cv2.resize(crop, (s.size, s.size), interpolation=cv2.INTER_LINEAR)
         x = cv2.cvtColor(x, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         x = (x - s.mean) / s.std
-        self.vision.setInput(x.transpose(2, 0, 1)[None])
-        return _unit(self.vision.forward(s.output))
+        with self._lock:
+            self.vision.setInput(x.transpose(2, 0, 1)[None])
+            return _unit(self.vision.forward(s.output))
 
     def text(self, query: str) -> np.ndarray:
         s = self.spec
+        with self._lock:
+            return self._text(query, s)
+
+    def _text(self, query: str, s) -> np.ndarray:
         if self._text_net is None:
             self._text_net = cv2.dnn.readNetFromONNX(str(embedder_path(self.name, "text.onnx", self.settings)),
                                                      cv2.dnn.ENGINE_AUTO)
@@ -66,3 +73,34 @@ class OnnxEmbedder:
 
 def similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b))
+
+
+def watch_texts(watches) -> set[str]:
+    """Every text a set of watches compares images with."""
+    out = set()
+    for w in watches:
+        if w.subject.looks_like:
+            out.add(w.subject.looks_like)
+        for c in w.conditions:
+            out.update(str(c.params[k]) for k in ("text", "not_text") if c.params.get(k))
+    return out
+
+
+class TextCache:
+    """Text vectors computed once in the main process, so camera processes never load the text tower."""
+
+    def __init__(self, inner, vectors: dict[str, list[float]]):
+        self.inner = inner
+        self.vectors = {k: np.asarray(v, np.float32) for k, v in vectors.items()}
+
+    def text(self, query: str) -> np.ndarray:
+        return self.vectors[query] if query in self.vectors else self.inner.text(query)
+
+    def image(self, crop: np.ndarray) -> np.ndarray:
+        return self.inner.image(crop)
+
+    def probability(self, cosine: float) -> float:
+        return self.inner.probability(cosine)
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)

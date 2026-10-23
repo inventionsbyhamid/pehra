@@ -36,14 +36,16 @@ class ClipRecorder:
 
     def __init__(self, blobs: BlobStore, fps: float, cfg: ClipTuning = ClipTuning()):
         self.blobs, self.fps, self.cfg = blobs, fps, cfg
-        self.buffer: deque[Frame] = deque()
+        self.buffer: deque[tuple[float, bytes]] = deque()  # JPEGs: a few MB instead of hundreds of raw frames
         self.requests: list[tuple[float, str]] = []
         self.threads: list[threading.Thread] = []
 
     def on_frame(self, frame: Frame) -> None:
-        self.buffer.append(frame)
+        ok, jpg = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if ok:
+            self.buffer.append((frame.ts, jpg.tobytes()))
         keep = self.cfg.before_s + self.cfg.after_s + 2
-        while self.buffer and self.buffer[0].ts < frame.ts - keep:
+        while self.buffer and self.buffer[0][0] < frame.ts - keep:
             self.buffer.popleft()
         due = [r for r in self.requests if frame.ts >= r[0] + self.cfg.after_s]
         for r in due:
@@ -54,7 +56,8 @@ class ClipRecorder:
         self.requests.append((ts, key))
 
     def _write(self, ts: float, key: str) -> None:
-        frames = [f.image for f in self.buffer if ts - self.cfg.before_s <= f.ts <= ts + self.cfg.after_s]
+        frames = [cv2.imdecode(np.frombuffer(j, np.uint8), cv2.IMREAD_COLOR) for t, j in self.buffer
+                  if ts - self.cfg.before_s <= t <= ts + self.cfg.after_s]
         if not frames:
             return
         t = threading.Thread(target=lambda: self.blobs.put(key, encode_mp4(frames, self.fps, self.cfg), "video/mp4"),

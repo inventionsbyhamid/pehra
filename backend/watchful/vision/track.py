@@ -1,4 +1,5 @@
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import cv2
@@ -45,7 +46,7 @@ class Track:
     last_ts: float
     hits: int = 1
     score: float = 0.0
-    history: list[tuple[float, Box]] = field(default_factory=list)
+    history: deque = field(default_factory=lambda: deque(maxlen=150))  # recent (ts, box) only
     started: bool = False
     kf: cv2.KalmanFilter | None = field(default=None, repr=False)
     _pred_ts: float = 0.0
@@ -127,7 +128,7 @@ class Tracker:
 
         for d in new_dets:
             t = Track(self._next_id, d.cls, d.box, ts, ts, score=d.score, kf=_kalman(d.box),
-                      history=[(ts, d.box)], _pred_ts=ts)
+                      history=deque([(ts, d.box)], maxlen=150), _pred_ts=ts)
             self._next_id += 1
             self.tracks.append(t)
             if self.min_hits <= 1:

@@ -144,3 +144,33 @@ def test_saving_zones_turns_off_watches_that_lost_their_zone(tmp_path):
     repo.add_watch(WatchRow(None, cam["id"], "x", preset("enters", zone="door").model_dump(), True))
     r = c.patch(f"/api/cameras/{cam['id']}", json={"zones": [{"name": "porch", "polygon": [[0, 0], [1, 0], [1, 1]]}]})
     assert r.json()["disabled_watches"] == ["Enters door"] and not repo.list_watches(cam["id"])[0].enabled
+
+
+def test_watch_texts_are_precomputed_for_camera_processes():
+    import numpy as np
+    from watchful.rules.presets import preset
+    from watchful.rules.watch import Subject, Watch, Condition
+    from watchful.vision.embed import TextCache, watch_texts
+    ws = [preset("looks_like_check", text="a person not wearing glasses", not_text="a person wearing glasses"),
+          Watch(name="red", subject=Subject(looks_like="a man in red"), verify="?", conditions=[Condition(signal="present")]),
+          preset("gate_left_open", zone="gate")]
+    assert watch_texts(ws) == {"a person not wearing glasses", "a person wearing glasses", "a man in red",
+                               "an open gate", "a closed gate"}
+
+    class Inner:
+        loads = 0
+
+        def text(self, q):
+            Inner.loads += 1
+            return np.ones(2, np.float32)
+
+    cache = TextCache(Inner(), {"a man in red": [1.0, 0.0]})
+    assert list(cache.text("a man in red")) == [1.0, 0.0] and Inner.loads == 0
+
+
+def test_clip_buffer_holds_compressed_frames(tmp_path):
+    from watchful.ingest.clips import ClipRecorder
+    from watchful.ingest.sources import Frame
+    rec = ClipRecorder(LocalBlobStore(tmp_path), fps=5)
+    rec.on_frame(Frame(np.zeros((540, 960, 3), np.uint8), 1.0, 1))
+    assert isinstance(rec.buffer[0][1], bytes) and len(rec.buffer[0][1]) < 100_000

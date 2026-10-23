@@ -25,6 +25,7 @@ from watchful.rules.engine import RuleEngine, needs_for, validate
 from watchful.rules.watch import Watch
 from watchful.store.db import AlertRow, Camera
 from watchful.tuning import Tuning, load_tuning
+from watchful.vision.embed import TextCache, watch_texts
 from watchful.vision.perceive import Needs
 from watchful.vision.pipeline import CameraPipeline
 from watchful.vision.scan import ScanPool, probe_start_time, scan_file
@@ -85,7 +86,7 @@ def _source(camera: Camera, settings: Settings):
 
 
 def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: list, settings_json: str,
-               tuning_json: str, in_q, out_q, viewers, scanning, stop) -> None:
+               tuning_json: str, in_q, out_q, viewers, scanning, stop, texts: dict | None = None) -> None:
     """The camera process: source, pipeline, rules, clips and evidence."""
     settings = Settings(**json.loads(settings_json), _env_file=None)
     cv2.setNumThreads(settings.camera_threads)  # leave the cores to scans and other cameras
@@ -97,7 +98,7 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
     if needs.faces and enrollments:
         faces = make_faces(settings, tuning)
         faces.load(enrollments)
-    embedder = make_embedder(settings) if needs.embed else None
+    embedder = TextCache(make_embedder(settings), texts or {}) if needs.embed else None
     pipe = CameraPipeline(camera, repo, blobs, faces, settings, tuning, needs, embedder)
     engine = RuleEngine(watches, camera.zones, tuning, settings.timezone, camera.kind, embedder)
     source = _source(camera, settings)
@@ -319,9 +320,14 @@ class WorkerManager:
             h.restarts, h.next_restart = old.restarts, old.next_restart
         h.viewers.value = len(self.subs[camera_id])
         watches, problems = self._watches(camera_id, cam.zones)
+        texts = {}
+        wanted = watch_texts([w for _, w in watches])
+        if wanted:
+            emb = make_embedder(self.settings)
+            texts = {t: emb.text(t).tolist() for t in wanted}
         h.process = self.ctx.Process(target=run_camera, daemon=True, args=(
             cam, watches, self.repo.list_enrollments(), self.settings.model_dump_json(),
-            self.tuning.model_dump_json(), h.in_q, self.out_q, h.viewers, self.scanning, h.stop))
+            self.tuning.model_dump_json(), h.in_q, self.out_q, h.viewers, self.scanning, h.stop, texts))
         h.process.start()
         h.status = WorkerStatus(running=True, source_status="starting", problems=problems)
         self.handles[camera_id] = h

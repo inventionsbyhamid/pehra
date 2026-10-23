@@ -34,9 +34,16 @@ def make_faces(settings: Settings, tuning: Tuning):
     return build("faces", settings.face_model, cfg=tuning.faces, settings=settings)
 
 
+_embedders: dict[tuple, object] = {}
+
+
 def make_embedder(settings: Settings):
+    """One embedder per model per process; the image and text towers are large."""
     load_all()
-    return build("embedder", settings.embedder, settings=settings)
+    key = (settings.embedder, str(settings.models_dir))
+    if key not in _embedders:
+        _embedders[key] = build("embedder", settings.embedder, settings=settings)
+    return _embedders[key]
 
 
 def make_llm(settings: Settings, repo, task: str = "verify"):
