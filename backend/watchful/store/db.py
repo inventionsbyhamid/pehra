@@ -123,7 +123,7 @@ create table if not exists person_labels (camera_id text, group_id text, label t
 
 @register("repo", "sqlite")
 class SqliteRepository:
-    def __init__(self, path: str | Path, name: str = "sqlite"):
+    def __init__(self, path: str | Path, name: str = "sqlite", **_):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(path), check_same_thread=False, timeout=30)
         self.db.execute("pragma journal_mode=wal")

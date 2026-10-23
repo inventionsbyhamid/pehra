@@ -12,7 +12,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 
 from watchful.agent.verifier import Verdict, verify
-from watchful.components import make_blobs, make_embedder, make_faces, make_llm, make_notifier, make_repo
+from watchful.components import (make_blobs, make_embedder, make_faces, make_llm, make_metrics, make_notifier,
+                                 make_repo)
 from watchful.config import Settings
 from watchful.evidence import EvidenceBuffer, EvidencePack, evidence_context, file_pack
 from watchful.ingest.clips import ClipRecorder
@@ -191,7 +192,26 @@ class WorkerManager:
         self._scan_pool: ScanPool | None = None
         self._embedder = None
         self._closed = False
+        self.metrics = make_metrics(settings)
         threading.Thread(target=self._listen, daemon=True).start()
+        threading.Thread(target=self._report, daemon=True).start()
+
+    def _report(self, every_s: float = 60) -> None:
+        while not self._closed:
+            time.sleep(every_s)
+            try:
+                for cid, h in list(self.handles.items()):
+                    if h.status.running:
+                        st, dims = h.status.stats or {}, {"Camera": cid}
+                        self.metrics.put("FramesPerSecond", h.status.fps, dims)
+                        for key, name in (("ms_per_frame", "MsPerFrame"), ("frames_skipped", "FramesSkipped"),
+                                          ("detector_runs", "DetectorRuns")):
+                            if key in st:
+                                self.metrics.put(name, st[key], dims)
+                self.metrics.put("AICallsToday", self.repo.count_ai_calls_today())
+                self.metrics.flush()
+            except Exception:
+                log.exception("metrics report failed")
 
     # cameras
     def _watches(self, camera_id: str) -> list[tuple[str, Watch]]:
@@ -308,6 +328,7 @@ class WorkerManager:
                                            c.keyframe_keys[0] if c.keyframe_keys else None,
                                            [asdict(t) for t in v.trace], None, c.fingerprint))
         self._publish(c.camera_id, {"type": "alert", "alert": asdict(row)})
+        self.metrics.put("Alerts", 1, {"Status": v.status})
         return row
 
     def approve(self, alert_id: str) -> bool:
@@ -351,6 +372,8 @@ class WorkerManager:
                                on_progress=lambda p: info.update(progress=round(p, 3)))
             self.repo.add_events(result.events)
             info.update(state="checking", stats=asdict(result.stats))
+            self.metrics.put("ScanRealtimeFactor", result.stats.x_realtime)
+            self.metrics.put("ScanSecondsPerMinute", result.stats.wall_s / max(result.stats.duration_s / 60, 1e-6))
             packs = [file_pack(cam.url, start_epoch, c, result.paths.get(c.track_id, []),
                                result.poses.get(c.track_id, []), self.tuning.evidence) for c in result.candidates]
             futures = [self.verifiers.submit(self._verify_and_store, p) for p in packs]

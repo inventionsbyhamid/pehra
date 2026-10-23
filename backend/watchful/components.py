@@ -7,9 +7,12 @@ from watchful.tuning import Tuning
 def load_all() -> None:
     """Import every module that registers parts."""
     import watchful.agent.llm  # noqa: F401
+    import watchful.metrics  # noqa: F401
     import watchful.notify  # noqa: F401
     import watchful.store.blobs  # noqa: F401
     import watchful.store.db  # noqa: F401
+    import watchful.store.dynamo  # noqa: F401
+    import watchful.store.s3  # noqa: F401
     import watchful.vision.detect  # noqa: F401
     import watchful.vision.embed  # noqa: F401
     import watchful.vision.faces  # noqa: F401
@@ -46,12 +49,17 @@ def make_llm(settings: Settings, repo, task: str = "verify"):
 
 def make_blobs(settings: Settings):
     load_all()
-    return build("blobs", settings.storage, data_dir=settings.data_dir)
+    return build("blobs", settings.storage, data_dir=settings.data_dir, settings=settings)
 
 
 def make_repo(settings: Settings):
     load_all()
-    return build("repo", settings.db, path=settings.data_dir / "watchful.db")
+    return build("repo", settings.db, path=settings.data_dir / "watchful.db", settings=settings)
+
+
+def make_metrics(settings: Settings):
+    load_all()
+    return build("metrics", settings.metrics, settings=settings)
 
 
 def make_notifier(settings: Settings):

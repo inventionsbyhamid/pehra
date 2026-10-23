@@ -14,7 +14,7 @@ class BlobStore(Protocol):
 
 @register("blobs", "local")
 class LocalBlobStore:
-    def __init__(self, data_dir: str | Path, name: str = "local"):
+    def __init__(self, data_dir: str | Path, name: str = "local", **_):
         self.root = Path(data_dir) / "blobs"
         self.root.mkdir(parents=True, exist_ok=True)
 
