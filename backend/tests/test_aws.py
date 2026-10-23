@@ -91,3 +91,20 @@ def test_sns_and_cloudwatch(aws):
     names = [x["MetricName"] for x in boto3.client("cloudwatch", region_name=REGION).list_metrics(
         Namespace="Watchful")["Metrics"]]
     assert "FramesPerSecond" in names
+
+
+def test_newest_rows_and_index_work(repo):
+    repo.add_events([ev("cam9", float(t)) for t in range(10)])
+    assert [r.ts for r in repo.query_events(camera_id="cam9", limit=3)] == [7.0, 8.0, 9.0]
+    assert [r.ts for r in repo.query_events(limit=2)] == [8.0, 9.0]
+    scene = EventRow(None, "cam9", 20.0, "scene", None, None, None, {}, "s.jpg", None, None, None)
+    repo.add_events([scene])
+    assert [e.id for e in repo.events_missing_embedding(["scene"])] == [scene.id]
+    repo.set_event_embedding(scene.id, [0.5, 0.5])
+    assert repo.events_missing_embedding(["scene"]) == [] and repo.get_event(scene.id).embedding == [0.5, 0.5]
+    for i in range(5):
+        repo.add_alert(AlertRow(None, "cam9", None, time.time() + i, "info", "alert", f"a{i}", None, None, [], None,
+                                f"f{i}"))
+    assert [a.summary for a in repo.list_alerts("cam9", limit=2)] == ["a4", "a3"]
+    assert [a.summary for a in repo.list_alerts(limit=1)] == ["a4"]
+    assert repo.delete_events_before(5) == 5

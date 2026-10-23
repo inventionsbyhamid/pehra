@@ -198,9 +198,9 @@ class SqliteRepository:
         if until is not None:
             sql += " and ts <= ?"
             args.append(until)
-        sql += " order by ts limit ?"
+        sql += " order by ts desc limit ?"  # the newest rows, returned oldest first
         args.append(limit)
-        return [EventRow(**json.loads(r[0])) for r in self._rows(sql, args)]
+        return [EventRow(**json.loads(r[0])) for r in reversed(self._rows(sql, args))]
 
     def get_event(self, event_id: str) -> EventRow | None:
         rows = self._rows("select data from events where id = ?", (event_id,))

@@ -10,15 +10,19 @@ from watchful.registry import register
 from watchful.store.db import AlertRow, Camera, EventRow, WatchRow, _camera_from, _today, new_id
 from watchful.vision.faces import Enrollment
 
+# name: (key schema [(attr, type)], indexes [(index name, hash attr, range attr or None)])
 TABLES = {
     "cameras": ([("id", "S")], []),
-    "events": ([("camera_id", "S"), ("sk", "S")], [("by_id", "id")]),
+    "events": ([("camera_id", "S"), ("sk", "S")], [("by_id", "id", None), ("unembedded", "pending", "sk")]),
     "watches": ([("id", "S")], []),
-    "alerts": ([("id", "S")], [("by_fp", "fingerprint")]),
+    "alerts": ([("id", "S")], [("by_fp", "fingerprint", None), ("by_camera", "camera_id", "ts"),
+                               ("by_time", "g", "ts")]),
     "enrollments": ([("person_id", "S")], []),
     "counters": ([("key", "S")], []),
     "labels": ([("camera_id", "S"), ("group_id", "S")], []),
 }
+ATTR_TYPES = {"ts": "N"}
+INDEX_KINDS = {"scene", "track_end"}
 
 
 def _sk(ts: float, event_id: str) -> str:
@@ -35,6 +39,7 @@ class DynamoRepository:
         self.db = boto3.resource("dynamodb", region_name=region or settings.aws_region)
         self._ensure()
         self.t = {n: self.db.Table(f"{self.prefix}-{n}") for n in TABLES}
+        self._seen_cams: set[str] = set()
 
     def _ensure(self) -> None:
         existing = set(self.db.meta.client.list_tables()["TableNames"])
@@ -42,15 +47,21 @@ class DynamoRepository:
             full = f"{self.prefix}-{name}"
             if full in existing:
                 continue
-            attrs = {k: t for k, t in keys} | {attr: "S" for _, attr in indexes}
+            attrs = {k: t for k, t in keys}
+            for _, h, r in indexes:
+                attrs.setdefault(h, ATTR_TYPES.get(h, "S"))
+                if r:
+                    attrs.setdefault(r, ATTR_TYPES.get(r, "S"))
             spec = dict(TableName=full, BillingMode="PAY_PER_REQUEST",
                         KeySchema=[{"AttributeName": k, "KeyType": "HASH" if i == 0 else "RANGE"}
                                    for i, (k, _) in enumerate(keys)],
                         AttributeDefinitions=[{"AttributeName": k, "AttributeType": t} for k, t in attrs.items()])
             if indexes:
-                spec["GlobalSecondaryIndexes"] = [{"IndexName": n, "Projection": {"ProjectionType": "ALL"},
-                                                   "KeySchema": [{"AttributeName": a, "KeyType": "HASH"}]}
-                                                  for n, a in indexes]
+                spec["GlobalSecondaryIndexes"] = [
+                    {"IndexName": n, "Projection": {"ProjectionType": "ALL"},
+                     "KeySchema": [{"AttributeName": h, "KeyType": "HASH"}] +
+                                  ([{"AttributeName": r, "KeyType": "RANGE"}] if r else [])}
+                    for n, h, r in indexes]
             self.db.create_table(**spec).wait_until_exists()
 
     @staticmethod
@@ -84,10 +95,12 @@ class DynamoRepository:
 
     def delete_camera(self, camera_id: str) -> None:
         self.delete_camera_events(camera_id)
-        for name in ("watches", "alerts"):
-            for i in self._all(self.t[name].scan):
-                if i.get("camera_id") == camera_id:
-                    self.t[name].delete_item(Key={"id": i["id"]})
+        for i in self._all(self.t["watches"].scan):
+            if i.get("camera_id") == camera_id:
+                self.t["watches"].delete_item(Key={"id": i["id"]})
+        for i in self._all(self.t["alerts"].query, IndexName="by_camera",
+                           KeyConditionExpression=Key("camera_id").eq(camera_id)):
+            self.t["alerts"].delete_item(Key={"id": i["id"]})
         for i in self.t["labels"].query(KeyConditionExpression=Key("camera_id").eq(camera_id))["Items"]:
             self.t["labels"].delete_item(Key={"camera_id": camera_id, "group_id": i["group_id"]})
         self.t["cameras"].delete_item(Key={"id": camera_id})
@@ -116,35 +129,58 @@ class DynamoRepository:
 
     # events
     def add_events(self, rows: list[EventRow]) -> None:
+        for cid in {r.camera_id for r in rows} - self._seen_cams:
+            self.t["counters"].put_item(Item={"key": f"evcam#{cid}"})
+            self._seen_cams.add(cid)
         with self.t["events"].batch_writer() as batch:
             for r in rows:
                 r.id = r.id or new_id("evt")
-                batch.put_item(Item={"camera_id": r.camera_id, "sk": _sk(r.ts, r.id), "id": r.id,
-                                     "ts": Decimal(str(r.ts)), "data": json.dumps(asdict(r))})
+                item = {"camera_id": r.camera_id, "sk": _sk(r.ts, r.id), "id": r.id, "ts": Decimal(str(r.ts)),
+                        "data": json.dumps(asdict(r))}
+                if r.embedding is None and r.kind in INDEX_KINDS and r.keyframe_key:
+                    item["pending"] = "y"  # sparse index of work for the embedding indexer
+                batch.put_item(Item=item)
+
+    def _camera_events(self, camera_id: str, since, until, newest_first: bool, want: int, keep) -> list[EventRow]:
+        lo = f"{since:017.3f}" if since is not None else "0"
+        hi = f"{until:017.3f}#~" if until is not None else "~"
+        out, start = [], None
+        while len(out) < want:
+            kw = dict(KeyConditionExpression=Key("camera_id").eq(camera_id) & Key("sk").between(lo, hi),
+                      ScanIndexForward=not newest_first, Limit=max(want, 100))
+            if start:
+                kw["ExclusiveStartKey"] = start
+            page = self.t["events"].query(**kw)
+            out += [r for r in (EventRow(**json.loads(i["data"])) for i in page.get("Items", [])) if keep(r)]
+            start = page.get("LastEvaluatedKey")
+            if not start:
+                break
+        return out[:want]
 
     def query_events(self, camera_id=None, kinds=None, zone=None, cls=None, since=None, until=None,
                      limit=500) -> list[EventRow]:
-        if camera_id is not None:
-            lo = f"{since:017.3f}" if since is not None else "0"
-            hi = f"{until:017.3f}#~" if until is not None else "~"
-            items = self._all(self.t["events"].query,
-                              KeyConditionExpression=Key("camera_id").eq(camera_id) & Key("sk").between(lo, hi))
-        else:
-            items = self._all(self.t["events"].scan)
-        rows = [EventRow(**json.loads(i["data"])) for i in items]
-        rows = [r for r in rows if (not kinds or r.kind in kinds) and (zone is None or r.zone == zone)
-                and (cls is None or r.cls == cls) and (since is None or r.ts >= since)
-                and (until is None or r.ts <= until)]
-        return sorted(rows, key=lambda r: r.ts)[:limit]
+        def keep(r):
+            return (not kinds or r.kind in kinds) and (zone is None or r.zone == zone) and (cls is None or r.cls == cls)
+        cams = [camera_id] if camera_id is not None else self._event_cameras()
+        rows = []
+        for cid in cams:
+            rows += self._camera_events(cid, since, until, True, limit, keep)
+        return sorted(sorted(rows, key=lambda r: -r.ts)[:limit], key=lambda r: r.ts)
+
+    def _event_cameras(self) -> list[str]:
+        """Every camera id that has events, kept in the small counters table."""
+        items = self._all(self.t["counters"].scan)
+        return [i["key"].split("#", 1)[1] for i in items if i["key"].startswith("evcam#")]
 
     def get_event(self, event_id: str) -> EventRow | None:
         items = self.t["events"].query(IndexName="by_id", KeyConditionExpression=Key("id").eq(event_id))["Items"]
         return EventRow(**json.loads(items[0]["data"])) if items else None
 
     def events_missing_embedding(self, kinds: list[str], limit: int = 64) -> list[EventRow]:
-        rows = [EventRow(**json.loads(i["data"])) for i in self._all(self.t["events"].scan)]
-        rows = [r for r in rows if r.kind in kinds and r.embedding is None]
-        return sorted(rows, key=lambda r: -r.ts)[:limit]
+        page = self.t["events"].query(IndexName="unembedded", KeyConditionExpression=Key("pending").eq("y"),
+                                      ScanIndexForward=False, Limit=limit * 2)
+        rows = [EventRow(**json.loads(i["data"])) for i in page.get("Items", [])]
+        return [r for r in rows if r.kind in kinds][:limit]
 
     def set_event_embedding(self, event_id: str, embedding: list[float]) -> None:
         items = self.t["events"].query(IndexName="by_id", KeyConditionExpression=Key("id").eq(event_id))["Items"]
@@ -152,22 +188,27 @@ class DynamoRepository:
             i = items[0]
             data = json.loads(i["data"])
             data["embedding"] = [round(float(x), 5) for x in embedding]
-            self.t["events"].update_item(Key={"camera_id": i["camera_id"], "sk": i["sk"]}, UpdateExpression="set #d = :d",
+            self.t["events"].update_item(Key={"camera_id": i["camera_id"], "sk": i["sk"]},
+                                         UpdateExpression="set #d = :d remove pending",
                                          ExpressionAttributeNames={"#d": "data"},
                                          ExpressionAttributeValues={":d": json.dumps(data)})
 
     def delete_events_before(self, ts: float) -> int:
-        old = [i for i in self._all(self.t["events"].scan) if float(i["ts"]) < ts]
-        with self.t["events"].batch_writer() as batch:
-            for i in old:
-                batch.delete_item(Key={"camera_id": i["camera_id"], "sk": i["sk"]})
-        return len(old)
+        removed = 0
+        for cid in self._event_cameras():
+            items = self._all(self.t["events"].query, KeyConditionExpression=Key("camera_id").eq(cid)
+                              & Key("sk").lt(f"{ts:017.3f}"))
+            with self.t["events"].batch_writer() as batch:
+                for i in items:
+                    batch.delete_item(Key={"camera_id": cid, "sk": i["sk"]})
+            removed += len(items)
+        return removed
 
     # alerts
     def add_alert(self, row: AlertRow) -> AlertRow:
         row.id = row.id or new_id("alt")
         self.t["alerts"].put_item(Item={"id": row.id, "camera_id": row.camera_id, "ts": Decimal(str(row.ts)),
-                                        "fingerprint": row.fingerprint, "data": json.dumps(asdict(row))})
+                                        "g": "all", "fingerprint": row.fingerprint, "data": json.dumps(asdict(row))})
         return row
 
     def get_alert(self, alert_id: str) -> AlertRow | None:
@@ -180,9 +221,13 @@ class DynamoRepository:
                                      ExpressionAttributeValues={":d": json.dumps(asdict(row))})
 
     def list_alerts(self, camera_id=None, limit=100) -> list[AlertRow]:
-        items = [i for i in self._all(self.t["alerts"].scan) if camera_id is None or i["camera_id"] == camera_id]
-        items.sort(key=lambda i: float(i["ts"]), reverse=True)
-        return [AlertRow(**json.loads(i["data"])) for i in items[:limit]]
+        if camera_id is None:
+            key, index = Key("g").eq("all"), "by_time"
+        else:
+            key, index = Key("camera_id").eq(camera_id), "by_camera"
+        page = self.t["alerts"].query(IndexName=index, KeyConditionExpression=key, ScanIndexForward=False,
+                                      Limit=limit)
+        return [AlertRow(**json.loads(i["data"])) for i in page.get("Items", [])]
 
     def alert_fingerprint_exists(self, fp: str, within_s: float) -> bool:
         items = self.t["alerts"].query(IndexName="by_fp", KeyConditionExpression=Key("fingerprint").eq(fp))["Items"]
