@@ -104,3 +104,9 @@ def test_upload_clip_is_cut_at_the_alert_moment(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "cut_clip", lambda path, pos, s, t: seen.setdefault("pos", pos) and b"mp4" or b"mp4")
     c.get(f"/api/alerts/{a.id}/clip", follow_redirects=False)
     assert seen["pos"] == 42.5
+
+
+def test_alerts_carry_a_ready_picture_url(tmp_path):
+    app, c = app_client(tmp_path)
+    app.state.w.repo.add_alert(AlertRow(None, "cam", None, 1.0, "info", "alert", "x", None, "cam/kf/1.jpg", [], None, "f"))
+    assert c.get("/api/alerts").json()[0]["keyframe_url"] == "/blobs/cam/kf/1.jpg"

@@ -382,7 +382,8 @@ class WorkerManager:
                                            v.summary or c.watch_name, c.clip_key,
                                            c.keyframe_keys[0] if c.keyframe_keys else None,
                                            [asdict(t) for t in v.trace], None, c.fingerprint, c.track_id))
-        self._publish(c.camera_id, {"type": "alert", "alert": asdict(row)})
+        self._publish(c.camera_id, {"type": "alert", "alert": {**asdict(row), "keyframe_url":
+                                    self.blobs.url(row.keyframe_key) if row.keyframe_key else None}})
         self.metrics.put("Alerts", 1, {"Status": v.status})
         return row
 

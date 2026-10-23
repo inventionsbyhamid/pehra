@@ -9,7 +9,7 @@ export function AlertSummary({ alert, camera, active }: { alert: Alert; camera?:
   return (
     <Link to={`/alerts/${alert.id}`} className={`alert-row sev-${alert.severity}${active ? " is-active" : ""}`}
       aria-current={active ? "true" : undefined}>
-      <Thumb src={blobUrl(alert.keyframe_key)} alt="" w={84} h={63} />
+      <Thumb src={alert.keyframe_url ?? blobUrl(alert.keyframe_key)} alt="" w={84} h={63} />
       <div className="grow stack" style={{ gap: 4 }}>
         <p className="alert-row-summary">{plain(alert.summary)}</p>
         <div className="row" style={{ gap: 6 }}>

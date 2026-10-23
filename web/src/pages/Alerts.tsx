@@ -23,7 +23,7 @@ function Clip({ alert }: { alert: Alert }) {
     <div className="clip">
       {failed ? (
         <div className="stage">
-          {alert.keyframe_key && <img className="clip-key" src={blobUrl(alert.keyframe_key)!} alt="The moment that was flagged" />}
+          {alert.keyframe_key && <img className="clip-key" src={(alert.keyframe_url ?? blobUrl(alert.keyframe_key))!} alt="The moment that was flagged" />}
           <div className="clip-missing">
             <p>The clip could not be played. It may still be being written, so try again in a few seconds.</p>
             <button className="btn btn-sm" onClick={() => { setFailed(false); setAttempt(attempt + 1); }}>Try again</button>

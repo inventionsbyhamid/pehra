@@ -87,6 +87,11 @@ def _user(request: Request) -> str:
     raise HTTPException(401, "Sign in first.")
 
 
+def alert_json(blobs, a) -> dict:
+    """An alert with a picture link that works on any storage (local disk or presigned S3)."""
+    return {**asdict(a), "keyframe_url": blobs.url(a.keyframe_key) if a.keyframe_key else None}
+
+
 def _camera_json(w: State, cam: Camera) -> dict:
     st = w.manager.status(cam.id)
     return {**asdict(cam), "status": {"running": st.running, "source": st.source_status, "fps": round(st.fps, 1),
@@ -359,8 +364,9 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
     # alerts
     @app.get("/api/alerts", dependencies=auth)
     def alerts(request: Request, camera_id: str | None = None, include_dismissed: bool = False):
-        rows = _w(request).repo.list_alerts(camera_id=camera_id, limit=200)
-        return [asdict(a) for a in rows if include_dismissed or a.status != "dismissed"]
+        w = _w(request)
+        rows = w.repo.list_alerts(camera_id=camera_id, limit=200)
+        return [alert_json(w.blobs, a) for a in rows if include_dismissed or a.status != "dismissed"]
 
     def _alert(w: State, alert_id: str):
         a = w.repo.get_alert(alert_id)

@@ -109,6 +109,7 @@ export interface Alert {
   summary: string;
   clip_key: string | null;
   keyframe_key: string | null;
+  keyframe_url?: string | null;
   trace: TraceStep[];
   feedback: "up" | "down" | null;
   fingerprint: string;
