@@ -43,9 +43,8 @@ MODEL_FILES: dict[str, ModelFile] = {
         "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"),
 }
 
-SAMPLES = {
-    "vtest.avi": "https://raw.githubusercontent.com/opencv/opencv/5.x/samples/data/vtest.avi",
-}
+SAMPLE_BASE = "https://raw.githubusercontent.com/opencv/opencv/5.x/samples/data/"
+SAMPLES = {name: SAMPLE_BASE + name for name in ("vtest.avi", "basketball1.png", "basketball2.png", "messi5.jpg")}
 
 
 def model_path(name: str, settings: Settings | None = None) -> Path:
