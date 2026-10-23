@@ -242,6 +242,19 @@ def stitch(chunks: list[ChunkResult], cfg: ScanTuning = ScanTuning()) -> list[Pe
     return merged
 
 
+def probe_start_time(path: str | Path) -> float | None:
+    """When the video was recorded, from its creation_time tag, if the file has one."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format_tags=creation_time", "-of", "csv=p=0",
+                          str(path)], capture_output=True, text=True).stdout.strip()
+    if not out:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(out.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 def probe_duration(path: str | Path) -> float:
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
                          capture_output=True, text=True, check=True).stdout.strip()

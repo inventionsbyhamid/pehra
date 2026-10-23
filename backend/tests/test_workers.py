@@ -110,3 +110,21 @@ def test_crashed_camera_is_restarted_and_bad_watches_are_skipped(manager, clip20
     first = m.handles[cam.id].process.pid
     m.handles[cam.id].process.kill()
     assert wait(lambda: m.handles[cam.id].process.pid != first and m.status(cam.id).running, 30)
+
+
+def test_rescanning_an_upload_replaces_its_timeline(manager, clip20, tmp_path):
+    import subprocess as sp
+    m, repo = manager
+    night = tmp_path / "night.mp4"
+    sp.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(clip20), "-c", "copy",
+            "-metadata", "creation_time=2026-10-20T23:30:00Z", str(night)], check=True)
+    cam = repo.add_camera(Camera(None, "Upload", "file", str(night), [LEFT]))
+    repo.add_watch(WatchRow(None, cam.id, "enters left", preset("enters", zone="left").model_dump(), True))
+    first = m.scan_upload(cam.id)
+    assert wait(lambda: m.scan(first)["state"] == "done", 120)
+    events, alerts = len(repo.query_events(camera_id=cam.id, limit=10000)), len(repo.list_alerts(cam.id, 500))
+    assert repo.get_camera(cam.id).last_scan["start_epoch"] == 1792539000.0
+    second = m.scan_upload(cam.id)
+    assert wait(lambda: m.scan(second)["state"] == "done", 120)
+    assert len(repo.query_events(camera_id=cam.id, limit=10000)) == events
+    assert len(repo.list_alerts(cam.id, 500)) == alerts and m.scan(second)["alert_ids"] == []

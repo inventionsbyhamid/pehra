@@ -27,7 +27,7 @@ from watchful.store.db import AlertRow, Camera
 from watchful.tuning import Tuning, load_tuning
 from watchful.vision.perceive import Needs
 from watchful.vision.pipeline import CameraPipeline
-from watchful.vision.scan import ScanPool, scan_file
+from watchful.vision.scan import ScanPool, probe_start_time, scan_file
 
 log = logging.getLogger("watchful.workers")
 
@@ -493,20 +493,24 @@ class WorkerManager:
             needs = needs_for([w for _, w in watches]) if watches else Needs(classes={"person"})
             if needs.embed and self._embedder is None:
                 self._embedder = make_embedder(self.settings)
-            start_epoch = time.time()
+            # the recording's own clock: its creation time, kept the same across rescans
+            start_epoch = ((cam.last_scan or {}).get("start_epoch") or probe_start_time(cam.url) or time.time())
             result = scan_file(cam.url, cam, watches, self._pool(), self.blobs, self.settings, self.tuning,
                                start_epoch=start_epoch, enrollments=self.repo.list_enrollments(),
                                embedder=self._embedder if needs.embed else None,
                                on_progress=lambda p: info.update(progress=round(p, 3)))
+            self.repo.delete_camera_events(cam.id)  # a rescan replaces the earlier timeline
             self.repo.add_events(result.events)
             info.update(state="checking", stats=asdict(result.stats))
             cam.last_scan = {**asdict(result.stats), "start_epoch": start_epoch, "finished_at": time.time()}
             self.repo.update_camera(cam)
             self.metrics.put("ScanRealtimeFactor", result.stats.x_realtime)
             self.metrics.put("ScanSecondsPerMinute", result.stats.wall_s / max(result.stats.duration_s / 60, 1e-6))
+            dedupe_s = self.settings.alert_dedupe_days * 86400 + max(0.0, time.time() - start_epoch)
+            fresh = [c for c in result.candidates if not self.repo.alert_fingerprint_exists(c.fingerprint, dedupe_s)]
             packs = [file_pack(cam.url, start_epoch, c, result.paths.get(c.track_id, []),
                                result.poses.get(c.track_id, []), self.tuning.evidence, cam.zones)
-                     for c in result.candidates]
+                     for c in fresh]
             futures = [self.verifiers.submit(self._verify_and_store, p) for p in packs]
             info["alert_ids"] = [i for i in (f.result() for f in futures) if i]
             info.update(state="done", progress=1.0)
