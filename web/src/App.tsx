@@ -9,7 +9,7 @@ import CameraView from "./pages/CameraView";
 import Alerts from "./pages/Alerts";
 import Ask from "./pages/Ask";
 import TimelinePage from "./pages/Timeline";
-import FindPerson from "./pages/FindPerson";
+import Find from "./pages/Find";
 import People from "./pages/People";
 import Numbers from "./pages/Numbers";
 import Terms from "./pages/Terms";
@@ -44,7 +44,7 @@ export default function App() {
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/alerts/:id" element={<Alerts />} />
           <Route path="/ask" element={<Ask />} />
-          <Route path="/find" element={<FindPerson />} />
+          <Route path="/find" element={<Find />} />
           <Route path="/people" element={<People />} />
           <Route path="/numbers" element={<Numbers />} />
           <Route path="/terms" element={<Terms />} />

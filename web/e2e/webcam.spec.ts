@@ -5,7 +5,8 @@ const PASSWORD = process.env.DEMO_PASSWORD ?? "";
 const NAME = "Test webcam";
 
 // Chromium runs with a fake camera (see playwright.config.ts), so this covers the whole loop:
-// getUserMedia, JPEG frames over /ws/cameras/{id}/push, analysis, annotated frames back over /ws/cameras/{id}.
+// getUserMedia, JPEG frames up over /ws/cameras/{id}/push, analysis, overlay messages back over /ws/cameras/{id}
+// drawn over the browser's own video.
 test("webcam frames go to the server and come back analysed", async ({ page }) => {
   test.setTimeout(120_000);
   expect(PASSWORD, "set DEMO_PASSWORD").not.toBe("");
@@ -24,8 +25,10 @@ test("webcam frames go to the server and come back analysed", async ({ page }) =
   await page.getByRole("button", { name: "Start webcam" }).click();
   await pushed;
 
-  await expect(page.getByRole("img", { name: /Live camera picture/ })).toBeVisible({ timeout: 60_000 });
+  const overlay = page.getByRole("img", { name: /Live camera picture/ });
+  await expect(page.locator("video.stage-video")).toHaveJSProperty("paused", false, { timeout: 30_000 });
   await expect(page.getByText(/\d+ sent\./)).toBeVisible({ timeout: 30_000 });
+  await expect.poll(async () => Number(await overlay.getAttribute("data-received") ?? 0), { timeout: 60_000 }).toBeGreaterThan(0);
   await expect.poll(async () => {
     const all = await (await page.request.get("/api/cameras")).json();
     return all.find((c: { id: string }) => c.id === cam.id)?.status.stats.frames ?? 0;

@@ -183,9 +183,11 @@ test("flows desktop", async ({ page }) => {
   }
   if (want("find-result")) {
     await page.goto("/find");
-    await page.getByLabel("What do they look like?").fill("a person in a dark jacket");
-    await page.getByRole("button", { name: "Search footage" }).click();
-    await page.locator(".sightings, .notice-error").first().waitFor({ timeout: 90_000 }).catch(() => {});
+    await page.getByLabel("Find anything").fill("a person in a dark jacket");
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/api/search"), { timeout: 90_000 }).catch(() => {}),
+      page.getByRole("button", { name: "Search", exact: true }).click(),
+    ]);
     await page.waitForTimeout(1500);
     await shot(page, "desktop-18-find-results");
   }

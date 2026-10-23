@@ -1,5 +1,5 @@
 import type {
-  AddWatchResult, Alert, Answer, Camera, Metrics, Person, Preset, Scan, Sighting, Timeline, WatchRow, Zone,
+  AddWatchResult, Alert, Answer, Camera, Metrics, Person, Preset, Scan, SearchResponse, Timeline, WatchRow, Zone,
 } from "./types";
 
 export class ApiError extends Error {
@@ -51,6 +51,8 @@ export const api = {
   logout: () => post<{ ok: boolean }>("/api/logout"),
 
   cameras: () => get<Camera[]>("/api/cameras"),
+  camera: (id: string) => get<Camera>(`/api/cameras/${id}`),
+  deleteCamera: (id: string) => request<{ ok: boolean }>("DELETE", `/api/cameras/${id}`),
   addCamera: (name: string, kind: "stream" | "webcam", url?: string) =>
     post<Camera>("/api/cameras", { name, kind, url }),
   patchCamera: (id: string, patch: { name?: string; zones?: Zone[]; enabled?: boolean }) =>
@@ -78,9 +80,9 @@ export const api = {
     post<Answer>("/api/ask", { question, camera_id: cameraId || null }),
   timeline: (cameraId: string) => get<Timeline>(`/api/cameras/${cameraId}/timeline`),
 
-  searchPerson: (body: { person_id?: string; description?: string; camera_id?: string } | FormData) =>
-    post<Sighting[]>("/api/search/person", body),
-  lookout: (body: { camera_ids: string[]; person_id?: string; description?: string; event_id?: string }) =>
+  search: (body: { text?: string; person_id?: string; camera_id?: string; since?: number; until?: number } | FormData) =>
+    post<SearchResponse>("/api/search", body),
+  lookout: (body: { camera_ids: string[]; person_id?: string; description?: string; event_id?: string; alert_id?: string }) =>
     post<{ watch_ids: string[] }>("/api/lookouts", body),
 
   people: () => get<Person[]>("/api/people"),

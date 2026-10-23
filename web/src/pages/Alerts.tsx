@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, blobUrl, clipUrl } from "../api";
 import { AlertSummary } from "../components/AlertSummary";
+import { WatchAgainButton } from "../components/PersonActions";
 import { AlertStatusTag, SeverityTag } from "../components/Tags";
 import { Trace } from "../components/Trace";
 import { WatchSentence } from "../components/WatchSentence";
@@ -37,8 +38,8 @@ function Clip({ alert }: { alert: Alert }) {
   );
 }
 
-function Detail({ alert, camera, watch, people, onChange }: {
-  alert: Alert; camera?: Camera; watch?: WatchRow; people: Record<string, string>; onChange: (a: Alert) => void;
+function Detail({ alert, camera, cameras, watch, people, onChange }: {
+  alert: Alert; camera?: Camera; cameras: Camera[]; watch?: WatchRow; people: Record<string, string>; onChange: (a: Alert) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +52,7 @@ function Detail({ alert, camera, watch, people, onChange }: {
   const decided = alert.status === "approved" || alert.status === "declined";
   const needsDecision = !decided && (alert.status === "awaiting_human" || (alert.severity === "critical" && alert.status !== "dismissed"));
   const question = alert.trace.find((t) => t.tool === "ask_human")?.args.question as string | undefined;
+  const aboutPerson = alert.track_id != null && (!watch || watch.watch.subject.classes.includes("person"));
 
   async function act(kind: "approve" | "decline" | "up" | "down") {
     setBusy(kind);
@@ -124,6 +126,11 @@ function Detail({ alert, camera, watch, people, onChange }: {
           </button>
         </div>
         {alert.feedback && <span className="xsmall muted">Thanks, noted.</span>}
+        {aboutPerson && (
+          <span className="feedback-extra">
+            <WatchAgainButton key={alert.id} alertId={alert.id} cameras={cameras} defaultCamera={alert.camera_id} />
+          </span>
+        )}
       </div>
 
       {watch && (
@@ -217,7 +224,7 @@ export default function Alerts() {
 
         <div className="alerts-detail">
           {selected ? (
-            <Detail alert={selected} camera={camById[selected.camera_id]} watch={selected.watch_id ? watches[selected.watch_id] : undefined}
+            <Detail alert={selected} camera={camById[selected.camera_id]} cameras={cameras.data ?? []} watch={selected.watch_id ? watches[selected.watch_id] : undefined}
               people={peopleMap} onChange={update} />
           ) : id && alerts.data ? (
             <div className="empty"><p>That alert is not in this list. It may have been dismissed.</p><Link to="/alerts">See all alerts</Link></div>

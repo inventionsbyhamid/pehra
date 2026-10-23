@@ -8,9 +8,10 @@ function useDialog() {
 }
 
 // "Watch for this person again": a lookout built from one sighting's clothing, ending after 24 hours.
-export function WatchAgainButton({ eventId, cameras, defaultCamera, label = "Watch for this person again" }: {
-  eventId: string | null; cameras: Camera[]; defaultCamera?: string; label?: string;
+export function WatchAgainButton({ eventId, alertId, cameras, defaultCamera, label = "Watch for this person again" }: {
+  eventId?: string | null; alertId?: string | null; cameras: Camera[]; defaultCamera?: string; label?: string;
 }) {
+  const ref = eventId ?? alertId ?? null;
   const d = useDialog();
   const live = cameras.filter((c) => c.kind !== "file");
   const [chosen, setChosen] = useState<string[]>(() => live.map((c) => c.id));
@@ -20,11 +21,11 @@ export function WatchAgainButton({ eventId, cameras, defaultCamera, label = "Wat
 
   async function start(e: React.FormEvent) {
     e.preventDefault();
-    if (!eventId) return;
+    if (!ref) return;
     setBusy(true);
     setError(null);
     try {
-      const r = await api.lookout({ camera_ids: chosen, event_id: eventId });
+      const r = await api.lookout(eventId ? { camera_ids: chosen, event_id: eventId } : { camera_ids: chosen, alert_id: alertId! });
       setDone(`Watching ${r.watch_ids.length === 1 ? "1 camera" : `${r.watch_ids.length} cameras`} for this person for the next 24 hours.`);
       d.close();
     } catch (err) {
@@ -34,15 +35,15 @@ export function WatchAgainButton({ eventId, cameras, defaultCamera, label = "Wat
     }
   }
 
-  if (!eventId) return null;
+  if (!ref) return null;
   if (done) return <p className="small notice notice-good" role="status">{done}</p>;
   const targets = live.length ? live : cameras.filter((c) => c.id === defaultCamera);
   return (
     <>
       <button type="button" className="btn btn-sm" onClick={() => { setChosen(targets.map((c) => c.id)); d.open(); }}>{label}</button>
-      <dialog ref={d.ref} className="sheet" aria-labelledby={`wa-${eventId}`}>
+      <dialog ref={d.ref} className="sheet" aria-labelledby={`wa-${ref}`}>
         <form className="stack" onSubmit={start}>
-          <h2 id={`wa-${eventId}`} className="h2">Watch for this person again</h2>
+          <h2 id={`wa-${ref}`} className="h2">Watch for this person again</h2>
           <p className="small">Watchful looks for someone dressed the same way and tells you when they show up. This uses clothing, not faces, and ends on its own after 24 hours.</p>
           <fieldset className="fieldset stack">
             <legend className="label">On these cameras</legend>

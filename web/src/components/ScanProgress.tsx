@@ -4,22 +4,6 @@ import { api } from "../api";
 import { plural, scanLine } from "../format";
 import type { Scan } from "../types";
 
-export function rememberScan(cameraId: string, scan: Scan) {
-  try {
-    localStorage.setItem(`watchful.scan.${cameraId}`, JSON.stringify(scan.stats));
-  } catch {
-    // storage is optional
-  }
-}
-
-export function lastScan(cameraId: string): Scan["stats"] {
-  try {
-    return JSON.parse(localStorage.getItem(`watchful.scan.${cameraId}`) ?? "null");
-  } catch {
-    return null;
-  }
-}
-
 export function ScanProgress({ scanId, cameraId, onDone, showLinks = true }: {
   scanId: string; cameraId: string; onDone?: (s: Scan) => void; showLinks?: boolean;
 }) {
@@ -34,7 +18,6 @@ export function ScanProgress({ scanId, cameraId, onDone, showLinks = true }: {
         const s = await api.scan(scanId);
         if (stop) return;
         setScan(s);
-        if (s.stats) rememberScan(cameraId, s);
         if (s.state === "done" || s.state === "failed") {
           onDone?.(s);
           return;

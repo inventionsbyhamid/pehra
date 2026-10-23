@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, frameUrl } from "../api";
 import { AlertSummary } from "../components/AlertSummary";
 import { LiveView, type LiveHandle, type LiveStatus } from "../components/LiveView";
-import { lastScan, ScanProgress } from "../components/ScanProgress";
+import { ScanProgress } from "../components/ScanProgress";
 import { cameraState, KIND_WORDS } from "../components/Tags";
 import { useWebcam } from "../components/useWebcam";
 import { WatchesPanel } from "../components/WatchesPanel";
@@ -38,26 +38,27 @@ function Stage({ cam, status, setStatus, onAlert, liveRef, webcam }: {
       </div>
     );
   }
-  const idle = cam.kind === "webcam"
-    ? webcam.state === "on" ? "Your webcam is connected. The first analysed picture is on its way." : "Start the webcam to see it here with what Watchful notices drawn on top."
-    : cam.kind === "demo" ? "Starting the demo camera. The first picture takes a few seconds."
+  if (cam.kind === "webcam") {
+    // the browser shows its own camera at full frame rate; the server adds boxes from its analysis
+    return (
+      <LiveView ref={liveRef} cameraId={cam.id} zones={cam.zones} mode="overlay" video={webcam.video}
+        videoActive={webcam.state === "on"} onStatus={setStatus} onAlert={onAlert}
+        idle={webcam.state === "starting" ? "Starting your webcam." : "Start the webcam to see it here with what Watchful notices drawn on top."}>
+        <video ref={webcam.video} className="stage-video" muted playsInline aria-hidden="true" />
+      </LiveView>
+    );
+  }
+  const idle = cam.kind === "demo" ? "Starting the demo camera. The first picture takes a few seconds."
     : status?.source === "reconnecting" ? "Can't reach this stream yet. Watchful keeps trying, waiting a little longer each time."
     : "Connecting to the stream.";
-  return (
-    <div className="stage">
-      <LiveView ref={liveRef} cameraId={cam.id} onStatus={setStatus} onAlert={onAlert} idle={idle} />
-      {cam.kind === "webcam" && (
-        <video ref={webcam.video} className={webcam.state === "on" ? "webcam-preview" : "webcam-hidden"} muted playsInline
-          aria-label="Your webcam as it is sent, before analysis" />
-      )}
-    </div>
-  );
+  return <LiveView ref={liveRef} cameraId={cam.id} zones={cam.zones} mode="frames" onStatus={setStatus} onAlert={onAlert} idle={idle} />;
 }
 
 export default function CameraView() {
   const { id = "" } = useParams();
   const [params, setParams] = useSearchParams();
-  const camera = useLoad(() => api.cameras().then((all) => all.find((c) => c.id === id) ?? null), [id], 10000);
+  const navigate = useNavigate();
+  const camera = useLoad(() => api.camera(id), [id], 10000);
   const alerts = useLoad(() => api.alerts(id), [id], 20000);
   const [status, setStatus] = useState<LiveStatus | null>(null);
   const [fresh, setFresh] = useState<Alert[]>([]);
@@ -65,8 +66,11 @@ export default function CameraView() {
   const [saving, setSaving] = useState(false);
   const [zoneError, setZoneError] = useState<string | null>(null);
   const [scanId, setScanId] = useState<string | null>(null);
+  const [scanBusy, setScanBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const liveRef = useRef<LiveHandle>(null);
+  const confirmRemove = useRef<HTMLDialogElement>(null);
+  const [removing, setRemoving] = useState(false);
   const webcam = useWebcam(id);
   const cam = camera.data;
   useTitle(cam?.name ?? "Camera");
@@ -99,10 +103,10 @@ export default function CameraView() {
     ? { ...cam, status: { ...cam.status, running: status.source !== "stopped", source: status.source, fps: status.fps, loops: status.loops } }
     : cam;
   const st = cameraState(live);
-  const last = lastScan(cam.id);
+  const last = cam.last_scan;
 
   function startEditing() {
-    const snap = cam!.kind === "stream" || cam!.kind === "webcam" ? liveRef.current?.snapshot() : null;
+    const snap = cam!.kind === "file" ? null : liveRef.current?.snapshot();
     setZoneError(null);
     setEditing(snap ?? frameUrl(cam!.id, String(Date.now())));
   }
@@ -125,8 +129,23 @@ export default function CameraView() {
     setActionError(null);
     try {
       setScanId((await api.rescan(cam!.id)).scan_id);
+      setScanBusy(true);
     } catch (e) {
       setActionError((e as Error).message);
+    }
+  }
+
+  async function remove() {
+    setRemoving(true);
+    setActionError(null);
+    try {
+      await api.deleteCamera(cam!.id);
+      navigate("/", { replace: true });
+    } catch (e) {
+      setActionError((e as Error).message);
+      confirmRemove.current?.close();
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -157,7 +176,7 @@ export default function CameraView() {
               {webcam.on ? "Stop webcam" : "Start webcam"}
             </button>
           )}
-          {cam.kind === "file" && <button className="btn" onClick={rescan} disabled={!!scanId}>Scan again</button>}
+          {cam.kind === "file" && <button className="btn" onClick={rescan} disabled={scanBusy}>Scan again</button>}
           <button className="btn" onClick={() => (editing ? setEditing(null) : startEditing())} aria-pressed={!!editing}>
             {editing ? "Close zones" : cam.zones.length ? "Edit zones" : "Draw zones"}
           </button>
@@ -165,8 +184,20 @@ export default function CameraView() {
           {cam.kind !== "file" && (
             <button className="btn btn-quiet" onClick={() => setEnabled(!cam.enabled)}>{cam.enabled ? "Pause camera" : "Resume camera"}</button>
           )}
+          <button className="btn btn-quiet btn-danger" onClick={() => confirmRemove.current?.showModal()}>Remove camera</button>
         </div>
       </div>
+
+      <dialog ref={confirmRemove} className="sheet" aria-labelledby="remove-cam-title">
+        <div className="stack">
+          <h2 id="remove-cam-title" className="h2">Remove {cam.name}?</h2>
+          <p className="small">This stops the camera and deletes its watches, events, alerts and clips{cam.kind === "file" ? ", and the uploaded video" : ""}. It can't be undone.</p>
+          <div className="row">
+            <button className="btn btn-primary" onClick={remove} disabled={removing}>{removing ? "Removing" : "Remove camera"}</button>
+            <button className="btn" onClick={() => confirmRemove.current?.close()}>Keep it</button>
+          </div>
+        </div>
+      </dialog>
 
       {webcam.error && <p className="notice notice-error" role="alert">{webcam.error}</p>}
       {actionError && <p className="notice notice-error" role="alert">{actionError}</p>}
@@ -186,7 +217,7 @@ export default function CameraView() {
           {cam.kind === "file" && (
             <div className="panel stack">
               {scanId ? (
-                <ScanProgress scanId={scanId} cameraId={cam.id} showLinks={false} onDone={() => { alerts.reload(); }} />
+                <ScanProgress scanId={scanId} cameraId={cam.id} showLinks={false} onDone={() => { setScanBusy(false); alerts.reload(); camera.reload(); }} />
               ) : last ? (
                 <p className="scan-line"><strong className="num">{scanLine(last)}</strong></p>
               ) : (

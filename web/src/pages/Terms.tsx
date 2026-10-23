@@ -15,7 +15,7 @@ export default function Terms({ standalone }: { standalone?: boolean }) {
 
       <section>
         <h2>What is recorded</h2>
-        <p>For each camera, Watchful keeps a log of events: when something came into or left a zone, posture changes such as a fall, and camera problems such as being covered or moved. Each event has a time and, where it helps, a small picture of the moment, a summary of clothing colours and a numeric description of the picture used when you search by description. None of this is face data.</p>
+        <p>For each camera, Watchful keeps a log of events: when something came into or left a zone, posture changes such as a fall, and camera problems such as being covered or moved. Each event has a time and, where it helps, a small picture of the moment and a summary of clothing colours. To make the footage searchable, Watchful also keeps small pictures of moments it saw, each with a numeric description of what is in it. None of this is face data.</p>
         <p>When a watch is triggered, Watchful saves a short clip from a few seconds before to a few seconds after the moment, and the steps the AI took to check it. Live video is not recorded in full.</p>
         <p>Only the moments OpenCV flags are sent to the AI model for checking, along with a few frames around them. Questions you ask are sent with the event log they need.</p>
       </section>
@@ -23,7 +23,7 @@ export default function Terms({ standalone }: { standalone?: boolean }) {
       <section>
         <h2>Who is recognised</h2>
         <p>Faces are recognised only for people enrolled under People, and only after you confirm they have agreed. Everyone else stays unknown. Watchful never stores face data for people who are not enrolled, and never matches faces against any outside database.</p>
-        <p>Searching with a photo needs the same consent. The photo is used for that search only and is not kept, and a photo of a stranger can't start a lookout.</p>
+        <p>Searching with a photo of a person needs the same consent. The photo is used for that search only and is not kept, and a photo of a stranger can't start a lookout.</p>
         <p>"Watch for this person again" uses clothing, not faces, and ends on its own after 24 hours.</p>
       </section>
 

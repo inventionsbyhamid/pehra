@@ -5,7 +5,7 @@ import { AddCamera } from "../components/AddCamera";
 import { AlertSummary } from "../components/AlertSummary";
 import { cameraState, KIND_WORDS } from "../components/Tags";
 import { Thumb } from "../components/Thumb";
-import { scanLine } from "../format";
+import { clockDuration, scanLine } from "../format";
 import { useLoad, useTitle } from "../hooks";
 import type { Camera } from "../types";
 
@@ -25,6 +25,7 @@ function Tile({ cam }: { cam: Camera }) {
         <div className="tile-facts small">
           <span className="row" style={{ gap: 6 }}><span className={`live-dot ${st.tone}`} aria-hidden="true" />{st.label}</span>
           {live && cam.status.fps > 0 && <span className="num">{cam.status.fps.toFixed(1)} fps</span>}
+          {cam.last_scan && <span className="num">{clockDuration(cam.last_scan.duration_s)} scanned in {cam.last_scan.wall_s.toFixed(1)} s</span>}
           <span className="muted">{KIND_WORDS[cam.kind]}</span>
           <span className="muted">{cam.zones.length === 1 ? "1 zone" : `${cam.zones.length} zones`}</span>
         </div>
@@ -40,7 +41,7 @@ export default function Cameras() {
   const metrics = useLoad(() => api.metrics(), [], 30000);
   const names = useMemo(() => Object.fromEntries((cameras.data ?? []).map((c) => [c.id, c.name])), [cameras.data]);
   const scans = metrics.data?.scans ?? [];
-  const latestScan = scans.at(-1);
+  const latestScan = scans.at(-1) ?? (cameras.data ?? []).filter((c) => c.last_scan).at(-1)?.last_scan;
   const list = cameras.data ?? [];
 
   return (

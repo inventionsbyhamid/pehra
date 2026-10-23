@@ -56,7 +56,7 @@ function Swimlanes({ people, zones, names }: { people: PeopleGroup[]; zones: str
   return (
     <figure className="lanes">
       <figcaption className="spread">
-        <span className="small">Each row is one person. The bar runs from when they were first seen to when they were last seen.</span>
+        <span className="small">Each row is one person. Each bar is a stretch of time they were in view.</span>
         <span className="lane-legend small">
           {zones.map((z) => (
             <span key={z} className="row" style={{ gap: 5 }}><span className="swatch" style={{ background: zoneColor(zoneIndex(z)) }} />{z}</span>
@@ -80,7 +80,10 @@ function Swimlanes({ people, zones, names }: { people: PeopleGroup[]; zones: str
             </a>
             <div className="lane-track">
               {ticks(lo, hi).map((t) => <span key={t} className="grid" style={{ left: x(t) }} />)}
-              <span className="lane-bar" style={{ left: x(p.first_ts), width: `max(4px, calc(${x(p.last_ts)} - ${x(p.first_ts)}))` }} />
+              {(p.tracks?.length ? p.tracks : [{ track_id: -1, first_ts: p.first_ts, last_ts: p.last_ts }]).map((t) => (
+                <span key={t.track_id} className="lane-bar" title={`In view ${timeOf(t.first_ts)} to ${timeOf(t.last_ts)}`}
+                  style={{ left: x(t.first_ts), width: `max(4px, calc(${x(t.last_ts)} - ${x(t.first_ts)}))` }} />
+              ))}
               {p.visits.map((v) => (
                 <button key={v.event_id} type="button" className={`lane-mark ${v.kind === "enter" ? "in" : "out"}`}
                   style={{ left: x(v.ts), color: zoneColor(zoneIndex(v.zone)) }}

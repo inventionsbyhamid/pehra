@@ -87,6 +87,12 @@ function conditionParts(c: Condition): Part[] {
     case "returns":
       return [{ text: `keeps coming back, ${v} times`, slot: "does" },
         { text: `within ${minutes(c.params.window_s, 1800)}`, slot: "how long" }];
+    case "looks_like": {
+      const look = String(c.params.text ?? (typeof v === "string" ? v : "") ?? "");
+      const not = c.params.not_text ? String(c.params.not_text) : "";
+      return [{ text: "looks like" }, { text: look || "the description", slot: "looks like" },
+        ...(not ? [{ text: "rather than" }, { text: not, slot: "instead of" }] : [])];
+    }
     case "zone_looks_like":
       return [{ text: where || "the view", slot: "where" }, { text: "looks like" },
         { text: String(c.params.text ?? "something"), slot: "looks like" },

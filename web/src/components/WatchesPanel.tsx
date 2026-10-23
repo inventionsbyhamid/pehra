@@ -15,6 +15,7 @@ const PRESET_TITLES: Record<string, string> = {
   possible_intruder: "Possible intruder",
   lookout: "Look out for someone",
   gate_left_open: "Left open",
+  looks_like_check: "Looks like",
 };
 
 const CLASS_SETS: Record<string, string[]> = {
@@ -23,6 +24,14 @@ const CLASS_SETS: Record<string, string[]> = {
   Bicycles: ["bicycle"],
   Pets: ["dog", "cat"],
   Bags: ["backpack", "handbag", "suitcase"],
+};
+
+const KNOWN = new Set(["classes", "zone", "value", "who", "text", "not_text", "hold", "start", "end", "entries", "climbs"]);
+
+const TEXT_HINTS: Record<string, [string, string]> = {
+  lookout: ["a man in a red jacket", ""],
+  gate_left_open: ["an open gate", "a closed gate"],
+  looks_like_check: ["a person wearing a helmet", "a person without a helmet"],
 };
 
 const DEFAULTS: Record<string, unknown> = {
@@ -57,6 +66,7 @@ function PresetForm({ preset, camera, people, onAdded }: {
   const [error, setError] = useState<string | null>(null);
   const set = (k: string, v: unknown) => setValues({ ...values, [k]: v });
   const needsZone = fields.includes("zone");
+  const needsText = fields.includes("text") && preset.preset !== "lookout";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -66,8 +76,9 @@ function PresetForm({ preset, camera, people, onAdded }: {
       if (f === "classes") fill.classes = CLASS_SETS[v as string] ?? ["person"];
       else if (f === "value" || f === "hold") fill[f] = Number(v);
       else if (f === "who") { if (v) fill.who = v; }
-      else if (f === "text") { if (v) fill.text = v; }
-      else fill[f] = v;
+      else if (f === "text" || f === "not_text") { if (v) fill[f] = v; }
+      else if (KNOWN.has(f)) fill[f] = v;
+      else if (v !== "" && v != null) fill[f] = /^\d+(\.\d+)?$/.test(String(v)) ? Number(v) : v;
     }
     setBusy(true);
     setError(null);
@@ -139,16 +150,22 @@ function PresetForm({ preset, camera, people, onAdded }: {
           </label>
         )}
         {fields.includes("text") && (
-          <label className="field"><span>{preset.preset === "lookout" ? "Description" : "Looks like"}</span>
+          <label className="field field-wide"><span>{preset.preset === "lookout" ? "Description" : "Looks like"}</span>
             <input className="input" value={values.text as string} onChange={(e) => set("text", e.target.value)}
-              placeholder={preset.preset === "lookout" ? "a man in a red jacket" : "an open gate"} />
+              placeholder={TEXT_HINTS[preset.preset]?.[0] ?? "what it looks like"} />
           </label>
         )}
         {fields.includes("not_text") && (
-          <label className="field"><span>Instead of</span>
-            <input className="input" value={values.not_text as string} onChange={(e) => set("not_text", e.target.value)} />
+          <label className="field field-wide"><span>Instead of</span>
+            <input className="input" value={values.not_text as string} onChange={(e) => set("not_text", e.target.value)}
+              placeholder={TEXT_HINTS[preset.preset]?.[1] ?? "what it looks like normally"} />
           </label>
         )}
+        {fields.filter((f) => !KNOWN.has(f)).map((f) => (
+          <label key={f} className="field"><span>{f.charAt(0).toUpperCase() + f.slice(1).replace(/_/g, " ")}</span>
+            <input className="input" value={(values[f] as string) ?? ""} onChange={(e) => set(f, e.target.value)} />
+          </label>
+        ))}
         {fields.includes("hold") && (
           <label className="field"><span>For how many seconds</span>
             <input className="input" type="number" min={1} value={values.hold as number} onChange={(e) => set("hold", e.target.value)} />
@@ -175,7 +192,7 @@ function PresetForm({ preset, camera, people, onAdded }: {
       )}
       {error && <p className="notice notice-error" role="alert">{plain(error)}</p>}
       <div>
-        <button className="btn btn-primary" disabled={busy || (preset.preset === "lookout" && !values.who && !values.text)}>
+        <button className="btn btn-primary" disabled={busy || (preset.preset === "lookout" && !values.who && !values.text) || (needsText && !values.text)}>
           {busy ? "Adding" : "Add watch"}
         </button>
       </div>

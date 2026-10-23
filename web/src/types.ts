@@ -27,6 +27,15 @@ export interface Camera {
   enabled: boolean;
   tuning: Record<string, unknown>;
   status: { running: boolean; source: string; fps: number; loops: number; stats: PipelineStats };
+  last_scan: ScanStats | null;
+}
+
+export interface LiveTrack {
+  id: number;
+  cls: string;
+  box: [number, number, number, number];
+  label: string | null;
+  posture: string | null;
 }
 
 export interface Condition {
@@ -103,6 +112,7 @@ export interface Alert {
   trace: TraceStep[];
   feedback: "up" | "down" | null;
   fingerprint: string;
+  track_id: number | null;
 }
 
 export interface AnswerItem {
@@ -151,6 +161,7 @@ export interface PeopleGroup {
   ambiguous: boolean;
   thumbnail_url: string | null;
   visits: Visit[];
+  tracks?: { track_id: number; first_ts: number; last_ts: number }[];
 }
 
 export interface Timeline {
@@ -158,15 +169,33 @@ export interface Timeline {
   people: PeopleGroup[];
 }
 
-export interface Sighting {
+export interface SearchQuery {
+  looks_like: string | null;
+  camera_id: string | null;
+  since: number | null;
+  until: number | null;
+  zones: string[];
+}
+
+export interface SearchResult {
+  kind: "scene" | "object";
   camera_id: string;
-  track_id: number;
-  start_ts: number;
-  end_ts: number;
+  ts: number;
+  start_ts: number | null;
+  end_ts: number | null;
   thumbnail_url: string | null;
-  clip_url: string | null;
   score: number;
-  method: "face" | "description";
+  confirmed: boolean;
+  method: "embedding" | "face";
+  event_id: string | null;
+  track_id: number | null;
+  cls: string | null;
+}
+
+export interface SearchResponse {
+  query: SearchQuery | null;
+  problem: string | null;
+  results: SearchResult[];
 }
 
 export interface Person {
@@ -204,6 +233,7 @@ export interface Metrics {
 }
 
 export type LiveMessage =
-  | { type: "frame"; ts: number; jpeg_b64: string }
+  | { type: "frame"; ts: number; jpeg_b64: string; width: number; height: number; tracks: LiveTrack[] }
+  | { type: "overlay"; ts: number; tracks: LiveTrack[] }
   | { type: "alert"; alert: Alert }
   | { type: "status"; camera_id: string; source_status: string; loops: number; fps: number; stats: PipelineStats; stopped?: boolean };
