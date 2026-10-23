@@ -23,6 +23,7 @@ class TrackState:
     posture: str = "upright"
     known_person_id: str | None = None
     known_name: str | None = None
+    known_by: str | None = None  # "face", or "clothes" when carried from a recent face match
     signature: np.ndarray | None = None
     embedding: np.ndarray | None = None
     keyframe_key: str | None = None
@@ -61,6 +62,7 @@ class Reasoner:
         self.zones = ZoneTracker(camera.zones)
         self.states: dict[int, TrackState] = {}
         self.falls: dict[int, FallDetector] = {}
+        self.recent_known: dict[str, tuple[str, np.ndarray, float]] = {}  # person id to (name, clothes, last seen)
 
     def step(self, p: Perception) -> Tick:
         events: list[EventRow] = []
@@ -74,6 +76,7 @@ class Reasoner:
             if o.started:
                 events.append(self._event(s, "track_start", o.ts))
 
+        self._carry_names(active, p.ts)
         zone_events = self.zones.update([_Box(s.track_id, s.cls, s.box, s.last_ts) for s in active],
                                         [_Box(s.track_id, s.cls, s.box, s.last_ts) for s in ended], p.ts, p.size)
         for s in active:
@@ -104,6 +107,21 @@ class Reasoner:
                                    {"moving": p.moving, "tracks": len(active)}, p.scene_key, None, None, None))
         return Tick(p.ts, p.size, p.moving, active, events, ended, p.pos)
 
+    def _carry_names(self, tracks: list[TrackState], ts: float) -> None:
+        """A recognised person keeps their name with their back to the camera: same clothes, within minutes."""
+        from watchful.vision.appearance import same_person
+        cfg = self.t.appearance
+        for s in tracks:
+            if s.known_person_id and s.signature is not None and s.known_by == "face":
+                self.recent_known[s.known_person_id] = (s.known_name, s.signature, ts)
+        self.recent_known = {k: v for k, v in self.recent_known.items() if ts - v[2] <= cfg.continuity_s}
+        for s in tracks:
+            if s.cls != "person" or s.known_person_id or s.signature is None or not self.recent_known:
+                continue
+            pid, (name, sig, _) = min(self.recent_known.items(), key=lambda kv: same_person(kv[1][1], s.signature))
+            if same_person(sig, s.signature) < cfg.carry_name:
+                s.known_person_id, s.known_name, s.known_by = pid, name, "clothes"
+
     @staticmethod
     def _apply(s: TrackState, o: Observation) -> None:
         s.box, s.cls = o.box, o.cls
@@ -113,7 +131,7 @@ class Reasoner:
         if o.pose is not None:
             s.pose = o.pose
         if o.face is not None:
-            s.known_person_id, s.known_name = o.face.person_id, o.face.name
+            s.known_person_id, s.known_name, s.known_by = o.face.person_id, o.face.name, "face"
         for name in ("signature", "embedding", "keyframe_key", "best_key"):
             value = getattr(o, name)
             if value is not None:

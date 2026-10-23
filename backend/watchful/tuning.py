@@ -68,6 +68,7 @@ class FaceTuning(_Section):
 class AppearanceTuning(_Section):
     same: float = 0.35  # Bhattacharyya distance under which clothes match
     continuity_s: float = 600.0  # a face named group takes look alike tracks this close in time
+    carry_name: float = 0.25  # stricter clothing distance for carrying a recognised name to a track with no face
     torso_top: float = 0.2
     torso_bottom: float = 0.6
     torso_side: float = 0.2
