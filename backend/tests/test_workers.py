@@ -58,10 +58,13 @@ def test_demo_camera_alerts_once_per_moment(manager, clip20):
     alerts = repo.list_alerts(cam.id, limit=500)
     assert alerts and all(a.clip_key and a.status == "alert" for a in alerts)
     assert len({a.fingerprint for a in alerts}) == len(alerts)
-    kinds = set()
+    kinds, frame = set(), None
     while not q.empty():
-        kinds.add(q.get_nowait()["type"])
+        msg = q.get_nowait()
+        kinds.add(msg["type"])
+        frame = msg if msg["type"] == "frame" else frame
     assert "frame" in kinds and "alert" in kinds
+    assert frame["width"] > 0 and isinstance(frame["tracks"], list)
     m.stop(cam.id)
     assert wait(lambda: not m.status(cam.id).running, 10)
 

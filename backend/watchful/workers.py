@@ -2,6 +2,8 @@
 Candidates come back with their evidence; the AI checks them here and alerts are stored."""
 import json
 import logging
+
+import cv2
 import multiprocessing as mp
 import queue
 import secrets
@@ -35,6 +37,16 @@ def should_record(repo, camera: Camera) -> bool:
     return camera.kind != "demo" or not repo.query_events(camera_id=camera.id, limit=1)
 
 
+def overlay_tracks(tick) -> list[dict]:
+    """The latest tracks for the live view, boxes normalized 0..1 so the browser can draw them."""
+    w, h = tick.size
+    if not w or not h:
+        return []
+    return [{"id": s.track_id, "cls": s.cls, "label": s.known_name or s.cls, "posture": s.posture,
+             "box": [round(s.box[0] / w, 4), round(s.box[1] / h, 4), round(s.box[2] / w, 4), round(s.box[3] / h, 4)]}
+            for s in tick.tracks]
+
+
 @dataclass
 class WorkerStatus:
     running: bool = False
@@ -46,7 +58,7 @@ class WorkerStatus:
 
 
 def _source(camera: Camera, settings: Settings):
-    fps, width = settings.analysis_fps, settings.analysis_width
+    fps, width = max(settings.display_fps, settings.analysis_fps), settings.analysis_width
     if camera.kind == "demo":
         return FileSource(camera.url, fps, loop=True, realtime=settings.demo_realtime, width=width)
     if camera.kind == "file":
@@ -72,10 +84,12 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
     pipe = CameraPipeline(camera, repo, blobs, faces, settings, tuning, needs, embedder)
     engine = RuleEngine(watches, camera.zones, tuning, settings.timezone, camera.kind, embedder)
     source = _source(camera, settings)
-    clips = ClipRecorder(blobs, settings.analysis_fps, tuning.clips)
+    webcam = isinstance(source, PushSource)
+    clips = ClipRecorder(blobs, max(settings.display_fps, settings.analysis_fps), tuning.clips)
     evidence = EvidenceBuffer(tuning.evidence, camera.zones)
     pending: list[tuple[float, object]] = []
-    loops, last_pos, last_status, last_frame_sent, last_done = 0, None, 0.0, 0.0, float("-inf")
+    loops, last_pos, last_status, last_done = 0, None, 0.0, float("-inf")
+    tracks: list[dict] = []
     recording = should_record(repo, camera)
     frames_done, t_start = 0, time.monotonic()
 
@@ -111,14 +125,25 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
             loops += 1
             recording = recording and camera.kind != "demo"
         last_pos = frame.pos
-        if scanning.value > 0 and frame.ts - last_done < 1.0 / settings.live_fps_during_scan:
-            continue
-        last_done = frame.ts
-        draw = viewers.value > 0 and now - last_frame_sent >= 1.0 / settings.analysis_fps
-        result = pipe.process(frame, draw, record=recording)
-        frames_done += 1
         clips.on_frame(frame)
-        evidence.add(frame, result.tick)
+        rate = settings.live_fps_during_scan if scanning.value > 0 else settings.analysis_fps
+        analyse = frame.ts - last_done >= 1.0 / rate - 1e-3
+        if analyse:
+            last_done = frame.ts
+            result = pipe.process(frame, record=recording)
+            frames_done += 1
+            evidence.add(frame, result.tick)
+            tracks = overlay_tracks(result.tick)
+            if webcam and viewers.value > 0:
+                send({"type": "overlay", "camera_id": camera.id, "ts": frame.ts, "tracks": tracks})
+        if viewers.value > 0 and not webcam:
+            h, w = frame.image.shape[:2]
+            ok, jpg = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, settings.display_quality])
+            if ok:
+                send({"type": "frame", "camera_id": camera.id, "jpeg": jpg.tobytes(), "ts": frame.ts,
+                      "width": w, "height": h, "tracks": tracks})
+        if not analyse:
+            continue
         for c in engine.on_tick(camera.id, result.tick, now=frame.ts, image=frame.image):
             c.clip_key = f"{camera.id}/clips/{c.fingerprint}.mp4"
             clips.request(c.ts, c.clip_key)
@@ -126,9 +151,6 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
         for item in [p for p in pending if frame.ts >= p[0]]:
             pending.remove(item)
             send({"type": "candidate", "pack": evidence.pack(item[1])})
-        if draw and result.annotated_jpeg:
-            last_frame_sent = now
-            send({"type": "frame", "camera_id": camera.id, "jpeg": result.annotated_jpeg, "ts": frame.ts})
     clips.close()
     send({"type": "status", "camera_id": camera.id, "source_status": "stopped", "loops": loops, "fps": 0,
           "stats": pipe.stats(), "stopped": True})
@@ -144,7 +166,7 @@ class Subscription:
 
     def put(self, msg: dict) -> None:
         with self._cond:
-            if msg.get("type") == "frame":
+            if msg.get("type") in ("frame", "overlay"):
                 self._frame = msg
             else:
                 try:
@@ -310,7 +332,7 @@ class WorkerManager:
             except (EOFError, OSError):
                 return
             kind = msg.get("type")
-            if kind == "frame":
+            if kind in ("frame", "overlay"):
                 self._publish(msg["camera_id"], msg)
             elif kind == "status":
                 h = self.handles.get(msg["camera_id"])

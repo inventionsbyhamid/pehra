@@ -567,7 +567,8 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
                 if msg is None:
                     continue
                 if msg["type"] == "frame":
-                    await ws.send_json({"type": "frame", "ts": msg["ts"],
+                    await ws.send_json({"type": "frame", "ts": msg["ts"], "width": msg.get("width"),
+                                        "height": msg.get("height"), "tracks": msg.get("tracks", []),
                                         "jpeg_b64": base64.b64encode(msg["jpeg"]).decode()})
                 else:
                     await ws.send_json(msg)

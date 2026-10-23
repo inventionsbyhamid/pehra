@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     web_dist: Path | None = None  # the built web app; defaults to web/dist in the repo
     models_dir: Path = Path("models")
     analysis_fps: float = 5.0
+    display_fps: float = 10.0  # live view frames; analysis runs at analysis_fps underneath
+    display_quality: int = 70
     analysis_width: int = 960
     tuning_file: Path | None = None
     timezone: str = "Asia/Kolkata"
