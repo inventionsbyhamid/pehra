@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     live_fps_during_scan: float = 2.0
     alert_dedupe_days: float = 14
     scan_workers: int = 0
+    scan_pool_at_start: bool = True  # start and warm the scan workers with the app, not on the first upload
+    camera_threads: int = 2  # OpenCV threads per live camera process
     scan_overlap_s: float = 2.0
     ai_parallel: int = 6
 

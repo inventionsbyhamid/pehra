@@ -19,7 +19,7 @@ from watchful.ingest.sources import Frame, fit_width
 from watchful.rules.engine import Candidate, RuleEngine, needs_for
 from watchful.rules.watch import Watch
 from watchful.components import make_blobs, make_detector, make_faces, make_pose
-from watchful.store.blobs import BlobStore
+from watchful.store.blobs import BackgroundPuts, BlobStore
 from watchful.store.db import Camera, EventRow
 from watchful.tuning import ScanTuning, Tuning
 from watchful.vision.faces import Enrollment
@@ -108,8 +108,8 @@ def _run_chunk(job: _Job) -> ChunkResult:
             _W["faces"] = make_faces(s, t)
         _W["faces"].load(job.enrollments)
         faces = _W["faces"]
-    perceiver = Perceiver(job.camera, s, t, make_blobs(s), faces, job.needs,
-                          detector=_W["detector"], pose=_W["pose"])
+    blobs = BackgroundPuts(make_blobs(s))
+    perceiver = Perceiver(job.camera, s, t, blobs, faces, job.needs, detector=_W["detector"], pose=_W["pose"])
     perceiver.tracker._next_id = job.id_base + (job.index + 1) * TRACK_ID_SPAN
     cap = cv2.VideoCapture(job.path, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, t.scan.decode_threads])
     cap.set(cv2.CAP_PROP_POS_MSEC, job.start * 1000)
@@ -134,6 +134,7 @@ def _run_chunk(job: _Job) -> ChunkResult:
         out.append(perceiver.perceive(Frame(image, job.start_epoch + grid, index, grid)))
     cap.release()
     out.append(perceiver.finish(job.start_epoch + grid, grid, size))
+    blobs.flush()
     return ChunkResult(job.index, job.start, job.end, out, perceiver.stats())
 
 

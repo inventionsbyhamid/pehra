@@ -24,6 +24,7 @@ from watchful.agent.ask import AskContext, ask, people_groups
 from watchful.agent.compiler import compile_watch
 from watchful.components import make_blobs, make_embedder, make_faces, make_llm, make_repo
 from watchful.config import Settings, get_settings
+from watchful.rules.engine import validate
 from watchful.rules.presets import describe, preset
 from watchful.rules.watch import SameAs, Watch
 from watchful.search import SearchQuery, search
@@ -97,7 +98,7 @@ def alert_json(blobs, a) -> dict:
 def _camera_json(w: State, cam: Camera) -> dict:
     st = w.manager.status(cam.id)
     return {**asdict(cam), "status": {"running": st.running, "source": st.source_status, "fps": round(st.fps, 1),
-                                      "loops": st.loops, "stats": st.stats}}
+                                      "loops": st.loops, "stats": st.stats, "problems": st.problems}}
 
 
 def _ffprobe(path: Path) -> dict | None:
@@ -246,9 +247,18 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
             load_tuning(None, body.tuning)
             cam.tuning = body.tuning
         w.repo.update_camera(cam)
+        disabled = []
+        if body.zones is not None:
+            names = {z.name for z in cam.zones}
+            for row in w.repo.list_watches(cam.id):
+                watch = Watch.model_validate(row.watch)
+                if row.enabled and validate(watch, names):
+                    row.enabled = False  # it points at a zone that no longer exists
+                    w.repo.update_watch(row)
+                    disabled.append(watch.name)
         if cam.kind in LIVE_KINDS:
             w.manager.restart(cam.id) if cam.enabled else w.manager.stop(cam.id)
-        return _camera_json(w, cam)
+        return {**_camera_json(w, cam), "disabled_watches": disabled}
 
     @app.get("/api/cameras/{camera_id}/frame", dependencies=auth)
     def camera_frame(camera_id: str, request: Request):

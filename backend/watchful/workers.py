@@ -21,7 +21,7 @@ from watchful.evidence import EvidenceBuffer, EvidencePack, evidence_context, fi
 from watchful.ingest.clips import ClipRecorder
 from watchful.ingest.sources import FileSource, PushSource, StreamSource
 from watchful.notify import ApprovalNotifier
-from watchful.rules.engine import RuleEngine, needs_for
+from watchful.rules.engine import RuleEngine, needs_for, validate
 from watchful.rules.watch import Watch
 from watchful.store.db import AlertRow, Camera
 from watchful.tuning import Tuning, load_tuning
@@ -70,6 +70,7 @@ class WorkerStatus:
     last_ts: float | None = None
     loops: int = 0
     stats: dict = field(default_factory=dict)
+    problems: list[str] = field(default_factory=list)
 
 
 def _source(camera: Camera, settings: Settings):
@@ -87,6 +88,7 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
                tuning_json: str, in_q, out_q, viewers, scanning, stop) -> None:
     """The camera process: source, pipeline, rules, clips and evidence."""
     settings = Settings(**json.loads(settings_json), _env_file=None)
+    cv2.setNumThreads(settings.camera_threads)  # leave the cores to scans and other cameras
     base = Tuning.model_validate_json(tuning_json)
     tuning = load_tuning(None, camera.tuning) if camera.tuning else base
     repo, blobs = make_repo(settings), make_blobs(settings)
@@ -115,7 +117,7 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
             pass
 
     while not stop.is_set():
-        if camera.kind == "demo" and loops >= 1 and viewers.value == 0:
+        if camera.kind == "demo" and (loops >= 1 or not recording) and viewers.value == 0:
             time.sleep(0.5)
             continue
         if isinstance(source, PushSource):
@@ -216,6 +218,9 @@ class _Handle:
     viewers: object
     stop: object
     status: WorkerStatus = field(default_factory=WorkerStatus)
+    wanted: bool = True  # False once stopped on purpose; a dead wanted worker is restarted
+    restarts: int = 0
+    next_restart: float = 0.0
 
 
 class WorkerManager:
@@ -237,13 +242,17 @@ class WorkerManager:
         self._embedder = None
         self._closed = False
         self.metrics = make_metrics(settings)
+        self.supervise_every_s = 10.0
+        if settings.scan_pool_at_start:
+            threading.Thread(target=lambda: self._pool().warm(), daemon=True).start()
         threading.Thread(target=self._listen, daemon=True).start()
+        threading.Thread(target=self._supervise, daemon=True).start()
         threading.Thread(target=self._report, daemon=True).start()
         threading.Thread(target=self._janitor, daemon=True).start()
         self.indexer = None
         if settings.index_embeddings:
             from watchful.indexer import Indexer
-            self.indexer = Indexer(repo, blobs, lambda: make_embedder(settings))
+            self.indexer = Indexer(repo, blobs, lambda: make_embedder(settings), busy=lambda: self.scanning.value > 0)
             self.indexer.start()
 
     def _janitor(self, every_s: float = 6 * 3600) -> None:
@@ -272,8 +281,24 @@ class WorkerManager:
                 log.exception("metrics report failed")
 
     # cameras
-    def _watches(self, camera_id: str) -> list[tuple[str, Watch]]:
-        return [(w.id, Watch.model_validate(w.watch)) for w in self.repo.list_watches(camera_id) if w.enabled]
+    def _watches(self, camera_id: str, zones: list | None = None) -> tuple[list[tuple[str, Watch]], list[str]]:
+        """The camera's enabled watches that can run, and a plain note for each that can't."""
+        names = {z.name for z in (zones if zones is not None else self.repo.get_camera(camera_id).zones)}
+        ok, problems = [], []
+        for row in self.repo.list_watches(camera_id):
+            if not row.enabled:
+                continue
+            try:
+                w = Watch.model_validate(row.watch)
+            except ValueError as e:
+                problems.append(f"{row.text}: {str(e).splitlines()[0]}")
+                continue
+            issues = validate(w, names)
+            if issues:
+                problems.append(f"{w.name}: {'; '.join(issues)}")
+            else:
+                ok.append((row.id, w))
+        return ok, problems
 
     def _camera_lock(self, camera_id: str) -> threading.Lock:
         with self._lock:
@@ -289,12 +314,16 @@ class WorkerManager:
         if cam is None or not cam.enabled:
             return
         h = _Handle(None, self.ctx.Queue(maxsize=4), self.ctx.Value("i", 0), self.ctx.Event())
+        old = self.handles.get(camera_id)
+        if old:
+            h.restarts, h.next_restart = old.restarts, old.next_restart
         h.viewers.value = len(self.subs[camera_id])
+        watches, problems = self._watches(camera_id, cam.zones)
         h.process = self.ctx.Process(target=run_camera, daemon=True, args=(
-            cam, self._watches(camera_id), self.repo.list_enrollments(), self.settings.model_dump_json(),
+            cam, watches, self.repo.list_enrollments(), self.settings.model_dump_json(),
             self.tuning.model_dump_json(), h.in_q, self.out_q, h.viewers, self.scanning, h.stop))
         h.process.start()
-        h.status = WorkerStatus(running=True, source_status="starting")
+        h.status = WorkerStatus(running=True, source_status="starting", problems=problems)
         self.handles[camera_id] = h
 
     def stop(self, camera_id: str) -> None:
@@ -305,6 +334,7 @@ class WorkerManager:
         h = self.handles.get(camera_id)
         if not h or not h.process:
             return
+        h.wanted = False
         h.stop.set()
         h.process.join(5)
         if h.process.is_alive():
@@ -348,6 +378,21 @@ class WorkerManager:
         for q in list(self.subs.get(camera_id, [])):
             q.put(msg)
 
+    def _supervise(self) -> None:
+        """Restarts camera workers that died, with backoff (5 s, 10 s, 20 s, up to 5 minutes)."""
+        while not self._closed:
+            time.sleep(self.supervise_every_s)
+            for cid, h in list(self.handles.items()):
+                if not h.wanted or h.process is None or h.process.is_alive() or time.time() < h.next_restart:
+                    continue
+                log.warning("camera %s worker stopped (exit %s); restarting", cid, h.process.exitcode)
+                h.restarts += 1
+                h.next_restart = time.time() + min(300, 5 * 2 ** (h.restarts - 1))
+                try:
+                    self.start(cid)
+                except Exception:
+                    log.exception("restarting camera %s failed", cid)
+
     def _listen(self) -> None:
         while not self._closed:
             try:
@@ -356,19 +401,25 @@ class WorkerManager:
                 continue
             except (EOFError, OSError):
                 return
-            kind = msg.get("type")
-            if kind in ("frame", "overlay"):
-                self._publish(msg["camera_id"], msg)
-            elif kind == "status":
-                h = self.handles.get(msg["camera_id"])
-                if h:
-                    h.status.source_status, h.status.loops = msg["source_status"], msg["loops"]
-                    h.status.fps, h.status.stats = msg["fps"], msg["stats"]
-                    if msg.get("stopped"):
-                        h.status.running = False
-                self._publish(msg["camera_id"], msg)
-            elif kind == "candidate":
-                self._on_candidate(msg["pack"])
+            try:
+                self._handle(msg)
+            except Exception:  # one bad message must not stop every camera's live view
+                log.exception("handling a %s message failed", msg.get("type"))
+
+    def _handle(self, msg: dict) -> None:
+        kind = msg.get("type")
+        if kind in ("frame", "overlay"):
+            self._publish(msg["camera_id"], msg)
+        elif kind == "status":
+            h = self.handles.get(msg["camera_id"])
+            if h:
+                h.status.source_status, h.status.loops = msg["source_status"], msg["loops"]
+                h.status.fps, h.status.stats = msg["fps"], msg["stats"]
+                if msg.get("stopped"):
+                    h.status.running, h.wanted = False, False  # ended on its own, not a crash
+            self._publish(msg["camera_id"], msg)
+        elif kind == "candidate":
+            self._on_candidate(msg["pack"])
 
     # alerts
     def _on_candidate(self, pack: EvidencePack) -> None:
@@ -417,9 +468,10 @@ class WorkerManager:
 
     # uploads
     def _pool(self) -> ScanPool:
-        if self._scan_pool is None:
-            self._scan_pool = ScanPool(self.settings, self.tuning)
-        return self._scan_pool
+        with self._lock:
+            if self._scan_pool is None:
+                self._scan_pool = ScanPool(self.settings, self.tuning)
+            return self._scan_pool
 
     def scan_upload(self, camera_id: str) -> str:
         scan_id = "scn_" + secrets.token_hex(6)
@@ -437,7 +489,7 @@ class WorkerManager:
         with self.scanning.get_lock():
             self.scanning.value += 1
         try:
-            watches = self._watches(camera_id)
+            watches, _ = self._watches(camera_id, cam.zones)
             needs = needs_for([w for _, w in watches]) if watches else Needs(classes={"person"})
             if needs.embed and self._embedder is None:
                 self._embedder = make_embedder(self.settings)

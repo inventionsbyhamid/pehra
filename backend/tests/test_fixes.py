@@ -132,3 +132,15 @@ def test_retention_keeps_demo_cameras_and_enrolment_photos(tmp_path):
     assert repo.query_events(camera_id=demo.id) and repo.list_alerts(demo.id)
     assert blobs.get(f"{demo.id}/kf/1.jpg") and blobs.get("people/p1.jpg")
     assert not (tmp_path / "blobs" / live.id / "kf" / "1.jpg").exists()
+
+
+def test_saving_zones_turns_off_watches_that_lost_their_zone(tmp_path):
+    from watchful.rules.presets import preset
+    from watchful.store.db import WatchRow
+    app, c = app_client(tmp_path)
+    repo = app.state.w.repo
+    cam = c.post("/api/cameras", json={"name": "Gate", "kind": "stream", "url": "rtsp://x"}).json()
+    c.patch(f"/api/cameras/{cam['id']}", json={"zones": [{"name": "door", "polygon": [[0, 0], [1, 0], [1, 1]]}]})
+    repo.add_watch(WatchRow(None, cam["id"], "x", preset("enters", zone="door").model_dump(), True))
+    r = c.patch(f"/api/cameras/{cam['id']}", json={"zones": [{"name": "porch", "polygon": [[0, 0], [1, 0], [1, 1]]}]})
+    assert r.json()["disabled_watches"] == ["Enters door"] and not repo.list_watches(cam["id"])[0].enabled

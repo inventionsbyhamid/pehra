@@ -13,6 +13,34 @@ class BlobStore(Protocol):
     def delete_older_than(self, days: int, keep: tuple[str, ...] = ("people/",)) -> int: ...
 
 
+class BackgroundPuts:
+    """Writes go to a few threads so a scan worker never waits on storage (S3 PUTs); flush() before finishing."""
+
+    def __init__(self, inner: BlobStore, threads: int = 4):
+        from concurrent.futures import ThreadPoolExecutor
+        self.inner = inner
+        self.pool = ThreadPoolExecutor(threads)
+        self.pending = []
+
+    def put(self, key: str, data: bytes, content_type: str) -> None:
+        self.pending.append(self.pool.submit(self.inner.put, key, data, content_type))
+
+    def get(self, key: str) -> bytes:
+        return self.inner.get(key)
+
+    def url(self, key: str) -> str:
+        return self.inner.url(key)
+
+    def delete(self, key: str) -> None:
+        self.inner.delete(key)
+
+    def flush(self) -> None:
+        for f in self.pending:
+            f.result()
+        self.pending.clear()
+        self.pool.shutdown()
+
+
 @register("blobs", "local")
 class LocalBlobStore:
     def __init__(self, data_dir: str | Path, name: str = "local", **_):

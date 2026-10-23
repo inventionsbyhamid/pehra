@@ -27,8 +27,9 @@ def index_once(repo, blobs, embedder, kinds: list[str] = INDEX_KINDS, limit: int
 
 
 class Indexer:
-    def __init__(self, repo, blobs, embedder_factory, every_s: float = 5.0):
+    def __init__(self, repo, blobs, embedder_factory, every_s: float = 5.0, busy=lambda: False):
         self.repo, self.blobs, self.factory, self.every_s = repo, blobs, embedder_factory, every_s
+        self.busy = busy  # a scan is running: wait, so it gets the CPUs
         self._embedder = None
         self._stop = threading.Event()
 
@@ -40,10 +41,12 @@ class Indexer:
 
     def _run(self) -> None:
         while not self._stop.wait(self.every_s):
+            if self.busy():
+                continue
             try:
                 if self._embedder is None:
                     self._embedder = self.factory()
-                while index_once(self.repo, self.blobs, self._embedder) and not self._stop.is_set():
+                while not self.busy() and index_once(self.repo, self.blobs, self._embedder) and not self._stop.is_set():
                     pass
             except Exception:
                 log.exception("indexing failed")

@@ -29,7 +29,7 @@ def clip20():
 
 @pytest.fixture
 def manager(tmp_path):
-    s = Settings(demo_password="x", session_secret="y", data_dir=tmp_path, demo_realtime=False, index_embeddings=False,
+    s = Settings(demo_password="x", session_secret="y", data_dir=tmp_path, demo_realtime=False, index_embeddings=False, scan_pool_at_start=False,
                  _env_file=None)
     repo = make_repo(s)
     m = WorkerManager(s, Tuning(), repo, make_blobs(s), llm=FakeLLM([ALERT] * 200))
@@ -95,3 +95,18 @@ def test_a_critical_candidate_is_stored_even_if_checking_crashes(manager, monkey
     m._verify_and_store(EvidencePack(c, [], []))
     a = repo.list_alerts("cam")[0]
     assert a.status == "unverified" and "fell in the kitchen" in a.summary
+
+
+def test_crashed_camera_is_restarted_and_bad_watches_are_skipped(manager, clip20):
+    from watchful.rules.watch import Condition, Watch
+    m, repo = manager
+    m.supervise_every_s = 0.5
+    cam = repo.add_camera(Camera(None, "Plaza", "demo", str(clip20), [LEFT]))
+    broken = Watch(name="old zone", verify="?", conditions=[Condition(signal="entered", zones=["gone"])])
+    repo.add_watch(WatchRow(None, cam.id, "x", broken.model_dump(), True))
+    m.start(cam.id)
+    assert wait(lambda: m.status(cam.id).source_status == "live", 30)
+    assert "old zone" in " ".join(m.status(cam.id).problems)
+    first = m.handles[cam.id].process.pid
+    m.handles[cam.id].process.kill()
+    assert wait(lambda: m.handles[cam.id].process.pid != first and m.status(cam.id).running, 30)
