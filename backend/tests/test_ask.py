@@ -86,3 +86,16 @@ def test_prompt_has_the_full_date_and_a_schema(ctx):
     ask("anyone today?", "cam", ctx, llm, now=at(12, 0))
     system, _, _, schema = llm.calls[0]
     assert "2026-10-23" in system and str(int(at(12, 0))) in system and schema is not None
+
+
+def test_lookalikes_are_listed_even_without_the_people_tool(ctx):
+    ctx.repo.add_events([ev("track_start", 1, at(9, 0)), ev("enter", 1, at(9, 2), "kitchen"),
+                         ev("exit", 1, at(9, 40), "kitchen"),
+                         ev("track_start", 2, at(9, 1)), ev("enter", 2, at(9, 3), "kitchen"),
+                         ev("track_end", 1, at(9, 41)), ev("track_end", 2, at(9, 31))])
+    first = next(e for e in ctx.repo.query_events(kinds=["enter"]) if e.track_id == 1)
+    llm = FakeLLM([step("answer", text="She came in at 09:02.", confidence="high",
+                        items=[{"label": "maid", "event_id": first.id, "start_ts": 1.0, "end_ts": 2.0}])])
+    a = ask("when did the maid come into the kitchen and leave", "cam", ctx, llm, now=at(12, 0))
+    assert a.confidence == "low" and len(a.items) == 2
+    assert a.items[0].start_ts == at(9, 2) and a.items[0].end_ts == at(9, 40)  # times from the events

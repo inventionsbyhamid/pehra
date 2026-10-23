@@ -126,21 +126,51 @@ TOOLS = {
 }
 
 
+def _until(ctx: AskContext, e) -> float | None:
+    """When the person left the zone they entered at e, from the matching exit event."""
+    if e.kind != "enter":
+        return None
+    exits = [x for x in ctx.repo.query_events(camera_id=e.camera_id, kinds=["exit"], zone=e.zone, since=e.ts,
+                                              until=e.ts + 86400, limit=500) if x.track_id == e.track_id]
+    return exits[0].ts if exits else None
+
+
+def _item(ctx: AskContext, e, label: str) -> AnswerItem:
+    return AnswerItem(label, e.ts, _until(ctx, e), ctx.blobs.url(e.keyframe_key) if e.keyframe_key else None,
+                      None, e.id)
+
+
 def _ground(a: dict, ctx: AskContext) -> Answer:
-    items, ambiguous = [], False
+    """Keeps only items that cite recorded events, takes their times from those events, and when the person may
+    be confused with a look alike, lists the look alike's matching moment too and says so."""
+    cited = []
     for it in (a.get("items") or [])[:MAX_ITEMS]:
         e = ctx.repo.get_event(str(it.get("event_id", "")))
-        if e is None:
+        if e is not None:
+            cited.append((str(it.get("label") or e.kind), e))
+    if cited and any(e.track_id not in ctx.track_groups for _, e in cited if e.track_id is not None):
+        lo, hi = min(e.ts for _, e in cited), max(e.ts for _, e in cited)
+        people_groups(ctx, lo - 6 * 3600, hi + 6 * 3600)
+    items = [_item(ctx, e, label) for label, e in cited]
+    ambiguous = False
+    for label, e in cited:
+        group, unsure = ctx.track_groups.get(e.track_id, ("", False))
+        if not unsure:
             continue
-        ambiguous |= ctx.track_groups.get(e.track_id, ("", False))[1]
-        items.append(AnswerItem(str(it.get("label") or e.kind), it.get("start_ts", e.ts), it.get("end_ts"),
-                                ctx.blobs.url(e.keyframe_key) if e.keyframe_key else None, None, e.id))
+        ambiguous = True
+        others = {t for t, (g, u) in ctx.track_groups.items() if u and g != group}
+        near = [x for x in ctx.repo.query_events(camera_id=e.camera_id, kinds=[e.kind], zone=e.zone,
+                                                 since=e.ts - 6 * 3600, until=e.ts + 6 * 3600, limit=500)
+                if x.track_id in others and x.id not in {i.event_id for i in items}]
+        if near:
+            best = min(near, key=lambda x: abs(x.ts - e.ts))
+            items.append(_item(ctx, best, "Someone who looks alike"))
     text = plain(str(a.get("text") or ""))
     confidence = a.get("confidence") if a.get("confidence") in CONFIDENCE else "medium"
     if ambiguous:
         confidence = "low"
         text += " Two people look alike here, so I am not sure which one it was."
-    return Answer(text, items, confidence)
+    return Answer(text, items[:MAX_ITEMS], confidence)
 
 
 def ask(question: str, camera_id: str | None, ctx: AskContext, llm: LLM, now: float, max_steps: int = 6,
