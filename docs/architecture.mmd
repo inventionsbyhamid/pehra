@@ -1,0 +1,33 @@
+flowchart LR
+  subgraph Inputs
+    RTSP[RTSP or HTTP camera]
+    WEBCAM[Browser webcam]
+    UPLOAD[Uploaded video]
+  end
+  subgraph Graviton["AWS EC2 Graviton4 (COOL, OpenCV 5)"]
+    direction TB
+    subgraph Worker["Camera worker process (one per camera)"]
+      direction LR
+      MOTION[MOG2 motion gate] --> DETECT[YOLOX on the OpenCV 5 DNN engine]
+      DETECT --> TRACK[Kalman and IoU tracker]
+      TRACK --> POSE[MediaPipe pose, only when needed]
+      TRACK --> FACES[YuNet and SFace, enrolled people only]
+      TRACK --> EMBED[SigLIP 2 on OpenCV DNN, only when needed]
+      TRACK --> REASON[Zones, fall states, events]
+      REASON --> RULES[Generic watches: signals and presets]
+    end
+    SCAN[Parallel scan: time chunks on every core, tracks stitched, reasoned once]
+    AGENT[Verifier agent with OpenCV tools]
+    ASK[Ask the footage, find a person]
+    API[FastAPI, WebSockets, web app]
+  end
+  RTSP --> Worker
+  WEBCAM --> API --> Worker
+  UPLOAD --> API --> SCAN --> RULES
+  RULES -- candidate with evidence --> AGENT
+  AGENT --> LLM[(AI model: OpenRouter or Amazon Bedrock)]
+  ASK --> LLM
+  AGENT --> DDB[(DynamoDB: events, alerts, watches)]
+  Worker --> S3[(S3: clips, keyframes, 7 day lifecycle)]
+  Worker --> CW[(CloudWatch metrics)]
+  AGENT -- approved by a person --> SNS[(SNS email)]

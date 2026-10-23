@@ -1,0 +1,13 @@
+flowchart TD
+  C[OpenCV flags a moment: watch, signals, reasons, keyframe, frames around it] --> FACE{Matched by an enrolled face?}
+  FACE -- yes --> ALERT[Alert]
+  FACE -- no --> STEP[Agent looks at the images and picks one step]
+  STEP --> TOOLS[OpenCV tools: get frames, zoom and sharpen, brighten or denoise, motion trail, optical flow, pose history]
+  TOOLS --> STEP
+  STEP -- real --> ALERT
+  STEP -- not real --> DISMISS[Dismiss with a reason]
+  STEP -- serious --> HUMAN[Ask a person before anyone is contacted]
+  HUMAN -- approve --> NOTIFY[SNS email to the caregiver, at most one per 10 minutes]
+  STEP -- AI fails or runs out of time --> FALLBACK{Critical?}
+  FALLBACK -- yes --> UNVERIFIED[Unverified alert with OpenCV evidence]
+  FALLBACK -- no --> DISMISS
