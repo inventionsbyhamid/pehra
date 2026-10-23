@@ -115,6 +115,9 @@ Resources:
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyName
       IamInstanceProfile: !Ref Profile
+      MetadataOptions:
+        HttpTokens: required  # IMDSv2 only, so a camera URL can't reach the instance's credentials
+        HttpPutResponseHopLimit: 1
       SecurityGroupIds: [!GetAtt SecurityGroup.GroupId]
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
