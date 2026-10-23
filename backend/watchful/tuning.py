@@ -95,8 +95,13 @@ class SignalTuning(_Section):
 
 class ScanTuning(_Section):
     min_chunk_s: float = 4.0
-    clip_before_s: float = 5.0
-    clip_after_s: float = 5.0
+
+
+class ClipTuning(_Section):
+    before_s: float = 5.0
+    after_s: float = 5.0
+    crf: int = 28
+    preset: str = "veryfast"
 
 
 class Tuning(_Section):
@@ -111,6 +116,7 @@ class Tuning(_Section):
     tamper: TamperTuning = TamperTuning()
     signals: SignalTuning = SignalTuning()
     scan: ScanTuning = ScanTuning()
+    clips: ClipTuning = ClipTuning()
 
 
 def _merge(base: dict, extra: dict) -> dict:
