@@ -1,0 +1,9 @@
+{
+  "_note": "us-east-1 on demand USD per hour; check against the AWS price list before quoting",
+  "c8g.large": 0.07976,
+  "c8g.xlarge": 0.15952,
+  "c8g.2xlarge": 0.31904,
+  "c7i.large": 0.08925,
+  "c7i.xlarge": 0.1785,
+  "cool_software_per_hour_xlarge": 0.01
+}
