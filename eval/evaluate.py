@@ -63,7 +63,7 @@ def main() -> None:
             for c in r.candidates:
                 status = "alert"
                 if llm is not None:
-                    pack = file_pack(lab["clip"], 0, c, r.paths.get(c.track_id, []), r.poses.get(c.track_id, []))
+                    pack = file_pack(lab["clip"], 0, c, r.paths.get(c.track_id, []), r.poses.get(c.track_id, []), zones=zones)
                     status = verify(c, evidence_context(pack, repo, blobs), llm).status
                 if status in ("alert", "unverified", "awaiting_human"):
                     kept.append(c)

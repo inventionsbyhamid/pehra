@@ -23,6 +23,8 @@ class ToolContext:
     crops: Callable[[int, float], bytes | None]
     poses: Callable[[int, float], list[dict]]
     boxes: Callable[[int], list[tuple[float, tuple]]] = lambda tid: []
+    moment: float = 0.0  # the flagged moment; tools take seconds relative to it
+    track_id: int | None = None  # the flagged object's track
     images: dict[str, bytes] = field(default_factory=dict)
 
     def add_image(self, data: bytes) -> str:
@@ -44,13 +46,14 @@ def _sharpen(img: np.ndarray) -> np.ndarray:
     return cv2.addWeighted(img, 1.6, blur, -0.6, 0)
 
 
-def get_frames(ctx: ToolContext, t0: float, t1: float, n: int = 3) -> ToolResult:
-    refs = [ctx.add_image(f) for f in ctx.frames(float(t0), float(t1), max(1, min(int(n), 4)))]
-    return ToolResult(f"{len(refs)} frames between {t0:.1f} and {t1:.1f}", refs)
+def get_frames(ctx: ToolContext, from_s: float = -3, to_s: float = 1.5, n: int = 3) -> ToolResult:
+    frames = ctx.frames(ctx.moment + float(from_s), ctx.moment + float(to_s), max(1, min(int(n), 4)))
+    refs = [ctx.add_image(f) for f in frames]
+    return ToolResult(f"{len(refs)} frames from {from_s:+.1f} s to {to_s:+.1f} s", refs)
 
 
-def crop_zoom(ctx: ToolContext, track_id: int, ts: float) -> ToolResult:
-    data = ctx.crops(int(track_id), float(ts))
+def crop_zoom(ctx: ToolContext, at_s: float = 0) -> ToolResult:
+    data = ctx.crops(ctx.track_id, ctx.moment + float(at_s))
     if not data:
         return ToolResult("no crop for that track at that time")
     img = _decode(data)
@@ -73,8 +76,8 @@ def enhance(ctx: ToolContext, image: str, kind: str = "brighten") -> ToolResult:
     return ToolResult(f"{kind} applied to {image}", [ctx.add_image(_encode(out))])
 
 
-def motion_trail(ctx: ToolContext, track_id: int) -> ToolResult:
-    path = ctx.boxes(int(track_id))
+def motion_trail(ctx: ToolContext) -> ToolResult:
+    path = ctx.boxes(ctx.track_id)
     if len(path) < 2:
         return ToolResult("not enough track history")
     frames = ctx.frames(path[-1][0], path[-1][0], 1)
@@ -88,9 +91,10 @@ def motion_trail(ctx: ToolContext, track_id: int) -> ToolResult:
     return ToolResult(f"path over {seconds:.0f} s drawn in yellow, last position red", [ctx.add_image(_encode(img))])
 
 
-def flow(ctx: ToolContext, track_id: int, t0: float, t1: float) -> ToolResult:
-    frames = ctx.frames(float(t0), float(t1), 2)
-    path = ctx.boxes(int(track_id))
+def flow(ctx: ToolContext, from_s: float = -1, to_s: float = 0.5) -> ToolResult:
+    t0, t1 = ctx.moment + float(from_s), ctx.moment + float(to_s)
+    frames = ctx.frames(t0, t1, 2)
+    path = ctx.boxes(ctx.track_id)
     if len(frames) < 2 or not path or t1 <= t0:
         return ToolResult("not enough frames to measure motion")
     a, b = (cv2.cvtColor(_decode(f), cv2.COLOR_BGR2GRAY) for f in frames[:2])
@@ -105,21 +109,24 @@ def flow(ctx: ToolContext, track_id: int, t0: float, t1: float) -> ToolResult:
                       f"{side:+.2f} sideways")
 
 
-def pose_history(ctx: ToolContext, track_id: int, seconds: float = 6) -> ToolResult:
-    poses = ctx.poses(int(track_id), min(float(seconds), 10.0))
+def pose_history(ctx: ToolContext, seconds: float = 6) -> ToolResult:
+    poses = ctx.poses(ctx.track_id, min(float(seconds), 10.0))
     if not poses:
-        return ToolResult("no pose estimates for that track")
-    return ToolResult("; ".join(f"t={p['ts']:.1f} torso angle {p.get('torso_angle', 0):.0f}" for p in poses))
+        return ToolResult("no pose estimates for this person")
+    return ToolResult("; ".join(f"{p['ts'] - ctx.moment:+.1f} s: torso angle {p.get('torso_angle', 0):.0f}"
+                                for p in poses))
 
 
 TOOLS: dict[str, tuple[str, Callable]] = {
-    "get_frames": ("get_frames(t0, t1, n): up to 4 frames between two times", get_frames),
-    "crop_zoom": ("crop_zoom(track_id, ts): a sharpened 2x zoom of a tracked object", crop_zoom),
+    "get_frames": ("get_frames(from_s, to_s, n): up to 4 frames between two times, in seconds relative to the "
+                   "moment (negative is before)", get_frames),
+    "crop_zoom": ("crop_zoom(at_s): a sharpened 2x zoom of the flagged object at that time", crop_zoom),
     "enhance": ("enhance(image, kind): brighten, denoise or sharpen an image you have, by its name like img1",
                 enhance),
-    "motion_trail": ("motion_trail(track_id): the path the object walked, drawn on the latest frame", motion_trail),
-    "flow": ("flow(track_id, t0, t1): optical flow inside the box, how fast it moves down and sideways", flow),
-    "pose_history": ("pose_history(track_id, seconds): torso angles over time (0 upright, 90 lying)", pose_history),
+    "motion_trail": ("motion_trail(): the path the object walked, drawn on the latest frame", motion_trail),
+    "flow": ("flow(from_s, to_s): optical flow inside the object's box, how fast it moves down and sideways", flow),
+    "pose_history": ("pose_history(seconds): the person's torso angle over time (0 upright, 90 lying)",
+                     pose_history),
 }
 TERMINAL = {
     "raise_alert": "raise_alert(summary): it is real; tell the owner",

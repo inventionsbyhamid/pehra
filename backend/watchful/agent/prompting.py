@@ -28,3 +28,11 @@ def parse_json(raw: str) -> dict:
     if not isinstance(data, dict):
         raise ValueError("the reply is not a JSON object")
     return data
+
+
+def plain(text: str) -> str:
+    """User facing AI text without dashes: ranges read 'to', joined words are spaced, breaks become commas."""
+    text = re.sub(r"(\d)\s*[-\u2013]\s*(\d)", r"\1 to \2", text)
+    text = re.sub(r"\s*[\u2014\u2013]\s*", ", ", text)
+    text = re.sub(r"(\w)-(\w)", r"\1 \2", text)
+    return re.sub(r"\s{2,}", " ", text).strip()

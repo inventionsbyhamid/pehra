@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Literal
 
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
-from watchful.agent.prompting import parse_json, render
+from watchful.agent.prompting import parse_json, plain, render
 from watchful.agent.tools import TERMINAL, TOOLS, ToolContext, describe_tools, run_tool
 from watchful.rules.engine import Candidate
 
@@ -46,11 +46,13 @@ def _opening(c: Candidate, ctx: ToolContext) -> tuple[str, list[str]]:
         except (OSError, KeyError):
             pass
     refs += [ctx.add_image(f) for f in ctx.frames(c.ts - 1.0, c.ts + 1.0, 2)]
+    crops = len([k for k in c.keyframe_keys])
     lines = [f"Watch: {c.watch_name}", f"Question: {c.verify or 'Is this really happening?'}",
-             f"Time: {c.ts:.1f}", f"Track: {c.track_id}",
              "OpenCV saw: " + ("; ".join(c.evidence.get("reasons", [])) or "a match"),
              f"Signals: {c.evidence.get('signals', {})}",
-             f"Images: {', '.join(refs) or 'none'} (the first is the object's best crop when there is one)"]
+             "The flagged moment is time 0; tool times are seconds before (negative) or after it.",
+             f"Images: {', '.join(refs) or 'none'}. The first {crops} are close crops of the flagged object; the "
+             "rest are frames around the moment with the zones outlined in yellow and the object boxed in red."]
     return "\n".join(lines), refs
 
 
@@ -85,7 +87,7 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
             continue
         bad = 0
         if tool in TERMINAL:
-            summary = args.get("summary") or args.get("reason") or args.get("question") or why
+            summary = plain(str(args.get("summary") or args.get("reason") or args.get("question") or why))
             trace.append(TraceStep(n, tool, args, why, "", int((time.monotonic() - t0) * 1000)))
             status = {"raise_alert": "alert", "dismiss": "dismissed", "ask_human": "awaiting_human"}[tool]
             return Verdict(status, summary, trace)

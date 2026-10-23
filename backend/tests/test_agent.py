@@ -60,7 +60,7 @@ def step(tool, **args):
 
 
 def test_zoom_then_alert(tmp_path):
-    v = verify(cand(), ctx(tmp_path), FakeLLM([step("crop_zoom", track_id=1, ts=100.0),
+    v = verify(cand(), ctx(tmp_path), FakeLLM([step("crop_zoom", at_s=0),
                                                 step("raise_alert", summary="A car drove in.")]))
     assert v.status == "alert" and v.summary == "A car drove in." and len(v.trace) == 2
     assert v.trace[0].tool == "crop_zoom" and v.trace[0].result
@@ -78,7 +78,7 @@ def test_critical_timeout_is_unverified(tmp_path):
 
 
 def test_step_limit_falls_back(tmp_path):
-    v = verify(cand("info"), ctx(tmp_path), FakeLLM([step("pose_history", track_id=1)] * 6), max_steps=3)
+    v = verify(cand("info"), ctx(tmp_path), FakeLLM([step("pose_history", seconds=6)] * 6), max_steps=3)
     assert v.status == "dismissed" and len(v.trace) == 3
 
 
@@ -112,3 +112,9 @@ def test_approve_rate_limited():
     alert = AlertRow("a1", "cam", "w1", 0.0, "critical", "awaiting_human", "Fell", None, None, [], None, "fp")
     assert n.approve(alert, now=1000.0) and not n.approve(alert, now=1300.0) and n.approve(alert, now=1700.0)
     assert len(sent.messages) == 2
+
+
+def test_user_text_has_no_dashes():
+    from watchful.agent.prompting import plain
+    assert plain("Outside the left-walkway zone — never crossed – ok") == "Outside the left walkway zone, never crossed, ok"
+    assert plain("At 9-10 am") == "At 9 to 10 am"

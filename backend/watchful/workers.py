@@ -68,7 +68,7 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
     engine = RuleEngine(watches, camera.zones, tuning, settings.timezone, camera.kind, embedder)
     source = _source(camera, settings)
     clips = ClipRecorder(blobs, settings.analysis_fps, tuning.clips)
-    evidence = EvidenceBuffer(tuning.evidence)
+    evidence = EvidenceBuffer(tuning.evidence, camera.zones)
     pending: list[tuple[float, object]] = []
     loops, last_pos, last_status, last_frame_sent, last_done = 0, None, 0.0, 0.0, float("-inf")
     frames_done, t_start = 0, time.monotonic()
@@ -392,7 +392,8 @@ class WorkerManager:
             self.metrics.put("ScanRealtimeFactor", result.stats.x_realtime)
             self.metrics.put("ScanSecondsPerMinute", result.stats.wall_s / max(result.stats.duration_s / 60, 1e-6))
             packs = [file_pack(cam.url, start_epoch, c, result.paths.get(c.track_id, []),
-                               result.poses.get(c.track_id, []), self.tuning.evidence) for c in result.candidates]
+                               result.poses.get(c.track_id, []), self.tuning.evidence, cam.zones)
+                     for c in result.candidates]
             futures = [self.verifiers.submit(self._verify_and_store, p) for p in packs]
             info["alert_ids"] = [i for i in (f.result() for f in futures) if i]
             info.update(state="done", progress=1.0)

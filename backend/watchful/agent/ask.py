@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
-from watchful.agent.prompting import parse_json, render
+from watchful.agent.prompting import parse_json, plain, render
 from watchful.agent.verifier import TraceStep
 from watchful.tuning import AppearanceTuning
 from watchful.vision.appearance import TrackSighting, link_tracks
@@ -130,7 +130,7 @@ def _ground(a: dict, ctx: AskContext) -> Answer:
         ambiguous |= ctx.track_groups.get(e.track_id, ("", False))[1]
         items.append(AnswerItem(str(it.get("label") or e.kind), it.get("start_ts", e.ts), it.get("end_ts"),
                                 ctx.blobs.url(e.keyframe_key) if e.keyframe_key else None, None, e.id))
-    text = str(a.get("text") or "")
+    text = plain(str(a.get("text") or ""))
     confidence = a.get("confidence") if a.get("confidence") in CONFIDENCE else "medium"
     if ambiguous:
         confidence = "low"
