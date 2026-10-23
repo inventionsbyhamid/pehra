@@ -1,4 +1,5 @@
 """HTTP and WebSocket API. Every part comes from settings through components, so it can be swapped."""
+import asyncio
 import base64
 import json
 import secrets
@@ -57,6 +58,7 @@ class State:
         self.manager = manager
         self._faces = None
         self._embedder = None
+        self.pushers: dict[str, set[int]] = {}
         self.signer = URLSafeTimedSerializer(settings.session_secret, salt="watchful")
 
     @property
@@ -496,7 +498,7 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         w.repo.add_enrollment(e)
         for cam in w.repo.list_cameras():
             if cam.kind in LIVE_KINDS:
-                w.manager.restart(cam.id)
+                await run_in_threadpool(w.manager.restart, cam.id)  # restarts join processes; keep the loop free
         return {"person_id": person_id, "name": name}
 
     @app.delete("/api/people/{person_id}", dependencies=auth)
@@ -572,10 +574,17 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
             await ws.close(code=4401)
             return
         sub = w.manager.subscribe(camera_id)
+        incoming = asyncio.create_task(ws.receive())
         try:
             while True:
-                msg = await run_in_threadpool(sub.get, 1.0)
+                if incoming.done():
+                    if incoming.result().get("type") == "websocket.disconnect":
+                        break
+                    incoming = asyncio.create_task(ws.receive())  # ignore anything the browser sends
+                msg = sub.get(0)
                 if msg is None:
+                    # wait without holding a server thread, and notice a closed tab at once
+                    await asyncio.wait({incoming}, timeout=0.05)
                     continue
                 if msg["type"] == "frame":
                     await ws.send_json({"type": "frame", "ts": msg["ts"], "width": msg.get("width"),
@@ -583,9 +592,10 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
                                         "jpeg_b64": base64.b64encode(msg["jpeg"]).decode()})
                 else:
                     await ws.send_json(msg)
-        except WebSocketDisconnect:
+        except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
+            incoming.cancel()
             w.manager.unsubscribe(camera_id, sub)
 
     @app.websocket("/ws/cameras/{camera_id}/push")
@@ -597,14 +607,24 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         except BadSignature:
             await ws.close(code=4401)
             return
+        cam = w.repo.get_camera(camera_id)
+        if cam is None or cam.kind != "webcam":
+            await ws.close(code=4400)
+            return
+        pushers = w.pushers.setdefault(camera_id, set())
+        pushers.add(id(ws))
         if not w.manager.status(camera_id).running:
-            w.manager.start(camera_id)
+            await run_in_threadpool(w.manager.start, camera_id)
         try:
             while True:
                 data = await ws.receive_bytes()
                 w.manager.push_frame(camera_id, data, time.time())
-        except WebSocketDisconnect:
+        except (WebSocketDisconnect, KeyError, RuntimeError):
             pass
+        finally:
+            pushers.discard(id(ws))
+            if not pushers:
+                await run_in_threadpool(w.manager.stop, camera_id)  # nobody is sending this webcam any more
 
     dist = Path(settings.web_dist) if settings.web_dist else WEB_DIST
     if dist.is_dir():

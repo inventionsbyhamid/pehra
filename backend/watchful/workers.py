@@ -232,6 +232,7 @@ class WorkerManager:
         self.approvals = ApprovalNotifier(make_notifier(settings))
         self._inflight: set[str] = set()
         self._lock = threading.Lock()
+        self._locks: dict[str, threading.Lock] = {}
         self._scan_pool: ScanPool | None = None
         self._embedder = None
         self._closed = False
@@ -274,8 +275,16 @@ class WorkerManager:
     def _watches(self, camera_id: str) -> list[tuple[str, Watch]]:
         return [(w.id, Watch.model_validate(w.watch)) for w in self.repo.list_watches(camera_id) if w.enabled]
 
+    def _camera_lock(self, camera_id: str) -> threading.Lock:
+        with self._lock:
+            return self._locks.setdefault(camera_id, threading.Lock())
+
     def start(self, camera_id: str) -> None:
-        self.stop(camera_id)
+        with self._camera_lock(camera_id):
+            self._start(camera_id)
+
+    def _start(self, camera_id: str) -> None:
+        self._stop(camera_id)
         cam = self.repo.get_camera(camera_id)
         if cam is None or not cam.enabled:
             return
@@ -289,6 +298,10 @@ class WorkerManager:
         self.handles[camera_id] = h
 
     def stop(self, camera_id: str) -> None:
+        with self._camera_lock(camera_id):
+            self._stop(camera_id)
+
+    def _stop(self, camera_id: str) -> None:
         h = self.handles.get(camera_id)
         if not h or not h.process:
             return
