@@ -1,0 +1,15 @@
+{
+  "_note": "Demo cameras that replay consented clips as if live. Clips live outside git; zones are normalized 0..1.",
+  "cameras": [
+    {
+      "name": "Plaza (OpenCV sample)",
+      "clip": "data/samples/vtest.avi",
+      "zones": [{"name": "left walkway", "polygon": [[0, 0.3], [0.5, 0.3], [0.5, 1], [0, 1]]}],
+      "watches": [
+        {"preset": "enters", "fill": {"zone": "left walkway"}},
+        {"preset": "too_many", "fill": {"zone": "left walkway", "value": 4}},
+        {"preset": "fall"}
+      ]
+    }
+  ]
+}
