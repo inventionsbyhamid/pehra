@@ -10,6 +10,17 @@ log = logging.getLogger("watchful.indexer")
 INDEX_KINDS = ["scene", "track_end"]
 
 
+def reset_if_model_changed(repo, model: str) -> bool:
+    """Embeddings from different models can't be compared: a new model clears the index so it is rebuilt."""
+    previous = repo.get_meta("embedder")
+    if previous == model:
+        return False
+    log.info("embedding model is now %s (was %s); rebuilding the search index (%d moments)", model, previous,
+             repo.clear_embeddings())
+    repo.set_meta("embedder", model)
+    return True
+
+
 def index_once(repo, blobs, embedder, kinds: list[str] = INDEX_KINDS, limit: int = 64) -> int:
     done = 0
     for e in repo.events_missing_embedding(kinds, limit):

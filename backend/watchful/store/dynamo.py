@@ -193,6 +193,29 @@ class DynamoRepository:
                                          ExpressionAttributeNames={"#d": "data"},
                                          ExpressionAttributeValues={":d": json.dumps(data)})
 
+    def clear_embeddings(self) -> int:
+        cleared = 0
+        for cid in self._event_cameras():
+            for i in self._all(self.t["events"].query, KeyConditionExpression=Key("camera_id").eq(cid)):
+                data = json.loads(i["data"])
+                if data.get("embedding") is None:
+                    continue
+                data["embedding"] = None
+                expr, values = "set #d = :d", {":d": json.dumps(data)}
+                if data.get("kind") in INDEX_KINDS and data.get("keyframe_key"):
+                    expr, values = expr + ", pending = :p", {**values, ":p": "y"}
+                self.t["events"].update_item(Key={"camera_id": cid, "sk": i["sk"]}, UpdateExpression=expr,
+                                             ExpressionAttributeNames={"#d": "data"}, ExpressionAttributeValues=values)
+                cleared += 1
+        return cleared
+
+    def get_meta(self, key: str) -> str | None:
+        item = self.t["counters"].get_item(Key={"key": f"meta#{key}"}).get("Item")
+        return item.get("value") if item else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.t["counters"].put_item(Item={"key": f"meta#{key}", "value": value})
+
     def delete_events_before(self, ts: float, keep_cameras: list[str] = ()) -> int:
         removed = 0
         for cid in [c for c in self._event_cameras() if c not in keep_cameras]:

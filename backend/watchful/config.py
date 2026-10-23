@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     scan_detector: str = "yolox_nano_320"  # recordings: 45% faster, about 2 more people in 100 missed
     pose_model: str = "mediapipe"
     face_model: str = "yunet_sface"
-    embedder: str = "siglip2"
+    embedder: str = "siglip2_b32"
 
     data_dir: Path = Path("data")
     web_dist: Path | None = None  # the built web app; defaults to web/dist in the repo

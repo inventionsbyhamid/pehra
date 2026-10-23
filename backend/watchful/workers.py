@@ -261,7 +261,8 @@ class WorkerManager:
         threading.Thread(target=self._janitor, daemon=True).start()
         self.indexer = None
         if settings.index_embeddings:
-            from watchful.indexer import Indexer
+            from watchful.indexer import Indexer, reset_if_model_changed
+            reset_if_model_changed(repo, settings.embedder)
             self.indexer = Indexer(repo, blobs, lambda: make_embedder(settings), busy=lambda: self.scanning.value > 0)
             self.indexer.start()
 

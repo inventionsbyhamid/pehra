@@ -84,6 +84,9 @@ class Repository(Protocol):
                      limit: int = 500) -> list[EventRow]: ...
     def get_event(self, event_id: str) -> EventRow | None: ...
     def events_missing_embedding(self, kinds: list[str], limit: int = 64) -> list[EventRow]: ...
+    def clear_embeddings(self) -> int: ...
+    def get_meta(self, key: str) -> str | None: ...
+    def set_meta(self, key: str, value: str) -> None: ...
     def set_event_embedding(self, event_id: str, embedding: list[float]) -> None: ...
     def delete_events_before(self, ts: float, keep_cameras: list[str] = ()) -> int: ...
     def delete_alerts_before(self, ts: float, keep_cameras: list[str] = ()) -> int: ...
@@ -124,6 +127,7 @@ create table if not exists alerts (id text primary key, camera_id text, ts real,
 create index if not exists alerts_fp on alerts (fingerprint, ts);
 create table if not exists enrollments (person_id text primary key, data text not null);
 create table if not exists counters (day text, name text, n integer, primary key (day, name));
+create table if not exists meta (key text primary key, value text);
 create table if not exists person_labels (camera_id text, group_id text, label text, primary key (camera_id, group_id));
 """
 
@@ -211,6 +215,22 @@ class SqliteRepository:
         rows = self._rows(f"select data from events where embedded = 0 and kind in ({','.join('?' * len(kinds))}) "
                           "order by ts desc limit ?", [*kinds, limit])
         return [EventRow(**json.loads(r[0])) for r in rows]
+
+    def clear_embeddings(self) -> int:
+        with self.lock, self.db:
+            rows = self.db.execute("select id, data from events where embedded = 1").fetchall()
+            for event_id, data in rows:
+                d = json.loads(data)
+                d["embedding"] = None
+                self.db.execute("update events set data = ?, embedded = 0 where id = ?", (json.dumps(d), event_id))
+            return len(rows)
+
+    def get_meta(self, key: str) -> str | None:
+        rows = self._rows("select value from meta where key = ?", (key,))
+        return rows[0][0] if rows else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._write("insert or replace into meta values (?, ?)", (key, value))
 
     def set_event_embedding(self, event_id: str, embedding: list[float]) -> None:
         with self.lock, self.db:

@@ -197,3 +197,17 @@ def test_missing_pictures_do_not_break_search(tmp_path):
             return np.array([1.0, 0.0], np.float32)
 
     assert search(SearchQuery(text="anything"), repo, blobs, Stub()).results == []
+
+
+def test_changing_the_embedding_model_rebuilds_the_index(tmp_path):
+    from watchful.indexer import reset_if_model_changed
+    repo = SqliteRepository(tmp_path / "w.db")
+    repo.add_events([EventRow(None, "cam", 1.0, "scene", None, None, None, {}, "k.jpg", None, [0.9, 0.9], None)])
+    assert reset_if_model_changed(repo, "siglip2")  # vectors from an unrecorded model are not trusted
+    assert repo.query_events(camera_id="cam")[0].embedding is None
+    repo.set_event_embedding(repo.query_events(camera_id="cam")[0].id, [0.1, 0.2])
+    assert not reset_if_model_changed(repo, "siglip2")
+    assert repo.query_events(camera_id="cam")[0].embedding == [0.1, 0.2]
+    assert reset_if_model_changed(repo, "siglip2_b32")
+    assert repo.query_events(camera_id="cam")[0].embedding is None
+    assert [e.kind for e in repo.events_missing_embedding(["scene"])] == ["scene"]

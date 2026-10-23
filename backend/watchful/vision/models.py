@@ -52,6 +52,7 @@ MODEL_FILES: dict[str, ModelFile] = {
 }
 
 SIGLIP2 = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/"
+SIGLIP2_B32 = "https://huggingface.co/onnx-community/siglip2-base-patch32-256-ONNX/resolve/main/"
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,13 @@ EMBEDDERS: dict[str, EmbedderSpec] = {
          "tokenizer.json": SIGLIP2 + "tokenizer.json"},
         "Apache-2.0 (Google SigLIP 2, ONNX by onnx-community)",
         224, 0.5, 0.5, 64, 0, True, "pooler_output", 4.724453449249268, -16.771724700927734),
+    # 64 image tokens instead of 196: about 2.5 to 2.9 times faster, same text tower and tokenizer
+    "siglip2_b32": EmbedderSpec(
+        "siglip2_b32",
+        {"vision.onnx": SIGLIP2_B32 + "onnx/vision_model.onnx", "text.onnx": SIGLIP2_B32 + "onnx/text_model.onnx",
+         "tokenizer.json": SIGLIP2_B32 + "tokenizer.json"},
+        "Apache-2.0 (Google SigLIP 2 base patch32 256, ONNX by onnx-community)",
+        256, 0.5, 0.5, 64, 0, True, "pooler_output", 4.717002868652344, -16.766876220703125),
 }
 
 SAMPLE_BASE = "https://raw.githubusercontent.com/opencv/opencv/5.x/samples/data/"

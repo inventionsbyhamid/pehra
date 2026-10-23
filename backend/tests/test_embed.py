@@ -9,9 +9,9 @@ RED_TOP = (505, 215, 36, 91)
 DARK_COAT = (668, 257, 47, 110)
 
 
-@pytest.fixture(scope="module")
-def emb():
-    return Embedder("siglip2")
+@pytest.fixture(scope="module", params=["siglip2", "siglip2_b32"])
+def emb(request):
+    return Embedder(request.param)
 
 
 def crop(box):
