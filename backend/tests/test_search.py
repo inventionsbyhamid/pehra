@@ -129,3 +129,11 @@ def test_unindexed_moments_are_reported_not_waited_for(world):
     repo.add_events([ev("scene", 100 + i * 20, None) for i in range(5)])
     r = search(SearchQuery(text="a red car"), repo, blobs, Stub(), cfg=SignalTuning(search_embed_on_demand=2))
     assert "still indexing 3" in (r.problem or "").lower()
+
+
+def test_a_photo_with_a_person_needs_consent_even_without_a_face(world):
+    from watchful.vision.detect import YoloxDetector
+    repo, blobs = world
+    crowd = jpg(cv2.VideoCapture(str(sample_path("vtest.avi"))).read()[1])
+    with pytest.raises(ConsentRequired):
+        search(SearchQuery(photo=crowd), repo, blobs, Stub(), faces=FaceIndex(), detector=YoloxDetector())

@@ -157,7 +157,8 @@ def _confirm(hits: list[SearchHit], caption: str, blobs, llm: LLM, keys: dict[st
 
 
 def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces: FaceIndex | None = None,
-           cfg: SignalTuning = SignalTuning(), now: float | None = None, tz: str = "Asia/Kolkata") -> SearchResult:
+           cfg: SignalTuning = SignalTuning(), now: float | None = None, tz: str = "Asia/Kolkata",
+           detector=None) -> SearchResult:
     if q.text is None and q.photo is None and q.person_id is None:
         raise ValueError("search with words, a photo or an enrolled person")
     if q.person_id is not None:
@@ -181,6 +182,8 @@ def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces:
         return SearchResult(query, _faces(rows, blobs, faces, image)[:cfg.search_top_n * 2])
 
     if image is not None:
+        if not q.consent and detector is not None and any(d.cls == "person" for d in detector.detect(image)):
+            raise ConsentRequired("searching with a photo of a person needs their consent")
         query = {"photo": "appearance", "looks_like": q.text, "not_like": None, "camera_id": q.camera_id,
                  "since": q.since, "until": q.until, "classes": list(q.classes)}
         target, against = embedder.image(image), None

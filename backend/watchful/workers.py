@@ -38,6 +38,11 @@ def should_record(repo, camera: Camera) -> bool:
     return camera.kind != "demo" or not repo.query_events(camera_id=camera.id, limit=1)
 
 
+TAMPER_TEXT = {"covered": "The camera picture went flat, as if the lens is covered.",
+               "blurred": "The camera picture is blurred.",
+               "moved": "The camera seems to have been turned or moved."}
+
+
 def run_retention(settings: Settings, repo, blobs) -> None:
     """Clips, pictures, uploads, events and alerts older than retention_days are deleted, except enrolment photos
     and demo cameras, which replay consented clips for the whole judging period."""
@@ -162,6 +167,10 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
                       "width": w, "height": h, "tracks": tracks})
         if not analyse:
             continue
+        for e in result.tick.events:
+            if e.kind.startswith("tamper_") and e.kind != "tamper_restored":
+                send({"type": "tamper", "camera_id": camera.id, "ts": e.ts, "kind": e.kind[len("tamper_"):],
+                      "detail": e.data.get("detail", "")})
         for c in engine.on_tick(camera.id, result.tick, now=frame.ts, image=frame.image):
             c.clip_key = f"{camera.id}/clips/{c.fingerprint}.mp4"
             clips.request(c.ts, c.clip_key)
@@ -426,6 +435,19 @@ class WorkerManager:
             self._publish(msg["camera_id"], msg)
         elif kind == "candidate":
             self._on_candidate(msg["pack"])
+        elif kind == "tamper":
+            self._tamper(msg)
+
+    def _tamper(self, msg: dict) -> None:
+        """Camera health needs no AI check: a covered, blurred or turned camera is an alert straight away."""
+        text = TAMPER_TEXT.get(msg["kind"], "Something is wrong with the camera picture.")
+        fp = f"tamper|{msg['camera_id']}|{msg['kind']}|{int(msg['ts'] // 600)}"
+        if self.repo.alert_fingerprint_exists(fp, within_s=3600):
+            return
+        row = self.repo.add_alert(AlertRow(None, msg["camera_id"], None, msg["ts"], "warning", "alert", text, None, None,
+                                           [], None, fp))
+        self._publish(msg["camera_id"], {"type": "alert", "alert": {**asdict(row), "keyframe_url": None}})
+        self.metrics.put("Alerts", 1, {"Status": "tamper"})
 
     # alerts
     def _on_candidate(self, pack: EvidencePack) -> None:

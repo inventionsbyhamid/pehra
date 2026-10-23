@@ -128,3 +128,10 @@ def test_rescanning_an_upload_replaces_its_timeline(manager, clip20, tmp_path):
     assert wait(lambda: m.scan(second)["state"] == "done", 120)
     assert len(repo.query_events(camera_id=cam.id, limit=10000)) == events
     assert len(repo.list_alerts(cam.id, 500)) == alerts and m.scan(second)["alert_ids"] == []
+
+
+def test_tamper_becomes_an_alert(manager):
+    m, repo = manager
+    m._handle({"type": "tamper", "camera_id": "camT", "ts": 100.0, "kind": "covered", "detail": "flat"})
+    a = repo.list_alerts("camT")[0]
+    assert a.status == "alert" and "covered" in a.summary and a.severity == "warning"

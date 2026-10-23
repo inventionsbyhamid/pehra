@@ -23,6 +23,7 @@ class _Reference:
     keypoints: tuple
     descriptors: np.ndarray | None
     sharpness: float
+    std: float
     ts: float
 
 
@@ -67,13 +68,14 @@ class TamperMonitor:
 
     def _reference(self, gray: np.ndarray, ts: float) -> _Reference:
         kp, des = self.orb.detectAndCompute(gray, None)
-        return _Reference(gray, kp, des, sharpness(gray), ts)
+        return _Reference(gray, kp, des, sharpness(gray), float(cv2.meanStdDev(gray)[1][0][0]), ts)
 
     def _assess(self, gray: np.ndarray) -> tuple[Kind | None, str]:
         c = self.cfg
-        mean, std = cv2.meanStdDev(gray)
-        if mean[0][0] < c.covered_mean or std[0][0] < c.covered_std:
-            return "covered", "the picture is dark or flat, as if the lens is covered"
+        std = float(cv2.meanStdDev(gray)[1][0][0])
+        # flat compared with the usual view; a scene that darkens slowly keeps refreshing its reference
+        if std < c.covered_std and (self.ref is None or std < c.covered_ratio * self.ref.std):
+            return "covered", "the picture went flat, as if the lens is covered"
         if self.ref is None:
             return None, ""
         sharp = sharpness(gray)

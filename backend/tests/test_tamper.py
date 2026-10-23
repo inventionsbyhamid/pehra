@@ -50,3 +50,15 @@ def test_shifted_view_moved():
 def test_normal_noise_no_event():
     img = frame()
     assert run([noisy(img, i) for i in range(15)]) == []
+
+
+def test_nightfall_is_not_a_covered_lens():
+    img = frame()
+    mon = TamperMonitor(TamperTuning(check_every_s=1.0, hold_s=5.0, reference_refresh_s=2.0))
+    events = []
+    for i in range(60):
+        dim = (img * max(0.03, 1 - i / 50)).astype(np.uint8)  # the light fades over a minute
+        e = mon.update(noisy(dim, i), float(i))
+        if e:
+            events.append(e.kind)
+    assert "covered" not in events

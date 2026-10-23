@@ -22,7 +22,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from watchful.agent.ask import AskContext, ask, people_groups
 from watchful.agent.compiler import compile_watch
-from watchful.components import make_blobs, make_embedder, make_faces, make_llm, make_repo
+from watchful.components import make_blobs, make_detector, make_embedder, make_faces, make_llm, make_repo
 from watchful.config import Settings, get_settings
 from watchful.rules.engine import validate
 from watchful.rules.presets import describe, preset
@@ -60,6 +60,7 @@ class State:
         self._faces = None
         self._embedder = None
         self.pushers: dict[str, set[int]] = {}
+        self._detector = None
         self.signer = URLSafeTimedSerializer(settings.session_secret, salt="watchful")
 
     @property
@@ -68,6 +69,12 @@ class State:
             self._faces = make_faces(self.settings, self.tuning)
             self._faces.load(self.repo.list_enrollments())
         return self._faces
+
+    @property
+    def person_detector(self):
+        if self._detector is None:
+            self._detector = make_detector(self.settings, self.tuning, {"person"})
+        return self._detector
 
     @property
     def embedder(self):
@@ -467,7 +474,7 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         try:
             r = await run_in_threadpool(search, q, w.repo, w.blobs, w.embedder, w.search_llm,
                                         w.faces if q.photo is not None or q.person_id else None, w.tuning.signals, None,
-                                        w.settings.timezone)
+                                        w.settings.timezone, w.person_detector if q.photo is not None else None)
         except ConsentRequired:
             raise HTTPException(400, "Searching with a photo of a person needs their consent.")
         except (NoFaceFound, ValueError) as e:

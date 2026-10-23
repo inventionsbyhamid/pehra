@@ -83,8 +83,8 @@ class QualityTuning(_Section):
 class TamperTuning(_Section):
     check_every_s: float = 2.0
     hold_s: float = 5.0
-    covered_mean: float = 15
     covered_std: float = 8
+    covered_ratio: float = 0.3  # and below this share of the reference view's contrast
     blur_ratio: float = 0.2
     orb_features: int = 500
     ratio_test: float = 0.75
