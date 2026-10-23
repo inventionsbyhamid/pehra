@@ -20,13 +20,13 @@ class Settings(BaseSettings):
     analysis_width: int = 960
     tuning_file: Path | None = None
     timezone: str = "Asia/Kolkata"
-    detector: Literal["yolox_tiny", "yolox_s"] = "yolox_tiny"
+    detector: Literal["yolox_nano", "yolox_tiny", "yolox_s"] = "yolox_nano"
     dnn_engine: Literal["auto", "new", "classic"] = "auto"
     night_mode: Literal["auto", "on", "off"] = "auto"
     embedder: Literal["embeddinggemma2", "siglip2"] = "siglip2"
 
     scan_workers: int = 0
-    scan_overlap_s: float = 1.0
+    scan_overlap_s: float = 2.0
     ai_parallel: int = 6
 
     openrouter_api_key: str | None = None

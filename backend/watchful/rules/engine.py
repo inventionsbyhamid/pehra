@@ -26,6 +26,7 @@ class Candidate:
     fingerprint: str
     watch_name: str = ""
     verify: str = ""
+    clip_key: str | None = None
 
 
 @dataclass
@@ -70,6 +71,7 @@ def needs_for(watches: list[Watch]) -> Needs:
             spec = REGISTRY.get(c.signal)
             if spec:
                 needs.pose |= "pose" in spec.needs
+                needs.posture |= "posture" in spec.needs
                 needs.faces |= "faces" in spec.needs
                 needs.embed |= "embed" in spec.needs
     return needs

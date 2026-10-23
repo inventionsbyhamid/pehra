@@ -33,6 +33,10 @@ class PoseTuning(_Section):
     conf: float = 0.5
     enlarge: float = 1.25
     rate_hz: float = 2.0
+    # for fall watches, pose runs only while a person's box looks like a fall may be happening
+    suspicious_aspect: float = 0.6
+    suspicious_drop: float = 0.3  # box centre drop, box heights per second
+    suspicious_hold_s: float = 4.0
 
 
 class FallTuning(_Section):
@@ -45,6 +49,8 @@ class FallTuning(_Section):
     up_angle: float = 35.0
     up_aspect: float = 1.0
     box_only_confidence: float = 0.5
+    box_drop_speed: float = 0.4  # box centre drop, box heights per second
+    box_aspect_rise: float = 0.5
     history_s: float = 3.0
 
 
@@ -102,6 +108,9 @@ class PerceiveTuning(_Section):
 
 class ScanTuning(_Section):
     min_chunk_s: float = 4.0
+    join_iou: float = 0.5  # mean box overlap in the shared seconds that joins two tracks
+    join_distance: float = 0.5  # fallback: centre distance in box heights between last and first boxes
+    join_gap_s: float = 1.0
 
 
 class ClipTuning(_Section):

@@ -41,3 +41,7 @@ class LocalBlobStore:
                 path.unlink()
                 removed += 1
         return removed
+
+
+def make_blobs(settings) -> BlobStore:
+    return LocalBlobStore(settings.data_dir)

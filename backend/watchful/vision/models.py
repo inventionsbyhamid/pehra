@@ -17,6 +17,10 @@ class ModelFile:
 
 
 MODEL_FILES: dict[str, ModelFile] = {
+    "yolox_nano": ModelFile(
+        "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.onnx",
+        "yolox_nano.onnx", "Apache-2.0 (Megvii YOLOX)",
+        "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d"),
     "yolox_tiny": ModelFile(
         "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx",
         "yolox_tiny.onnx", "Apache-2.0 (Megvii YOLOX)",
@@ -25,10 +29,6 @@ MODEL_FILES: dict[str, ModelFile] = {
         f"{HF}/object_detection_yolox/resolve/main/object_detection_yolox_2022nov.onnx",
         "object_detection_yolox_2022nov.onnx", "Apache-2.0 (OpenCV Model Zoo)",
         "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063"),
-    "person": ModelFile(
-        f"{HF}/person_detection_mediapipe/resolve/main/person_detection_mediapipe_2023mar.onnx",
-        "person_detection_mediapipe_2023mar.onnx", "Apache-2.0 (OpenCV Model Zoo, MediaPipe)",
-        "47fd5599d6fa17608f03e0eb0ae230baa6e597d7e8a2c8199fe00abea55a701f"),
     "pose": ModelFile(
         f"{HF}/pose_estimation_mediapipe/resolve/main/pose_estimation_mediapipe_2023mar.onnx",
         "pose_estimation_mediapipe_2023mar.onnx", "Apache-2.0 (OpenCV Model Zoo, MediaPipe)",

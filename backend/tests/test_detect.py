@@ -6,7 +6,7 @@ import pytest
 from watchful.vision.detect import Detector
 from watchful.vision.models import sample_path
 
-MODELS = ["yolox_tiny", "yolox_s"]
+MODELS = ["yolox_nano", "yolox_tiny", "yolox_s"]
 
 
 def vtest_frame(n=50):

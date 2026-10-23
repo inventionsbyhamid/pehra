@@ -3,7 +3,7 @@ import pytest
 
 from watchful.vision.models import MODEL_FILES, load_net, model_path, sample_path
 
-DNN_MODELS = ["yolox_tiny", "yolox_s", "person", "pose"]
+DNN_MODELS = ["yolox_nano", "yolox_tiny", "yolox_s", "pose"]
 
 
 @pytest.mark.parametrize("name", DNN_MODELS)

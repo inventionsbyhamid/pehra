@@ -134,7 +134,7 @@ def speed(ctx, cond, track):
     return SignalValue(v, f"moving at {v:.1f} body heights per second")
 
 
-@signal("posture", "track", "text", "A person's posture: upright, falling or fallen.", needs=("pose",))
+@signal("posture", "track", "text", "A person's posture: upright, falling or fallen.", needs=("posture",))
 def posture(ctx, cond, track):
     return SignalValue(track.posture, None if track.posture == "upright" else f"posture {track.posture}")
 

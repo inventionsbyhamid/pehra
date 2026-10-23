@@ -125,4 +125,4 @@ def test_every_preset_is_valid():
 
 def test_needs_follow_watches():
     n = needs_for([preset("fall"), preset("enters", zone="parking lot", classes=["car"])])
-    assert n.pose and not n.faces and n.classes == {"person", "car"}
+    assert n.posture and not n.pose and not n.faces and n.classes == {"person", "car"}

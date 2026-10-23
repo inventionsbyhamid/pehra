@@ -21,6 +21,8 @@ class _Sample:
     height: float
     aspect: float
     conf: float
+    box_cy: float
+    box_h: float
 
 
 class FallDetector:
@@ -39,9 +41,9 @@ class FallDetector:
         x, y, w, h = box
         aspect = w / h if h else 0.0
         if pose is not None:
-            s = _Sample(ts, pose.torso_angle_deg, pose.hip_y, pose.body_height, aspect, pose.confidence)
+            s = _Sample(ts, pose.torso_angle_deg, pose.hip_y, pose.body_height, aspect, pose.confidence, y + h / 2, h)
         else:
-            s = _Sample(ts, None, y + h / 2, max(w, h), aspect, c.box_only_confidence)
+            s = _Sample(ts, None, y + h / 2, max(w, h), aspect, c.box_only_confidence, y + h / 2, h)
         self.samples.append(s)
         while self.samples and self.samples[0].ts < ts - c.history_s:
             self.samples.popleft()
@@ -52,9 +54,10 @@ class FallDetector:
         self._up_since = (self._up_since if self._up_since is not None else ts) if up else None
         conf = s.conf if s.angle is not None else c.box_only_confidence
 
-        if self.state == "upright" and self._is_falling(s):
+        falling = self._is_falling(s)
+        if self.state == "upright" and falling:
             self.state = "falling"
-            return PostureEvent("falling", self.track_id, ts, conf)
+            return PostureEvent("falling", self.track_id, ts, conf if falling == "pose" else c.box_only_confidence)
         if self.state in ("upright", "falling") and self._lying_since is not None \
                 and ts - self._lying_since >= c.hold_s:
             self.state = "fallen"
@@ -66,14 +69,18 @@ class FallDetector:
             return PostureEvent("recovered", self.track_id, ts, conf)
         return None
 
-    def _is_falling(self, s: _Sample) -> bool:
+    def _is_falling(self, s: _Sample) -> str | None:
+        """'pose' or 'box' when a fast drop with a body turning flat is seen within the window."""
         c = self.cfg
-        if s.angle is None:
-            return False
         for p in self.samples:
-            if not (s.ts - c.window_s <= p.ts < s.ts) or p.angle is None:
+            if not (s.ts - c.window_s <= p.ts < s.ts):
                 continue
-            drop_speed = (s.hip_y - p.hip_y) / max(p.height, 1.0) / max(s.ts - p.ts, 1e-3)
-            if drop_speed > c.drop_speed and s.angle - p.angle > c.angle_rise:
-                return True
-        return False
+            dt = max(s.ts - p.ts, 1e-3)
+            if s.angle is not None and p.angle is not None:
+                drop_speed = (s.hip_y - p.hip_y) / max(p.height, 1.0) / dt
+                if drop_speed > c.drop_speed and s.angle - p.angle > c.angle_rise:
+                    return "pose"
+            box_drop = (s.box_cy - p.box_cy) / max(p.box_h, 1.0) / dt
+            if box_drop > c.box_drop_speed and s.aspect - p.aspect > c.box_aspect_rise:
+                return "box"
+        return None

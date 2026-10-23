@@ -41,12 +41,13 @@ def test_slowly_lying_down_is_not_falling():
     for i in range(17):
         t = i * 0.5
         angle = min(85.0, 5 + 80 * t / 6)
-        box = lying_box() if angle > 60 else upright_box()
-        s.append((t, pose(angle, 300 + 100 * min(t, 6) / 6), box))
+        k = min(t, 6) / 6  # the box turns from tall to wide as slowly as the body
+        box = tuple(a + (b - a) * k for a, b in zip(upright_box(), lying_box()))
+        s.append((t, pose(angle, 300 + 100 * k), box))
     events = run(s)
     assert [e.kind for e in events] == ["fallen"]
-    first_over_60 = next(t for t, p, _ in s if p.torso_angle_deg > 60)
-    assert events[0].ts >= first_over_60 + 2
+    first_lying = next(t for t, p, b in s if p.torso_angle_deg > 60 or b[2] / b[3] > 1.3)
+    assert events[0].ts >= first_lying + 2
 
 
 def test_sitting_down_no_events():
@@ -65,5 +66,14 @@ def test_missing_pose_uses_box_shape():
     s = [(t * 0.5, None, upright_box()) for t in range(3)]
     s += [(1.5 + t * 0.5, None, lying_box()) for t in range(6)]
     events = run(s)
-    assert [e.kind for e in events] == ["fallen"]
-    assert events[0].confidence < 0.7
+    fallen = [e for e in events if e.kind == "fallen"]
+    assert len(fallen) == 1 and fallen[0].confidence < 0.7
+
+
+def test_box_only_fall_gives_falling():
+    s = [(t * 0.5, None, upright_box()) for t in range(5)]
+    s += [(2.5, None, (70.0, 300.0, 120.0, 90.0))]
+    s += [(3.0 + t * 0.5, None, lying_box()) for t in range(6)]
+    events = run(s)
+    assert [e.kind for e in events] == ["falling", "fallen"]
+    assert events[0].ts == 2.5 and events[0].confidence < 0.7

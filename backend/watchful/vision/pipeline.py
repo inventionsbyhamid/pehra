@@ -49,14 +49,21 @@ class CameraPipeline:
                  settings: Settings, tuning: Tuning, needs: Needs, embedder=None):
         self.camera, self.repo = camera, repo
         self.perceiver = Perceiver(camera, settings, tuning, blobs, faces, needs, embedder)
-        self.reasoner = Reasoner(camera, tuning, postures=needs.pose)
+        self.reasoner = Reasoner(camera, tuning, postures=needs.pose or needs.posture)
 
     def set_needs(self, needs: Needs) -> None:
         self.perceiver.set_needs(needs)
-        self.reasoner.postures = needs.pose
+        self.reasoner.postures = needs.pose or needs.posture
 
     def stats(self) -> dict:
         return self.perceiver.stats()
+
+    def finish(self, ts: float, pos: float | None = None) -> Tick:
+        """Closes open tracks at the end of a file."""
+        tick = self.reasoner.step(self.perceiver.finish(ts, pos))
+        if tick.events:
+            self.repo.add_events(tick.events)
+        return tick
 
     def process(self, frame: Frame, draw: bool = False) -> FrameResult:
         p = self.perceiver.perceive(frame)

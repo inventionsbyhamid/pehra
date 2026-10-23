@@ -20,7 +20,7 @@ def test_settings_defaults(monkeypatch):
     assert s.storage == "local"
     assert s.ai_provider == "openrouter"
     assert s.analysis_fps == 5.0
-    assert s.detector == "yolox_tiny"
+    assert s.detector == "yolox_nano"
 
 
 def test_settings_env_override(monkeypatch):

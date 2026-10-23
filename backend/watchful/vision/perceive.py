@@ -23,7 +23,8 @@ from watchful.vision.track import Track, Tracker
 class Needs:
     """What the active watches need, so nothing heavy runs without a reason."""
     classes: set[str] | None = None  # None means all
-    pose: bool = False
+    pose: bool = False  # every person, for hands and climbing
+    posture: bool = False  # only people whose box looks like a fall may be happening
     faces: bool = False
     embed: bool = False
 
@@ -58,6 +59,9 @@ class Perception:
 @dataclass
 class _TrackMemo:
     pose_ts: float = float("-inf")
+    last_box: tuple | None = None
+    last_ts: float = 0.0
+    suspicious_until: float = float("-inf")
     face_ts: float = float("-inf")
     face: FaceMatch | None = None
     keyframe_ts: float = float("-inf")
@@ -83,14 +87,15 @@ class Perceiver:
     """The heavy per frame work: night mode, tamper, motion, detection, tracking, pose, faces, keyframes."""
 
     def __init__(self, camera: Camera, settings: Settings, tuning: Tuning, blobs: BlobStore,
-                 faces: FaceIndex | None, needs: Needs, embedder=None):
+                 faces: FaceIndex | None, needs: Needs, embedder=None, detector: Detector | None = None,
+                 pose: PoseEstimator | None = None):
         self.camera, self.settings, self.t, self.blobs = camera, settings, tuning, blobs
         self.faces, self.embedder = faces, embedder
         self.gate = MotionGate(tuning.motion)
-        self.detector = Detector(settings.detector, needs.classes, tuning.detect, settings)
+        self.detector = detector or Detector(settings.detector, needs.classes, tuning.detect, settings)
         self.tracker = Tracker(tuning.track)
         self.tamper = TamperMonitor(tuning.tamper)
-        self.pose = None
+        self.pose = pose
         self.memo: dict[int, _TrackMemo] = {}
         self.counts = {"frames": 0, "frames_skipped": 0, "detector_runs": 0, "pose_runs": 0, "face_runs": 0,
                        "embeds": 0, "ms_total": 0.0}
@@ -99,7 +104,7 @@ class Perceiver:
     def set_needs(self, needs: Needs) -> None:
         self.needs = needs
         self.detector.set_classes(None if needs.classes is None else needs.classes | {"person"})
-        if needs.pose and self.pose is None:
+        if (needs.pose or needs.posture) and self.pose is None:
             self.pose = PoseEstimator(self.t.pose, self.settings)
 
     def stats(self) -> dict:
@@ -134,11 +139,23 @@ class Perceiver:
         h, w = image.shape[:2]
         return Perception(ts, (w, h), motion.moving, observations, tamper, frame.pos)
 
+    def finish(self, ts: float, pos: float | None = None, size: tuple[int, int] = (0, 0)) -> Perception:
+        """Ends every open track, for the end of a file or a scan chunk."""
+        ended = []
+        for t in self.tracker.tracks:
+            if t.started:
+                m = self.memo.pop(t.id, _TrackMemo())
+                ended.append(Observation(ts, t.id, t.cls, t.box, t.score, face=m.face, signature=m.signature,
+                                         keyframe_key=m.keyframe_key, best_key=m.best_key,
+                                         embedding=m.embedding, ended=True))
+        self.tracker.tracks = []
+        return Perception(ts, size, False, ended, None, pos)
+
     def _observe(self, image: np.ndarray, t: Track, ts: float, started: bool) -> Observation:
         m = self.memo.setdefault(t.id, _TrackMemo())
         person = t.cls == "person"
         obs = Observation(ts, t.id, t.cls, t.box, t.score, started=started)
-        if person and self.pose and self.needs.pose and ts - m.pose_ts >= 1 / self.t.pose.rate_hz:
+        if person and self.pose and self._wants_pose(t, ts, m) and ts - m.pose_ts >= 1 / self.t.pose.rate_hz:
             m.pose_ts = ts
             self.counts["pose_runs"] += 1
             obs.pose = self.pose.estimate(image, t.box)
@@ -158,6 +175,22 @@ class Perceiver:
         obs.face, obs.signature, obs.embedding = m.face, m.signature, m.embedding
         obs.keyframe_key, obs.best_key = m.keyframe_key, m.best_key
         return obs
+
+    def _wants_pose(self, t: Track, ts: float, m: _TrackMemo) -> bool:
+        if self.needs.pose:
+            return True
+        if not self.needs.posture:
+            return False
+        c = self.t.pose
+        x, y, w, h = t.box
+        if m.last_box is not None and ts > m.last_ts:
+            drop = ((y + h / 2) - (m.last_box[1] + m.last_box[3] / 2)) / max(m.last_box[3], 1.0) / (ts - m.last_ts)
+        else:
+            drop = 0.0
+        m.last_box, m.last_ts = t.box, ts
+        if w / max(h, 1.0) >= c.suspicious_aspect or drop >= c.suspicious_drop:
+            m.suspicious_until = ts + c.suspicious_hold_s
+        return ts <= m.suspicious_until
 
     def _keyframe(self, image: np.ndarray, t: Track, ts: float, m: _TrackMemo) -> None:
         c = crop(image, t.box)
