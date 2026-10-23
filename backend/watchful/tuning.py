@@ -20,6 +20,10 @@ class MotionTuning(_Section):
 class DetectTuning(_Section):
     conf: float = 0.4
     nms: float = 0.45
+    # run the detector on every Nth analysed frame while only already tracked things move;
+    # the tracker predicts in between and new motion anywhere else forces a detection
+    stride: int = 2
+    known_motion_overlap: float = 0.5  # share of a motion blob inside a track box that counts as known
 
 
 class TrackTuning(_Section):
@@ -116,6 +120,7 @@ class EvidenceTuning(_Section):
 
 class ScanTuning(_Section):
     min_chunk_s: float = 4.0
+    decode_threads: int = 1  # each chunk worker decodes on one thread; the chunks already fill the CPUs
     join_iou: float = 0.5  # mean box overlap in the shared seconds that joins two tracks
     join_distance: float = 0.5  # fallback: centre distance in box heights between last and first boxes
     join_gap_s: float = 1.0

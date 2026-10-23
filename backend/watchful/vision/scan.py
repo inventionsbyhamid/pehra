@@ -108,7 +108,7 @@ def _run_chunk(job: _Job) -> ChunkResult:
     perceiver = Perceiver(job.camera, s, t, make_blobs(s), faces, job.needs,
                           detector=_W["detector"], pose=_W["pose"])
     perceiver.tracker._next_id = (job.index + 1) * TRACK_ID_SPAN
-    cap = cv2.VideoCapture(job.path, cv2.CAP_FFMPEG)
+    cap = cv2.VideoCapture(job.path, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, t.scan.decode_threads])
     cap.set(cv2.CAP_PROP_POS_MSEC, job.start * 1000)
     step = 1.0 / s.analysis_fps
     next_t = math.ceil(job.start / step - EPS) * step

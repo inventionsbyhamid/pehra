@@ -98,8 +98,9 @@ class Perceiver:
         self.tamper = TamperMonitor(tuning.tamper)
         self.pose = pose
         self.memo: dict[int, _TrackMemo] = {}
-        self.counts = {"frames": 0, "frames_skipped": 0, "detector_runs": 0, "pose_runs": 0, "face_runs": 0,
-                       "embeds": 0, "ms_total": 0.0}
+        self.counts = {"frames": 0, "frames_skipped": 0, "detector_runs": 0, "detector_skipped": 0, "pose_runs": 0,
+                       "face_runs": 0, "embeds": 0, "ms_total": 0.0}
+        self._since_detect = 0
         self.set_needs(needs)
 
     def set_needs(self, needs: Needs) -> None:
@@ -124,8 +125,17 @@ class Perceiver:
         motion = self.gate.update(work)
         observations: list[Observation] = []
         if motion.moving or self.tracker.tracks:
-            self.counts["detector_runs"] += 1
-            up = self.tracker.update(self.detector.detect(work), ts)
+            tracks = self.tracker.tracks
+            due = self._since_detect + 1 >= max(1, self.t.detect.stride)
+            if not tracks or due or self._new_motion(motion.boxes, tracks):
+                self.counts["detector_runs"] += 1
+                self._since_detect = 0
+                dets = self.detector.detect(work)
+            else:
+                self.counts["detector_skipped"] += 1
+                self._since_detect += 1
+                dets = []
+            up = self.tracker.update(dets, ts)
             started = {t.id for t in up.started}
             for t in up.active:
                 observations.append(self._observe(work, t, ts, t.id in started))
@@ -139,6 +149,20 @@ class Perceiver:
         self.counts["ms_total"] += (time.perf_counter() - start) * 1000
         h, w = image.shape[:2]
         return Perception(ts, (w, h), motion.moving, observations, tamper, frame.pos)
+
+    def _new_motion(self, boxes: list[tuple], tracks: list[Track]) -> bool:
+        """True when some moving blob is not mostly inside a tracked object's box."""
+        for mx, my, mw, mh in boxes:
+            area = max(mw * mh, 1)
+            covered = 0.0
+            for t in tracks:
+                tx, ty, tw, th = t.box
+                iw = max(0.0, min(mx + mw, tx + tw) - max(mx, tx))
+                ih = max(0.0, min(my + mh, ty + th) - max(my, ty))
+                covered = max(covered, iw * ih / area)
+            if covered < self.t.detect.known_motion_overlap:
+                return True
+        return False
 
     def finish(self, ts: float, pos: float | None = None, size: tuple[int, int] = (0, 0)) -> Perception:
         """Ends every open track, for the end of a file or a scan chunk."""
