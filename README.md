@@ -58,7 +58,7 @@ Built for the OpenCV AI Competition 2026, powered by AWS. MIT licensed.
 | Service | Use |
 | --- | --- |
 | EC2 Graviton4 (COOL AMI when available) | API, camera workers and parallel scans |
-| S3 | Clips, keyframes and enrolment photos; a lifecycle rule deletes them after 7 days |
+| S3 | Clips, keyframes and enrolment photos; the retention job deletes clips and pictures after 7 days (enrolment photos stay until the person is removed) |
 | DynamoDB | Cameras, events, watches, alerts, enrolments (tables created on first use) |
 | CloudWatch | Frames per second, ms per frame, frames skipped, detector runs, AI calls, alerts, scan speed |
 | SNS | Email to a caregiver when a person approves a serious alert, at most one per 10 minutes |

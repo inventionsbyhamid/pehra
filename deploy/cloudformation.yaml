@@ -37,11 +37,6 @@ Resources:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
-      LifecycleConfiguration:
-        Rules:
-          - Id: expire-after-7-days
-            Status: Enabled
-            ExpirationInDays: 7
 
   Topic:
     Type: AWS::SNS::Topic

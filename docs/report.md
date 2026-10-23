@@ -90,7 +90,7 @@ candidate becomes an unverified alert with the OpenCV evidence. Every step is st
 
 ## 6. AWS deployment
 
-EC2 Graviton4 (FILL: COOL AMI or stock OpenCV 5), S3 with a 7 day lifecycle, DynamoDB, CloudWatch metrics, SNS
+EC2 Graviton4 (FILL: COOL AMI or stock OpenCV 5), S3 with 7 day retention, DynamoDB, CloudWatch metrics, SNS
 email on approved alerts, optional Bedrock, CloudFormation with a budget alarm, one command deploy.
 
 COOL evidence: FILL (frames per second and seconds per minute of 1080p on Graviton with COOL, Graviton with stock

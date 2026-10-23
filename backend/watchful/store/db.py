@@ -85,7 +85,8 @@ class Repository(Protocol):
     def get_event(self, event_id: str) -> EventRow | None: ...
     def events_missing_embedding(self, kinds: list[str], limit: int = 64) -> list[EventRow]: ...
     def set_event_embedding(self, event_id: str, embedding: list[float]) -> None: ...
-    def delete_events_before(self, ts: float) -> int: ...
+    def delete_events_before(self, ts: float, keep_cameras: list[str] = ()) -> int: ...
+    def delete_alerts_before(self, ts: float, keep_cameras: list[str] = ()) -> int: ...
     def add_watch(self, row: WatchRow) -> WatchRow: ...
     def list_watches(self, camera_id: str | None = None) -> list[WatchRow]: ...
     def update_watch(self, row: WatchRow) -> None: ...
@@ -219,9 +220,17 @@ class SqliteRepository:
                 data["embedding"] = [round(float(x), 5) for x in embedding]
                 self.db.execute("update events set data = ?, embedded = 1 where id = ?", (json.dumps(data), event_id))
 
-    def delete_events_before(self, ts: float) -> int:
+    def delete_events_before(self, ts: float, keep_cameras: list[str] = ()) -> int:
+        keep = list(keep_cameras)
         with self.lock, self.db:
-            return self.db.execute("delete from events where ts < ?", (ts,)).rowcount
+            return self.db.execute(f"delete from events where ts < ? and camera_id not in ({','.join('?' * len(keep))})",
+                                   (ts, *keep)).rowcount
+
+    def delete_alerts_before(self, ts: float, keep_cameras: list[str] = ()) -> int:
+        keep = list(keep_cameras)
+        with self.lock, self.db:
+            return self.db.execute(f"delete from alerts where ts < ? and camera_id not in ({','.join('?' * len(keep))})",
+                                   (ts, *keep)).rowcount
 
     def add_watch(self, row: WatchRow) -> WatchRow:
         row.id = row.id or new_id("wat")

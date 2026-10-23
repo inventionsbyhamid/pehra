@@ -193,9 +193,9 @@ class DynamoRepository:
                                          ExpressionAttributeNames={"#d": "data"},
                                          ExpressionAttributeValues={":d": json.dumps(data)})
 
-    def delete_events_before(self, ts: float) -> int:
+    def delete_events_before(self, ts: float, keep_cameras: list[str] = ()) -> int:
         removed = 0
-        for cid in self._event_cameras():
+        for cid in [c for c in self._event_cameras() if c not in keep_cameras]:
             items = self._all(self.t["events"].query, KeyConditionExpression=Key("camera_id").eq(cid)
                               & Key("sk").lt(f"{ts:017.3f}"))
             with self.t["events"].batch_writer() as batch:
@@ -228,6 +228,15 @@ class DynamoRepository:
         page = self.t["alerts"].query(IndexName=index, KeyConditionExpression=key, ScanIndexForward=False,
                                       Limit=limit)
         return [AlertRow(**json.loads(i["data"])) for i in page.get("Items", [])]
+
+    def delete_alerts_before(self, ts: float, keep_cameras: list[str] = ()) -> int:
+        removed = 0
+        for cid in [c for c in self._event_cameras() if c not in keep_cameras]:
+            for i in self._all(self.t["alerts"].query, IndexName="by_camera",
+                               KeyConditionExpression=Key("camera_id").eq(cid) & Key("ts").lt(Decimal(str(ts)))):
+                self.t["alerts"].delete_item(Key={"id": i["id"]})
+                removed += 1
+        return removed
 
     def alert_fingerprint_exists(self, fp: str, within_s: float) -> bool:
         items = self.t["alerts"].query(IndexName="by_fp", KeyConditionExpression=Key("fingerprint").eq(fp))["Items"]

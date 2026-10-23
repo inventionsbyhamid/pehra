@@ -37,6 +37,21 @@ def should_record(repo, camera: Camera) -> bool:
     return camera.kind != "demo" or not repo.query_events(camera_id=camera.id, limit=1)
 
 
+def run_retention(settings: Settings, repo, blobs) -> None:
+    """Clips, pictures, uploads, events and alerts older than retention_days are deleted, except enrolment photos
+    and demo cameras, which replay consented clips for the whole judging period."""
+    from pathlib import Path
+    cutoff = time.time() - settings.retention_days * 86400
+    demos = [c.id for c in repo.list_cameras() if c.kind == "demo"]
+    blobs.delete_older_than(settings.retention_days, keep=("people/", *(f"{d}/" for d in demos)))
+    repo.delete_events_before(cutoff, keep_cameras=demos)
+    repo.delete_alerts_before(cutoff, keep_cameras=demos)
+    uploads = Path(settings.data_dir) / "uploads"
+    for f in uploads.glob("*") if uploads.is_dir() else []:
+        if f.stat().st_mtime < cutoff:
+            f.unlink(missing_ok=True)
+
+
 def overlay_tracks(tick) -> list[dict]:
     """The latest tracks for the live view, boxes normalized 0..1 so the browser can draw them."""
     w, h = tick.size
@@ -231,17 +246,9 @@ class WorkerManager:
             self.indexer.start()
 
     def _janitor(self, every_s: float = 6 * 3600) -> None:
-        """Retention: clips, keyframes, uploads and events older than retention_days are deleted."""
-        from pathlib import Path
         while not self._closed:
             try:
-                days = self.settings.retention_days
-                self.blobs.delete_older_than(days)
-                self.repo.delete_events_before(time.time() - days * 86400)
-                uploads = Path(self.settings.data_dir) / "uploads"
-                for f in uploads.glob("*") if uploads.is_dir() else []:
-                    if f.stat().st_mtime < time.time() - days * 86400:
-                        f.unlink(missing_ok=True)
+                run_retention(self.settings, self.repo, self.blobs)
             except Exception:
                 log.exception("retention cleanup failed")
             time.sleep(every_s)

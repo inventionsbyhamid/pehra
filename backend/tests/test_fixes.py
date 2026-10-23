@@ -110,3 +110,25 @@ def test_alerts_carry_a_ready_picture_url(tmp_path):
     app, c = app_client(tmp_path)
     app.state.w.repo.add_alert(AlertRow(None, "cam", None, 1.0, "info", "alert", "x", None, "cam/kf/1.jpg", [], None, "f"))
     assert c.get("/api/alerts").json()[0]["keyframe_url"] == "/blobs/cam/kf/1.jpg"
+
+
+def test_retention_keeps_demo_cameras_and_enrolment_photos(tmp_path):
+    import os
+    from watchful.workers import run_retention
+    s = Settings(demo_password="pw", session_secret="s" * 32, data_dir=tmp_path, _env_file=None)
+    repo, blobs = SqliteRepository(tmp_path / "w.db"), LocalBlobStore(tmp_path)
+    demo = repo.add_camera(Camera(None, "Plaza", "demo", "x.mp4"))
+    live = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://x"))
+    old = time.time() - 30 * 86400
+    for cam in (demo, live):
+        repo.add_events([EventRow(None, cam.id, old, "enter", 1, "person", "z", {}, None, None, None, None)])
+        repo.add_alert(AlertRow(None, cam.id, None, old, "info", "alert", "x", None, None, [], None, f"f{cam.id}"))
+        blobs.put(f"{cam.id}/kf/1.jpg", b"x", "image/jpeg")
+    blobs.put("people/p1.jpg", b"x", "image/jpeg")
+    for f in (tmp_path / "blobs").rglob("*.jpg"):
+        os.utime(f, (old, old))
+    run_retention(s, repo, blobs)
+    assert repo.query_events(camera_id=live.id) == [] and repo.list_alerts(live.id) == []
+    assert repo.query_events(camera_id=demo.id) and repo.list_alerts(demo.id)
+    assert blobs.get(f"{demo.id}/kf/1.jpg") and blobs.get("people/p1.jpg")
+    assert not (tmp_path / "blobs" / live.id / "kf" / "1.jpg").exists()
