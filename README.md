@@ -20,9 +20,17 @@ Built for the OpenCV AI Competition 2026, powered by AWS. MIT licensed.
   or asks a person. If the AI is down, serious moments still alert as unverified.
 * **Fast scans of recordings.** A video is split into time chunks that run on every core at once; tracks are
   stitched across chunk borders and reasoned in one ordered pass, so the result matches a single pass.
-* **Questions and search.** Answers cite real recorded events (anything else is dropped) and say when two people
-  look alike instead of guessing. Find a person by an enrolled face, a consented photo, or a description matched
-  with SigLIP 2 running on the OpenCV DNN engine.
+* **Find anything.** One semantic index covers whole scenes (a frame every few seconds while something moves) and
+  every tracked object's best crop, embedded in the background with SigLIP 2 on the OpenCV DNN engine. Type
+  "someone carrying a box in the kitchen this morning" or "people without helmets": the AI turns the words into a
+  caption plus camera and time filters, the index ranks by image and text embeddings against a plain caption, and
+  the AI confirms the best matches. A photo of a person searches by face, only with their consent.
+* **Appearance watches.** "Tell me when someone is not wearing glasses", "a worker without a helmet": a looks_like
+  signal compares each person with a caption and its contrast, and the agent checks the crop before alerting.
+* **Questions.** Answers cite real recorded events (anything else is dropped) and say when two people look alike
+  instead of guessing.
+* **Smooth live view.** Video is sent at 10 frames per second with the boxes drawn in the browser; analysis runs
+  underneath at 5. A browser webcam is shown straight from the camera with only the boxes coming back.
 * **Camera health.** Covered, blurred or turned cameras are noticed (ORB matching against a reference view and a
   USAC homography).
 
