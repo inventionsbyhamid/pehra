@@ -67,6 +67,8 @@ class EmbedderSpec:
     pad_id: int
     lowercase: bool
     output: str
+    logit_scale: float | None = None  # sigmoid calibration learned with the model: p = sigmoid(exp(scale) cos + bias)
+    logit_bias: float | None = None
 
 
 EMBEDDERS: dict[str, EmbedderSpec] = {
@@ -75,7 +77,7 @@ EMBEDDERS: dict[str, EmbedderSpec] = {
         {"vision.onnx": SIGLIP2 + "onnx/vision_model.onnx", "text.onnx": SIGLIP2 + "onnx/text_model.onnx",
          "tokenizer.json": SIGLIP2 + "tokenizer.json"},
         "Apache-2.0 (Google SigLIP 2, ONNX by onnx-community)",
-        224, 0.5, 0.5, 64, 0, True, "pooler_output"),
+        224, 0.5, 0.5, 64, 0, True, "pooler_output", 4.724453449249268, -16.771724700927734),
 }
 
 SAMPLE_BASE = "https://raw.githubusercontent.com/opencv/opencv/5.x/samples/data/"

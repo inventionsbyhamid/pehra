@@ -56,6 +56,13 @@ class OnnxEmbedder:
     def similarity(a: np.ndarray, b: np.ndarray) -> float:
         return similarity(a, b)
 
+    def probability(self, cosine: float) -> float:
+        """How likely an image matches a text, from the model's own calibration (cosine when it has none)."""
+        s = self.spec
+        if s.logit_scale is None:
+            return float(cosine)
+        return float(1.0 / (1.0 + np.exp(-(np.exp(s.logit_scale) * cosine + s.logit_bias))))
+
 
 def similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b))

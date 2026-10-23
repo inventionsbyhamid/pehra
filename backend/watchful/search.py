@@ -182,27 +182,33 @@ def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces:
                              until=query["until"], limit=20000)
     if query["classes"]:
         rows = [e for e in rows if e.kind == "track_end" and e.cls in query["classes"]]
-    plain: dict[str, np.ndarray] = {}
+    calibrated = hasattr(embedder, "probability")
 
-    def baseline(e) -> np.ndarray:
-        # a match must look more like the caption than like an ordinary picture of the same kind
-        caption = f"a photo of a {e.cls}" if e.kind == "track_end" and e.cls else "a photo"
-        if caption not in plain:
-            plain[caption] = embedder.text(caption)
-        return plain[caption]
+    def score(v: np.ndarray) -> float | None:
+        cos = float(np.dot(v, target))
+        if image is not None:
+            return cos
+        if against is not None:  # "without a helmet" against "with a helmet": the closer caption wins
+            diff = cos - float(np.dot(v, against))
+            return diff if diff >= cfg.contrast_margin else None
+        p = embedder.probability(cos) if calibrated else cos
+        return p if p >= (cfg.search_min_probability if calibrated else cfg.looks_like_threshold) else None
 
-    budget, scored = [cfg.search_embed_on_demand], []
+    budget, scored, closest = [cfg.search_embed_on_demand], [], []
     for e in rows:
         v = _vector(e, repo, blobs, embedder, budget)
         if v is None:
             continue
-        s = float(np.dot(v, target))
-        if image is None:
-            s -= float(np.dot(v, against if against is not None else baseline(e)))
-            if s < cfg.contrast_margin:
-                continue
-        scored.append((s, e))
+        s = score(v)
+        if s is None:
+            closest.append((float(np.dot(v, target)), e))
+        else:
+            scored.append((s, e))
     scored.sort(key=lambda x: -x[0])
+    problem = None
+    if not scored and closest:
+        problem = "No sure matches. These are the closest moments."
+        scored = sorted(closest, key=lambda x: -x[0])[:6]
 
     hits, seen_tracks, kept_scenes = [], set(), []
     for s, e in scored:
@@ -221,4 +227,4 @@ def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces:
         keys = {e.id: e.keyframe_key for _, e in scored if e.keyframe_key}
         top, rest = hits[:cfg.search_top_n], hits[cfg.search_top_n:]
         hits = _confirm(top, query["looks_like"], blobs, llm, keys) + rest
-    return SearchResult(query, hits)
+    return SearchResult(query, hits, problem)

@@ -27,6 +27,13 @@ def test_text_matches_right_crop(emb):
     assert emb.similarity(emb.image(crop(RED_TOP)), q) > emb.similarity(emb.image(crop(DARK_COAT)), q)
 
 
+def test_match_probability_is_calibrated(emb):
+    q = emb.text("a person wearing a red jacket")
+    right = emb.probability(emb.similarity(emb.image(crop(RED_TOP)), q))
+    wrong = emb.probability(emb.similarity(emb.image(crop(DARK_COAT)), emb.text("a white van parked by a building")))
+    assert 0 < wrong < right < 1 and wrong < 0.05
+
+
 def test_embedding_normalized(emb):
     assert abs(np.linalg.norm(emb.image(crop(RED_TOP))) - 1) < 1e-4
     assert abs(np.linalg.norm(emb.text("a dog")) - 1) < 1e-4

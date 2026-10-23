@@ -97,7 +97,9 @@ class TamperTuning(_Section):
 class SignalTuning(_Section):
     climb_rise: float = 0.5
     climb_window_s: float = 2.0
-    looks_like_threshold: float = 0.1
+    looks_like_threshold: float = 0.1  # cosine, for embedders without a calibration
+    looks_like_probability: float = 0.05  # match probability for a described subject
+    search_min_probability: float = 0.01
     same_as_threshold: float = 0.8
     zone_margin: float = 0.02
     contrast_margin: float = 0.01  # how much closer to text than to not_text an object must look
