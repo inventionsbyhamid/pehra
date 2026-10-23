@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.websockets import WebSocketDisconnect
 
 from watchful.agent.ask import AskContext, ask, people_groups
@@ -564,6 +565,19 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         except WebSocketDisconnect:
             pass
 
-    if WEB_DIST.is_dir():
-        app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
+    dist = Path(settings.web_dist) if settings.web_dist else WEB_DIST
+    if dist.is_dir():
+        app.mount("/", SpaFiles(directory=dist, html=True), name="web")
     return app
+
+
+class SpaFiles(StaticFiles):
+    """The built web app; any other path that is not an API, socket or blob route opens the app itself."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as e:
+            if e.status_code != 404 or path.split("/", 1)[0] in ("api", "ws", "blobs"):
+                raise
+            return await super().get_response("index.html", scope)

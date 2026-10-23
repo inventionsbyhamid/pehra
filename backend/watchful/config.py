@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     embedder: str = "siglip2"
 
     data_dir: Path = Path("data")
+    web_dist: Path | None = None  # the built web app; defaults to web/dist in the repo
     models_dir: Path = Path("models")
     analysis_fps: float = 5.0
     analysis_width: int = 960
