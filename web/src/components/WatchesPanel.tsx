@@ -31,7 +31,7 @@ const KNOWN = new Set(["classes", "zone", "value", "who", "text", "not_text", "h
 const TEXT_HINTS: Record<string, [string, string]> = {
   lookout: ["a man in a red jacket", ""],
   gate_left_open: ["an open gate", "a closed gate"],
-  looks_like_check: ["a person wearing a helmet", "a person without a helmet"],
+  looks_like_check: ["a person not wearing a helmet", "a person wearing a helmet"],
 };
 
 const DEFAULTS: Record<string, unknown> = {
@@ -59,8 +59,8 @@ function PresetForm({ preset, camera, people, onAdded }: {
     ...DEFAULTS,
     zone: zones[0] ?? "",
     value: preset.preset === "too_many" ? 5 : 60,
-    text: preset.preset === "gate_left_open" ? "an open gate" : "",
-    not_text: preset.preset === "gate_left_open" ? "a closed gate" : "",
+    text: preset.preset === "lookout" ? "" : TEXT_HINTS[preset.preset]?.[0] ?? "",
+    not_text: preset.preset === "lookout" ? "" : TEXT_HINTS[preset.preset]?.[1] ?? "",
   }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

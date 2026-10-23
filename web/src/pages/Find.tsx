@@ -22,12 +22,18 @@ function QueryLine({ q, cameras, label }: { q: SearchQuery; cameras: Record<stri
     <p className="sentence sentence-sm" data-testid="search-query">
       <span className="w">Looking for</span>
       <span className="slot"><b>{plain(q.looks_like) || label}</b><i>looks like</i></span>
+      {q.not_like && (
+        <>
+          <span className="w">and not</span>
+          <span className="slot"><b>{plain(q.not_like)}</b><i>not like</i></span>
+        </>
+      )}
       <span className="w">on</span>
       <span className="slot"><b>{where}</b><i>camera</i></span>
-      {q.zones?.length > 0 && (
+      {!!q.zones?.length && (
         <>
           <span className="w">in</span>
-          <span className="slot"><b>{q.zones.join(", ")}</b><i>where</i></span>
+          <span className="slot"><b>{q.zones!.join(", ")}</b><i>where</i></span>
         </>
       )}
       <span className="slot"><b>{whenWords(q)}</b><i>when</i></span>
@@ -66,7 +72,6 @@ function ResultCard({ r, cameras, all }: { r: SearchResult; cameras: Record<stri
 
 export default function Find() {
   useTitle("Find");
-  const people = useLoad(() => api.people(), []);
   const cameras = useLoad(() => api.cameras(), []);
   const [text, setText] = useState("");
   const [cameraId, setCameraId] = useState("");
@@ -79,7 +84,7 @@ export default function Find() {
   const [lookout, setLookout] = useState<string | null>(null);
   const camById = useMemo(() => Object.fromEntries((cameras.data ?? []).map((c) => [c.id, c])), [cameras.data]);
 
-  async function run(body: { text?: string; person_id?: string } | null, label: string) {
+  async function run(body: { text: string } | null, label: string) {
     setBusy(true);
     setError(null);
     setLookout(null);
@@ -153,15 +158,6 @@ export default function Find() {
             {EXAMPLES.map((x) => (
               <button key={x} type="button" className="btn btn-sm" disabled={busy}
                 onClick={() => { setText(x); run({ text: x }, x); }}>{x}</button>
-            ))}
-          </div>
-        )}
-        {(people.data ?? []).length > 0 && !usePhoto && (
-          <div className="row chips" role="group" aria-label="Enrolled people">
-            <span className="small muted">Enrolled:</span>
-            {(people.data ?? []).map((p) => (
-              <button key={p.person_id} type="button" className="btn btn-sm" disabled={busy}
-                onClick={() => { setText(p.name); run({ text: p.name, person_id: p.person_id }, p.name); }}>{p.name}</button>
             ))}
           </div>
         )}

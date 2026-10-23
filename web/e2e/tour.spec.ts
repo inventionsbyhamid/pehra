@@ -80,7 +80,7 @@ for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["ph
       }
       if (want("timeline")) {
         await page.goto(`/cameras/${cam}/timeline`);
-        await page.waitForTimeout(2500);
+        await page.locator(".lanes, .empty").first().waitFor({ timeout: 30_000 });
         await shot(page, `${label}-06-timeline`, false);
       }
       if (want("people")) {

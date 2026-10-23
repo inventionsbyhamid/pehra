@@ -58,7 +58,7 @@ export default function CameraView() {
   const { id = "" } = useParams();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const camera = useLoad(() => api.camera(id), [id], 10000);
+  const camera = useLoad(() => api.camera(id), [id], 5000);
   const alerts = useLoad(() => api.alerts(id), [id], 20000);
   const [status, setStatus] = useState<LiveStatus | null>(null);
   const [fresh, setFresh] = useState<Alert[]>([]);
@@ -191,7 +191,7 @@ export default function CameraView() {
       <dialog ref={confirmRemove} className="sheet" aria-labelledby="remove-cam-title">
         <div className="stack">
           <h2 id="remove-cam-title" className="h2">Remove {cam.name}?</h2>
-          <p className="small">This stops the camera and deletes its watches, events, alerts and clips{cam.kind === "file" ? ", and the uploaded video" : ""}. It can't be undone.</p>
+          <p className="small">This stops the camera and deletes its watches, events and alerts{cam.kind === "file" ? ", and the uploaded video" : ""}. It can't be undone. Saved clips and pictures are cleared with the usual 7 day clean up.</p>
           <div className="row">
             <button className="btn btn-primary" onClick={remove} disabled={removing}>{removing ? "Removing" : "Remove camera"}</button>
             <button className="btn" onClick={() => confirmRemove.current?.close()}>Keep it</button>
@@ -210,7 +210,9 @@ export default function CameraView() {
           ) : (
             <Stage cam={cam} status={status} setStatus={setStatus} onAlert={(a) => setFresh((f) => [a, ...f])} liveRef={liveRef} webcam={webcam} />
           )}
-          {!editing && cam.kind !== "file" && <GateStats status={status} />}
+          {!editing && cam.kind !== "file" && (
+            <GateStats status={status ?? { source: cam.status.source, fps: cam.status.fps, loops: cam.status.loops, stats: cam.status.stats }} />
+          )}
           {!editing && cam.kind === "webcam" && webcam.state === "on" && (
             <p className="small muted">Sending your webcam at about 5 frames a second. {webcam.sent > 0 && <span className="num">{count(webcam.sent)} sent.</span>}</p>
           )}

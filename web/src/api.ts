@@ -80,7 +80,7 @@ export const api = {
     post<Answer>("/api/ask", { question, camera_id: cameraId || null }),
   timeline: (cameraId: string) => get<Timeline>(`/api/cameras/${cameraId}/timeline`),
 
-  search: (body: { text?: string; person_id?: string; camera_id?: string; since?: number; until?: number } | FormData) =>
+  search: (body: { text: string; camera_id?: string; since?: number; until?: number } | FormData) =>
     post<SearchResponse>("/api/search", body),
   lookout: (body: { camera_ids: string[]; person_id?: string; description?: string; event_id?: string; alert_id?: string }) =>
     post<{ watch_ids: string[] }>("/api/lookouts", body),

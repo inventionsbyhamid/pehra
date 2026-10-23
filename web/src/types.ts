@@ -171,10 +171,12 @@ export interface Timeline {
 
 export interface SearchQuery {
   looks_like: string | null;
+  not_like?: string | null;
+  classes?: string[];
   camera_id: string | null;
   since: number | null;
   until: number | null;
-  zones: string[];
+  zones?: string[];
 }
 
 export interface SearchResult {
