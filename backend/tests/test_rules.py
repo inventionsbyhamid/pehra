@@ -126,3 +126,15 @@ def test_every_preset_is_valid():
 def test_needs_follow_watches():
     n = needs_for([preset("fall"), preset("enters", zone="parking lot", classes=["car"])])
     assert n.posture and not n.pose and not n.faces and n.classes == {"person", "car"}
+
+
+def exit_event(tid, zone, ts):
+    return EventRow(None, "cam", ts, "exit", tid, "person", zone, {}, None, None, None, None)
+
+
+def test_watch_zone_counts_a_track_that_just_left_it():
+    w = Watch(name="leaves", zones=["back door"], verify="?",
+              conditions=[Condition(signal="exited", zones=["back door"])])
+    t0 = at(12)
+    got = engine(w).on_tick("cam", tick(t0, [track(1, zones={})], [exit_event(1, "back door", t0)]), t0)
+    assert len(got) == 1

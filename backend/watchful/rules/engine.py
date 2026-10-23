@@ -101,7 +101,7 @@ class RuleEngine:
                 continue
             if w.time_window and not w.time_window.contains(tick.ts, self.tz):
                 continue
-            subjects = [s for s in tick.tracks if self._matches(w, s, now)]
+            subjects = [s for s in tick.tracks if self._matches(w, s, now, tick)]
             ctx = SignalContext(camera_id, self.zones, tick, self.tuning.signals, self.history, self.sightings,
                                 subjects, self.embedder, image, self.state.setdefault(wid, {}))
             scene = [(c, REGISTRY[c.signal].fn(ctx, c, None)) for c in w.conditions
@@ -118,7 +118,7 @@ class RuleEngine:
                     out.append(self._candidate(wid, w, camera_id, tick, s, r))
         return out
 
-    def _matches(self, w: Watch, s: TrackState, now: float) -> bool:
+    def _matches(self, w: Watch, s: TrackState, now: float, tick: Tick) -> bool:
         sub = w.subject
         if sub.classes and s.cls not in sub.classes:
             return False
@@ -129,7 +129,10 @@ class RuleEngine:
         if sub.who not in ("anyone", "unknown", "known") and s.known_person_id != sub.who:
             return False
         if w.zones and not any(z in s.zones_inside for z in w.zones):
-            return False
+            # a track that left one of the zones on this tick still counts, so "leaves" watches can fire
+            left = {e.zone for e in tick.events if e.kind == "exit" and e.track_id == s.track_id}
+            if not left & set(w.zones):
+                return False
         return self._appearance_matches(w, s, now)
 
     def _appearance_matches(self, w: Watch, s: TrackState, now: float) -> bool:
