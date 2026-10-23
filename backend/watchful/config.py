@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     openrouter_api_key: str | None = None
     openrouter_model: str = "deepseek/deepseek-v4.1-flash"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    ai_max_tokens: int = 800
     bedrock_model: str | None = None
     aws_region: str = "us-east-1"
     s3_bucket: str | None = None
