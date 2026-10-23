@@ -1,3 +1,5 @@
+import math
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -62,3 +64,14 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def available_cpus(cpu_max: Path = Path("/sys/fs/cgroup/cpu.max")) -> int:
+    """CPUs this process may use: a container's quota when there is one, else every core."""
+    try:
+        quota, period = cpu_max.read_text().split()[:2]
+        if quota != "max":
+            return max(1, math.floor(int(quota) / int(period)))
+    except (OSError, ValueError):
+        pass
+    return os.cpu_count() or 1

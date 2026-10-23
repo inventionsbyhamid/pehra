@@ -25,3 +25,13 @@ def test_settings_defaults(monkeypatch):
 
 def test_settings_env_override(monkeypatch):
     assert make(monkeypatch, STORAGE="s3").storage == "s3"
+
+
+def test_available_cpus_reads_the_container_limit(tmp_path):
+    from watchful.config import available_cpus
+    f = tmp_path / "cpu.max"
+    f.write_text("600000 100000\n")
+    assert available_cpus(f) == 6
+    f.write_text("max 100000\n")
+    import os
+    assert available_cpus(f) == os.cpu_count()

@@ -14,7 +14,7 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from watchful.config import Settings
+from watchful.config import Settings, available_cpus
 from watchful.ingest.sources import Frame, fit_width
 from watchful.rules.engine import Candidate, RuleEngine, needs_for
 from watchful.rules.watch import Watch
@@ -138,7 +138,7 @@ class ScanPool:
     """Worker processes with models loaded once; create at app start and reuse."""
 
     def __init__(self, settings: Settings, tuning: Tuning, workers: int | None = None):
-        self.workers = workers or settings.scan_workers or os.cpu_count() or 1
+        self.workers = workers or settings.scan_workers or available_cpus()
         self.settings, self.tuning = settings, tuning
         self.ex = ProcessPoolExecutor(self.workers, mp_context=multiprocessing.get_context("spawn"),
                                       initializer=_init,

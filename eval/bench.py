@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import cv2  # noqa: E402
 
-from watchful.config import Settings  # noqa: E402
+from watchful.config import Settings, available_cpus  # noqa: E402
 from watchful.ingest.sources import FileSource  # noqa: E402
 from watchful.rules.presets import preset  # noqa: E402
 from watchful.store.blobs import LocalBlobStore  # noqa: E402
@@ -39,7 +39,7 @@ def machine() -> dict:
     except OSError:
         pass
     info = cv2.getBuildInformation()
-    return {"host": socket.gethostname(), "arch": platform.machine(), "cpu": cpu, "cores": os.cpu_count(),
+    return {"host": socket.gethostname(), "arch": platform.machine(), "cpu": cpu, "cores": available_cpus(),
             "opencv": cv2.__version__, "kleidicv": "kleidicv" in info.lower(),
             "cool": Path("/opt/cool").exists()}
 
