@@ -78,6 +78,7 @@ class Repository(Protocol):
     def query_events(self, camera_id: str | None = None, kinds: list[str] | None = None, zone: str | None = None,
                      cls: str | None = None, since: float | None = None, until: float | None = None,
                      limit: int = 500) -> list[EventRow]: ...
+    def get_event(self, event_id: str) -> EventRow | None: ...
     def delete_events_before(self, ts: float) -> int: ...
     def add_watch(self, row: WatchRow) -> WatchRow: ...
     def list_watches(self, camera_id: str | None = None) -> list[WatchRow]: ...
@@ -178,6 +179,10 @@ class SqliteRepository:
         sql += " order by ts limit ?"
         args.append(limit)
         return [EventRow(**json.loads(r[0])) for r in self._rows(sql, args)]
+
+    def get_event(self, event_id: str) -> EventRow | None:
+        rows = self._rows("select data from events where id = ?", (event_id,))
+        return EventRow(**json.loads(rows[0][0])) if rows else None
 
     def delete_events_before(self, ts: float) -> int:
         with self.lock, self.db:

@@ -39,7 +39,7 @@ class FaceIndex:
     """YuNet finds faces, SFace compares them with people the owner enrolled with consent."""
 
     def __init__(self, name: str = "yunet_sface", cfg: FaceTuning = FaceTuning(), settings: Settings | None = None):
-        self.cfg = cfg
+        self.cfg, self.settings = cfg, settings
         self.threshold = cfg.cosine
         self.detector = cv2.FaceDetectorYN.create(str(model_path("yunet", settings)), "", (320, 320),
                                                   cfg.detect_score)

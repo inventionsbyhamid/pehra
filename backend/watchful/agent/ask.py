@@ -1,0 +1,163 @@
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Literal
+from zoneinfo import ZoneInfo
+
+import numpy as np
+
+from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
+from watchful.agent.prompting import parse_json, render
+from watchful.agent.verifier import TraceStep
+from watchful.tuning import AppearanceTuning
+from watchful.vision.appearance import TrackSighting, link_tracks
+
+PERSON_KINDS = ["track_start", "track_end", "enter", "exit"]
+CONFIDENCE = ["low", "medium", "high"]
+
+
+@dataclass
+class AskContext:
+    repo: object
+    blobs: object
+    camera_id: str | None
+    tz: str
+    appearance: AppearanceTuning = field(default_factory=AppearanceTuning)
+    images: dict[str, bytes] = field(default_factory=dict)
+    track_groups: dict[int, tuple[str, bool]] = field(default_factory=dict)  # track to (group, ambiguous)
+
+
+@dataclass
+class AnswerItem:
+    label: str
+    start_ts: float | None
+    end_ts: float | None
+    thumbnail_url: str | None
+    clip_url: str | None = None
+    event_id: str | None = None
+
+
+@dataclass
+class Answer:
+    text: str
+    items: list[AnswerItem]
+    confidence: Literal["high", "medium", "low"]
+    trace: list[TraceStep] = field(default_factory=list)
+
+
+def _clock(ts: float, tz: str) -> str:
+    return datetime.fromtimestamp(ts, ZoneInfo(tz)).strftime("%a %H:%M:%S")
+
+
+def events_tool(ctx: AskContext, zone=None, cls=None, kinds=None, since=None, until=None) -> tuple[str, list]:
+    rows = ctx.repo.query_events(camera_id=ctx.camera_id, kinds=kinds, zone=zone, cls=cls, since=since,
+                                 until=until, limit=200)
+    if not rows:
+        return "no events", []
+    return "\n".join(f"{e.id} | {_clock(e.ts, ctx.tz)} (ts {e.ts:.1f}) | {e.kind} | {e.zone or '-'} | {e.cls} "
+                     f"{e.track_id} | {e.person_label or ''}" for e in rows), []
+
+
+def people_tool(ctx: AskContext, since=None, until=None) -> tuple[str, list]:
+    rows = ctx.repo.query_events(camera_id=ctx.camera_id, kinds=PERSON_KINDS, cls="person", since=since,
+                                 until=until, limit=5000)
+    tracks: dict[int, dict] = {}
+    for e in rows:
+        t = tracks.setdefault(e.track_id, {"first": e.ts, "last": e.ts, "sig": None, "label": None, "key": None,
+                                           "visits": []})
+        t["first"], t["last"] = min(t["first"], e.ts), max(t["last"], e.ts)
+        t["sig"] = t["sig"] or e.signature
+        t["label"] = t["label"] or e.person_label
+        t["key"] = t["key"] or e.keyframe_key
+        if e.kind in ("enter", "exit"):
+            t["visits"].append((e.kind, e.zone, e.ts, e.id))
+    if not tracks:
+        return "nobody was seen", []
+    sightings = [TrackSighting(tid, t["first"], t["last"],
+                               np.asarray(t["sig"], np.float32).reshape(30, 32) if t["sig"] else
+                               np.zeros((30, 32), np.float32), t["key"], t["label"], t["label"])
+                 for tid, t in tracks.items()]
+    groups = link_tracks(sightings, ctx.appearance)
+    labels = ctx.repo.person_labels(ctx.camera_id) if ctx.camera_id else {}
+    lines = []
+    for g in groups:
+        name = labels.get(g.group_id) or g.label or "unknown person"
+        flag = " LOOK ALIKE: may be confused with another person" if g.ambiguous else ""
+        lines.append(f"{g.group_id} ({name}) seen {_clock(g.first_ts, ctx.tz)} to {_clock(g.last_ts, ctx.tz)}, "
+                     f"tracks {g.track_ids}{flag}")
+        for tid in g.track_ids:
+            ctx.track_groups[tid] = (g.group_id, g.ambiguous)
+            for kind, zone, ts, eid in tracks[tid]["visits"]:
+                lines.append(f"    {kind} {zone} at {_clock(ts, ctx.tz)} (ts {ts:.1f}) [{eid}]")
+    return "\n".join(lines), []
+
+
+def keyframes_tool(ctx: AskContext, event_ids: list[str]) -> tuple[str, list]:
+    refs = []
+    for eid in event_ids[:4]:
+        e = ctx.repo.get_event(eid)
+        if e and e.keyframe_key:
+            ref = f"img{len(ctx.images) + 1}"
+            ctx.images[ref] = ctx.blobs.get(e.keyframe_key)
+            refs.append(ref)
+    return (f"images {', '.join(refs)}" if refs else "no images for those events"), refs
+
+
+TOOLS = {
+    "events": ("events(zone, cls, kinds, since, until): recorded events; kinds like enter, exit, track_start, "
+               "fallen; times are ts numbers", events_tool),
+    "people": ("people(since, until): people grouped by face and clothing, with their zone visits", people_tool),
+    "keyframes": ("keyframes(event_ids): pictures of up to 4 events", keyframes_tool),
+}
+
+
+def _ground(a: dict, ctx: AskContext) -> Answer:
+    items, ambiguous = [], False
+    for it in a.get("items") or []:
+        e = ctx.repo.get_event(str(it.get("event_id", "")))
+        if e is None:
+            continue
+        ambiguous |= ctx.track_groups.get(e.track_id, ("", False))[1]
+        items.append(AnswerItem(str(it.get("label") or e.kind), it.get("start_ts", e.ts), it.get("end_ts"),
+                                ctx.blobs.url(e.keyframe_key) if e.keyframe_key else None, None, e.id))
+    text = str(a.get("text") or "")
+    confidence = a.get("confidence") if a.get("confidence") in CONFIDENCE else "medium"
+    if ambiguous:
+        confidence = "low"
+        text += " Two people look alike here, so I am not sure which one it was."
+    return Answer(text, items, confidence)
+
+
+def ask(question: str, camera_id: str | None, ctx: AskContext, llm: LLM, now: float, max_steps: int = 6,
+        deadline_s: float = 45) -> Answer:
+    start = time.monotonic()
+    tools = "\n".join(f"* {d}" for d, _ in TOOLS.values()) + "\n* answer(text, items, confidence): finish"
+    system = render("ask", tools=tools, now=_clock(now, ctx.tz), tz=ctx.tz)
+    messages = [Msg("user", question)]
+    trace: list[TraceStep] = []
+    for n in range(1, max_steps + 1):
+        left = deadline_s - (time.monotonic() - start)
+        if left <= 0:
+            break
+        t0 = time.monotonic()
+        try:
+            raw = llm.complete(system, messages, images=list(ctx.images.values())[-6:], timeout_s=min(20.0, left))
+            step = parse_json(raw)
+            tool, args = step["tool"], step.get("args") or {}
+        except (TimeoutError, AIError, AILimitReached, ValueError, KeyError):
+            break
+        if tool == "answer":
+            trace.append(TraceStep(n, tool, args, step.get("why", ""), "", int((time.monotonic() - t0) * 1000)))
+            answer = _ground(args, ctx)
+            answer.trace = trace
+            return answer
+        if tool not in TOOLS:
+            result = f"unknown tool {tool}"
+        else:
+            try:
+                result, _ = TOOLS[tool][1](ctx, **args)
+            except TypeError as e:
+                result = f"tool failed: {e}"
+        trace.append(TraceStep(n, tool, args, step.get("why", ""), result[:2000], int((time.monotonic() - t0) * 1000)))
+        messages += [Msg("assistant", raw), Msg("user", f"Result:\n{result[:6000]}")]
+    return Answer("I couldn't answer that right now. Try again in a moment.", [], "low", trace)

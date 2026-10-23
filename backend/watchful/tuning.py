@@ -97,6 +97,7 @@ class SignalTuning(_Section):
     same_as_threshold: float = 0.8
     zone_margin: float = 0.02
     zone_embed_every_s: float = 3.0
+    search_top_n: int = 12  # best description matches the AI double checks
 
 
 class PerceiveTuning(_Section):
