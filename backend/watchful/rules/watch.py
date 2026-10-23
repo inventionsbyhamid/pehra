@@ -57,5 +57,5 @@ class Watch(_Model):
     severity: Literal["info", "warning", "critical"] = "info"
     verify: str = ""
     cooldown_s: float = 120
-    repeat: bool = False  # fire again for the same track after the cooldown
+    repeat: bool = False  # keep firing every cooldown while true; by default once each time it becomes true
     expires_at: float | None = None

@@ -95,6 +95,7 @@ class RuleEngine:
         self.sightings: list[Sighting] = []
         self.state: dict[str, dict] = {}
         self.last_fired: dict[tuple, float] = {}
+        self.armed: dict[tuple, bool] = {}
 
     def on_tick(self, camera_id: str, tick: Tick, now: float, image=None) -> list[Candidate]:
         self._remember(tick)
@@ -113,12 +114,12 @@ class RuleEngine:
             per_track = [c for c in w.conditions if REGISTRY[c.signal].level == "track"]
             if not per_track:
                 r = self._combine(w, scene)
-                if r.passed and self._ready(wid, None, w, tick.ts, always_cooldown=True):
+                if self._fires(wid, None, w, tick.ts, r.passed):
                     out.append(self._candidate(wid, w, camera_id, tick, None, r))
                 continue
             for s in subjects:
                 r = self._combine(w, scene + [(c, REGISTRY[c.signal].fn(ctx, c, s)) for c in per_track])
-                if r.passed and self._ready(wid, s.track_id, w, tick.ts):
+                if self._fires(wid, s.track_id, w, tick.ts, r.passed):
                     out.append(self._candidate(wid, w, camera_id, tick, s, r))
         return out
 
@@ -198,11 +199,18 @@ class RuleEngine:
         return _Result(ok, score, [v.reason for _, v in passed if v.reason],
                        {c.signal: v.value for c, v in values})
 
-    def _ready(self, wid: str, track_id: int | None, w: Watch, ts: float, always_cooldown: bool = False) -> bool:
+    def _fires(self, wid: str, track_id: int | None, w: Watch, ts: float, passed: bool) -> bool:
+        """Fires when a watch becomes true; it re-arms once it is false again (a second fall, a second visit).
+        repeat watches also fire again every cooldown while they stay true; the cooldown stops flapping."""
         key = (wid, track_id)
-        last = self.last_fired.get(key)
-        if last is not None and (not (w.repeat or always_cooldown) or ts - last < w.cooldown_s):
+        if not passed:
+            self.armed[key] = True
             return False
+        last = self.last_fired.get(key)
+        cooled = last is None or ts - last >= w.cooldown_s
+        if not cooled or not (self.armed.get(key, True) or w.repeat):
+            return False
+        self.armed[key] = False
         self.last_fired[key] = ts
         return True
 
@@ -232,6 +240,9 @@ class RuleEngine:
             h.last_ts = tick.ts
         for s in tick.ended:
             self.history.pop(s.track_id, None)
+            for key in [k for k in self.last_fired if k[1] == s.track_id]:
+                self.last_fired.pop(key, None)
+                self.armed.pop(key, None)
             if s.cls == "person" and s.signature is not None:
                 self.sightings.append(Sighting(s.track_id, s.first_ts, s.last_ts, s.signature,
                                                s.known_person_id is not None))

@@ -93,14 +93,21 @@ def test_any_combine():
     assert len(engine(score_watch("any")).on_tick("cam", tick(t0, [track(2, zones={"parking lot": t0})]), t0)) == 1
 
 
-def test_cooldown_suppresses_repeat():
-    w = preset("too_many", zone="parking lot", value=1, classes=["person"])
-    e = engine(w)
-    t0 = at(12)
-    fired = []
-    for i in range(0, 200, 10):
-        fired += e.on_tick("cam", tick(t0 + i, [track(1, zones={"parking lot": t0})]), t0 + i)
-    assert len(fired) == 2  # at 0 and again after the 120 s cooldown
+def test_scene_watch_fires_once_while_true_and_again_after_clearing():
+    e = engine(preset("too_many", zone="parking lot", value=1, classes=["person"]))
+    t0, fired = at(12), []
+    for i in range(0, 300, 10):
+        busy = i < 60 or i >= 200
+        fired += e.on_tick("cam", tick(t0 + i, [track(1, zones={"parking lot": t0})] if busy else []), t0 + i)
+    assert [c.ts - t0 for c in fired] == [0, 200]
+
+
+def test_a_second_fall_on_the_same_track_alerts_again():
+    e = engine(preset("fall"))
+    t0, fired = at(12), []
+    for i, posture in enumerate(["fallen", "fallen", "upright", "upright", "fallen"]):
+        fired += e.on_tick("cam", tick(t0 + 30 * i, [track(1, posture=posture)]), t0 + 30 * i)
+    assert len(fired) == 2
 
 
 def test_demo_loop_same_fingerprint():

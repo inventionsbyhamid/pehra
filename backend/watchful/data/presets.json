@@ -117,7 +117,8 @@
         }
       ],
       "severity": "critical",
-      "verify": "Has this person fallen and not got up?"
+      "verify": "Has this person fallen and not got up?",
+      "cooldown_s": 10
     }
   },
   "about_to_fall": {
@@ -138,7 +139,8 @@
         }
       ],
       "severity": "warning",
-      "verify": "Is this person losing balance or falling?"
+      "verify": "Is this person losing balance or falling?",
+      "cooldown_s": 10
     }
   },
   "possible_intruder": {
