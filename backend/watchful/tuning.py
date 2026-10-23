@@ -102,11 +102,15 @@ class SignalTuning(_Section):
     zone_margin: float = 0.02
     contrast_margin: float = 0.01  # how much closer to text than to not_text an object must look
     zone_embed_every_s: float = 3.0
-    search_top_n: int = 12  # best description matches the AI double checks
+    search_top_n: int = 12  # best matches the AI double checks
+    search_dedupe_s: float = 10.0  # scene matches closer than this on one camera count once
+    search_embed_on_demand: int = 200  # unindexed matches embedded during a search, at most
 
 
 class PerceiveTuning(_Section):
     keyframe_every_s: float = 2.0
+    scene_every_s: float = 3.0  # a whole frame for the search index while something moves
+    scene_idle_every_s: float = 60.0  # and now and then when nothing does
     embed_every_s: float = 10.0
     max_embeds_per_track: int = 3
     jpeg_quality: int = 80

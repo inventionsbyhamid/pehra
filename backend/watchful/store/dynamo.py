@@ -141,6 +141,21 @@ class DynamoRepository:
         items = self.t["events"].query(IndexName="by_id", KeyConditionExpression=Key("id").eq(event_id))["Items"]
         return EventRow(**json.loads(items[0]["data"])) if items else None
 
+    def events_missing_embedding(self, kinds: list[str], limit: int = 64) -> list[EventRow]:
+        rows = [EventRow(**json.loads(i["data"])) for i in self._all(self.t["events"].scan)]
+        rows = [r for r in rows if r.kind in kinds and r.embedding is None]
+        return sorted(rows, key=lambda r: -r.ts)[:limit]
+
+    def set_event_embedding(self, event_id: str, embedding: list[float]) -> None:
+        items = self.t["events"].query(IndexName="by_id", KeyConditionExpression=Key("id").eq(event_id))["Items"]
+        if items:
+            i = items[0]
+            data = json.loads(i["data"])
+            data["embedding"] = [round(float(x), 5) for x in embedding]
+            self.t["events"].update_item(Key={"camera_id": i["camera_id"], "sk": i["sk"]}, UpdateExpression="set #d = :d",
+                                         ExpressionAttributeNames={"#d": "data"},
+                                         ExpressionAttributeValues={":d": json.dumps(data)})
+
     def delete_events_before(self, ts: float) -> int:
         old = [i for i in self._all(self.t["events"].scan) if float(i["ts"]) < ts]
         with self.t["events"].batch_writer() as batch:

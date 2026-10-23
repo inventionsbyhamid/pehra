@@ -99,6 +99,9 @@ class Reasoner:
         if p.tamper:
             events.append(EventRow(None, self.camera.id, p.ts, f"tamper_{p.tamper.kind}", None, None, None,
                                    {"detail": p.tamper.detail}, None, None, None, None))
+        if p.scene_key:
+            events.append(EventRow(None, self.camera.id, p.ts, "scene", None, None, None,
+                                   {"moving": p.moving, "tracks": len(active)}, p.scene_key, None, None, None))
         return Tick(p.ts, p.size, p.moving, active, events, ended, p.pos)
 
     @staticmethod

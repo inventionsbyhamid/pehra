@@ -33,6 +33,8 @@ def test_vtest_zone_events(setup):
     exits = [e for e in events if e.kind == "exit"]
     assert len(enters) >= 3 and len(exits) >= 2
     assert all(e.keyframe_key and blobs.get(e.keyframe_key) for e in enters + exits)
+    scenes = repo.query_events(camera_id="cam1", kinds=["scene"], limit=1000)
+    assert 8 <= len(scenes) <= 16 and blobs.get(scenes[0].keyframe_key)  # every 3 s while people move
     assert pipe.stats()["frames"] > 150
 
 

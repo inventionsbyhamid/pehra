@@ -83,6 +83,8 @@ class Repository(Protocol):
                      cls: str | None = None, since: float | None = None, until: float | None = None,
                      limit: int = 500) -> list[EventRow]: ...
     def get_event(self, event_id: str) -> EventRow | None: ...
+    def events_missing_embedding(self, kinds: list[str], limit: int = 64) -> list[EventRow]: ...
+    def set_event_embedding(self, event_id: str, embedding: list[float]) -> None: ...
     def delete_events_before(self, ts: float) -> int: ...
     def add_watch(self, row: WatchRow) -> WatchRow: ...
     def list_watches(self, camera_id: str | None = None) -> list[WatchRow]: ...
@@ -132,6 +134,9 @@ class SqliteRepository:
         self.db = sqlite3.connect(str(path), check_same_thread=False, timeout=30)
         self.db.execute("pragma journal_mode=wal")
         self.db.executescript(SCHEMA)
+        columns = {r[1] for r in self.db.execute("pragma table_info(events)")}
+        if "embedded" not in columns:
+            self.db.execute("alter table events add column embedded integer default 0")
         self.lock = threading.Lock()
 
     def _write(self, sql: str, args=()) -> None:
@@ -172,8 +177,10 @@ class SqliteRepository:
         with self.lock, self.db:
             for r in rows:
                 r.id = r.id or new_id("evt")
-                self.db.execute("insert into events values (?, ?, ?, ?, ?, ?, ?)",
-                                (r.id, r.camera_id, r.ts, r.kind, r.zone, r.cls, json.dumps(asdict(r))))
+                self.db.execute("insert into events (id, camera_id, ts, kind, zone, cls, data, embedded) "
+                                "values (?, ?, ?, ?, ?, ?, ?, ?)",
+                                (r.id, r.camera_id, r.ts, r.kind, r.zone, r.cls, json.dumps(asdict(r)),
+                                 int(r.embedding is not None)))
 
     def query_events(self, camera_id=None, kinds=None, zone=None, cls=None, since=None, until=None,
                      limit=500) -> list[EventRow]:
@@ -198,6 +205,19 @@ class SqliteRepository:
     def get_event(self, event_id: str) -> EventRow | None:
         rows = self._rows("select data from events where id = ?", (event_id,))
         return EventRow(**json.loads(rows[0][0])) if rows else None
+
+    def events_missing_embedding(self, kinds: list[str], limit: int = 64) -> list[EventRow]:
+        rows = self._rows(f"select data from events where embedded = 0 and kind in ({','.join('?' * len(kinds))}) "
+                          "order by ts desc limit ?", [*kinds, limit])
+        return [EventRow(**json.loads(r[0])) for r in rows]
+
+    def set_event_embedding(self, event_id: str, embedding: list[float]) -> None:
+        with self.lock, self.db:
+            row = self.db.execute("select data from events where id = ?", (event_id,)).fetchone()
+            if row:
+                data = json.loads(row[0])
+                data["embedding"] = [round(float(x), 5) for x in embedding]
+                self.db.execute("update events set data = ?, embedded = 1 where id = ?", (json.dumps(data), event_id))
 
     def delete_events_before(self, ts: float) -> int:
         with self.lock, self.db:

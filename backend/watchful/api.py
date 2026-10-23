@@ -25,7 +25,7 @@ from watchful.components import make_blobs, make_embedder, make_faces, make_llm,
 from watchful.config import Settings, get_settings
 from watchful.rules.presets import describe, preset
 from watchful.rules.watch import SameAs, Watch
-from watchful.search import PersonQuery, find_person
+from watchful.search import SearchQuery, search
 from watchful.store.db import Camera, WatchRow, new_id
 from watchful.tuning import load_tuning
 from watchful.vision.faces import ConsentRequired, Enrollment, NoFaceFound
@@ -431,27 +431,30 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
                             "thumbnail_url": w.blobs.url(e.keyframe_key) if e.keyframe_key else None}
                            for e in events], "people": people}
 
-    @app.post("/api/search/person", dependencies=auth)
-    async def search(request: Request):
+    @app.post("/api/search", dependencies=auth)
+    async def search_route(request: Request):
+        """Find anything: words, or a photo (a photo of a person needs their consent)."""
         w = _w(request)
         if request.headers.get("content-type", "").startswith("multipart/"):
             form = await request.form()
             photo = await form["photo"].read() if "photo" in form else None
-            q = PersonQuery(photo=photo, camera_id=form.get("camera_id") or None,
+            q = SearchQuery(text=form.get("text") or None, photo=photo, camera_id=form.get("camera_id") or None,
                             consent=str(form.get("consent", "")).lower() == "true")
         else:
             data = await request.json()
-            q = PersonQuery(person_id=data.get("person_id"), description=data.get("description"),
-                            camera_id=data.get("camera_id"), since=data.get("since"), until=data.get("until"))
+            q = SearchQuery(text=data.get("text"), camera_id=data.get("camera_id"), since=data.get("since"),
+                            until=data.get("until"), classes=data.get("classes") or [])
+        if q.text is None and q.photo is None:
+            raise HTTPException(400, "Type what to look for, or add a photo.")
         try:
-            found = await run_in_threadpool(
-                find_person, q, w.repo, w.blobs, w.faces if q.description is None else None,
-                w.embedder if q.description else None, w.search_llm, w.tuning.signals)
+            r = await run_in_threadpool(search, q, w.repo, w.blobs, w.embedder, w.search_llm,
+                                        w.faces if q.photo is not None else None, w.tuning.signals, None,
+                                        w.settings.timezone)
         except ConsentRequired:
-            raise HTTPException(400, "Searching with a photo needs the person's consent.")
+            raise HTTPException(400, "Searching with a photo of a person needs their consent.")
         except (NoFaceFound, ValueError) as e:
             raise HTTPException(400, str(e))
-        return [asdict(x) for x in found]
+        return {"query": r.query, "problem": r.problem, "results": [asdict(h) for h in r.results]}
 
     @app.get("/api/people", dependencies=auth)
     def people(request: Request):

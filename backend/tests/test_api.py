@@ -144,3 +144,22 @@ def test_websocket_sends_frames(app_and_client):
     with c.websocket_connect(f"/ws/cameras/{cam['id']}") as ws:
         msg = ws.receive_json()
         assert msg["type"] == "frame" and msg["jpeg_b64"]
+
+
+def test_search_endpoint(app_and_client):
+    import numpy as np
+
+    class Stub:
+        def text(self, q):
+            return np.array([1.0, 0.0], np.float32)
+
+        def image(self, crop):
+            return np.array([1.0, 0.0], np.float32)
+
+    app, c = app_and_client
+    login(c)
+    app.state.w._embedder = Stub()
+    app.state.w.search_llm = FakeLLM([])
+    r = c.post("/api/search", json={"text": "a red car"})
+    assert r.status_code == 200 and r.json()["results"] == [] and r.json()["query"]["looks_like"] == "a red car"
+    assert c.post("/api/search", json={}).status_code == 400

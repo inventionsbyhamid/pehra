@@ -46,6 +46,9 @@ class FaceIndex:
         self.recognizer = cv2.FaceRecognizerSF.create(str(model_path("sface", settings)), "")
         self._people: dict[str, Enrollment] = {}
 
+    def has_face(self, image: np.ndarray) -> bool:
+        return len(self._faces(image)) > 0
+
     def _faces(self, image: np.ndarray) -> np.ndarray:
         h, w = image.shape[:2]
         self.detector.setInputSize((w, h))

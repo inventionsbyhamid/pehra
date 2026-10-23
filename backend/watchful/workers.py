@@ -224,6 +224,11 @@ class WorkerManager:
         threading.Thread(target=self._listen, daemon=True).start()
         threading.Thread(target=self._report, daemon=True).start()
         threading.Thread(target=self._janitor, daemon=True).start()
+        self.indexer = None
+        if settings.index_embeddings:
+            from watchful.indexer import Indexer
+            self.indexer = Indexer(repo, blobs, lambda: make_embedder(settings))
+            self.indexer.start()
 
     def _janitor(self, every_s: float = 6 * 3600) -> None:
         """Retention: clips, keyframes, uploads and events older than retention_days are deleted."""
@@ -435,6 +440,8 @@ class WorkerManager:
                 self.scanning.value -= 1
 
     def shutdown(self) -> None:
+        if self.indexer:
+            self.indexer.stop()
         for cid in list(self.handles):
             self.stop(cid)
         self._closed = True

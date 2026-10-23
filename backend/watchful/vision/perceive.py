@@ -55,6 +55,7 @@ class Perception:
     observations: list[Observation]
     tamper: TamperEvent | None = None
     pos: float | None = None
+    scene_key: str | None = None  # a whole frame stored for the search index
 
 
 @dataclass
@@ -101,6 +102,7 @@ class Perceiver:
         self.counts = {"frames": 0, "frames_skipped": 0, "detector_runs": 0, "detector_skipped": 0, "pose_runs": 0,
                        "face_runs": 0, "embeds": 0, "ms_total": 0.0}
         self._since_detect = 0
+        self._last_scene = float("-inf")
         self.set_needs(needs)
 
     def set_needs(self, needs: Needs) -> None:
@@ -148,7 +150,20 @@ class Perceiver:
             self.counts["frames_skipped"] += 1
         self.counts["ms_total"] += (time.perf_counter() - start) * 1000
         h, w = image.shape[:2]
-        return Perception(ts, (w, h), motion.moving, observations, tamper, frame.pos)
+        return Perception(ts, (w, h), motion.moving, observations, tamper, frame.pos,
+                          self._scene(image, ts, motion.moving))
+
+    def _scene(self, image: np.ndarray, ts: float, moving: bool) -> str | None:
+        every = self.t.perceive.scene_every_s if moving else self.t.perceive.scene_idle_every_s
+        if ts - self._last_scene < every:
+            return None
+        self._last_scene = ts
+        key = f"{self.camera.id}/scene/{int(ts * 1000)}.jpg"
+        ok, jpg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, self.t.perceive.jpeg_quality])
+        if not ok:
+            return None
+        self.blobs.put(key, jpg.tobytes(), "image/jpeg")
+        return key
 
     def _new_motion(self, boxes: list[tuple], tracks: list[Track]) -> bool:
         """True when some moving blob is not mostly inside a tracked object's box."""
