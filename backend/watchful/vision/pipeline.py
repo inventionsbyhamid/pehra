@@ -65,10 +65,10 @@ class CameraPipeline:
             self.repo.add_events(tick.events)
         return tick
 
-    def process(self, frame: Frame, draw: bool = False) -> FrameResult:
+    def process(self, frame: Frame, draw: bool = False, record: bool = True) -> FrameResult:
         p = self.perceiver.perceive(frame)
         tick = self.reasoner.step(p)
-        if tick.events:
+        if tick.events and record:
             self.repo.add_events(tick.events)
         jpeg = None
         if draw:

@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     dnn_engine: Literal["auto", "new", "classic"] = "auto"
     night_mode: Literal["auto", "on", "off"] = "auto"
 
+    demo_realtime: bool = True
+    live_fps_during_scan: float = 2.0
+    alert_dedupe_days: float = 14
     scan_workers: int = 0
     scan_overlap_s: float = 2.0
     ai_parallel: int = 6

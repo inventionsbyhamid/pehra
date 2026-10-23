@@ -107,6 +107,13 @@ class PerceiveTuning(_Section):
     jpeg_quality: int = 80
 
 
+class EvidenceTuning(_Section):
+    before_s: float = 3.0
+    after_s: float = 1.5  # a candidate waits this long so the AI also sees what came next
+    fps: float = 2.0
+    width: int = 640
+
+
 class ScanTuning(_Section):
     min_chunk_s: float = 4.0
     join_iou: float = 0.5  # mean box overlap in the shared seconds that joins two tracks
@@ -135,6 +142,7 @@ class Tuning(_Section):
     perceive: PerceiveTuning = PerceiveTuning()
     scan: ScanTuning = ScanTuning()
     clips: ClipTuning = ClipTuning()
+    evidence: EvidenceTuning = EvidenceTuning()
 
 
 def _merge(base: dict, extra: dict) -> dict:

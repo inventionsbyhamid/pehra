@@ -56,6 +56,8 @@ class ScanResult:
     events: list[EventRow]
     candidates: list[Candidate]
     stats: ScanStats
+    paths: dict[int, list] = field(default_factory=dict)  # track to (ts, box), for the verifier's evidence
+    poses: dict[int, list] = field(default_factory=dict)
 
 
 def chunk_plan(duration_s: float, workers: int, overlap_s: float, min_chunk_s: float) -> list[tuple[float, float]]:
@@ -283,10 +285,16 @@ def scan_file(path: str | Path, camera: Camera, watches: list[tuple[str, Watch]]
     engine = RuleEngine(watches, camera.zones, tuning, settings.timezone, camera.kind, embedder)
     events: list[EventRow] = []
     candidates: list[Candidate] = []
+    paths: dict[int, list] = {}
+    poses: dict[int, list] = {}
     for p in merged:
         tick = reasoner.step(p)
         events += tick.events
         candidates += engine.on_tick(camera.id, tick, now=tick.ts)
+        for t in tick.tracks:
+            paths.setdefault(t.track_id, []).append((tick.ts, t.box))
+            if t.fresh_pose and t.pose is not None:
+                poses.setdefault(t.track_id, []).append({"ts": tick.ts, "torso_angle": round(t.pose.torso_angle_deg, 1)})
     stages["reason"] = time.perf_counter() - t1
     if on_progress:
         on_progress(1.0)
@@ -296,7 +304,9 @@ def scan_file(path: str | Path, camera: Camera, watches: list[tuple[str, Watch]]
                       sum(c.stats.get("frames", 0) for c in chunks),
                       sum(c.stats.get("detector_runs", 0) for c in chunks), pool.workers,
                       {k: round(v, 2) for k, v in stages.items()})
-    return ScanResult(events, candidates, stats)
+    wanted = {c.track_id for c in candidates}
+    return ScanResult(events, candidates, stats, {k: v for k, v in paths.items() if k in wanted},
+                      {k: v for k, v in poses.items() if k in wanted})
 
 
 def _embed_tracks(merged: list[Perception], blobs: BlobStore, embedder) -> None:
