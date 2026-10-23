@@ -83,7 +83,10 @@ class FileSource:
             clock = self._offset + t
             if self.realtime:
                 wait = clock - (time.monotonic() - self._wall0)
-                if wait > 0:
+                if wait < -1.0:
+                    # resumed after a pause: carry on in real time from here instead of racing to catch up
+                    self._wall0 = time.monotonic() - clock
+                elif wait > 0:
                     time.sleep(wait)
             self._index += 1
             return Frame(fit_width(image, self.width), self.start_epoch + clock, self._index, t)

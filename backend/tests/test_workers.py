@@ -79,3 +79,19 @@ def test_upload_scan_creates_alerts(manager, clip20):
     info = m.scan(scan_id)
     assert info["alert_ids"] and info["stats"]["x_realtime"] > 0
     assert repo.get_alert(info["alert_ids"][0]).summary == "Someone came in."
+
+
+def test_a_critical_candidate_is_stored_even_if_checking_crashes(manager, monkeypatch):
+    import watchful.workers as workers
+    from watchful.evidence import EvidencePack
+    from watchful.rules.engine import Candidate
+    m, repo = manager
+
+    def boom(*a, **k):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(workers, "verify", boom)
+    c = Candidate("w1", "cam", 10.0, 1, "critical", {"reasons": ["fell in the kitchen"]}, [], "fpx", "Fall", "?")
+    m._verify_and_store(EvidencePack(c, [], []))
+    a = repo.list_alerts("cam")[0]
+    assert a.status == "unverified" and "fell in the kitchen" in a.summary

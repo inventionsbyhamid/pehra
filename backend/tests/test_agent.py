@@ -135,3 +135,13 @@ def test_parse_json_takes_the_first_of_several_objects():
     from watchful.agent.prompting import parse_json
     raw = 'Sure. {"tool": "people", "args": {}} then {"tool": "answer", "args": {"text": "x"}}'
     assert parse_json(raw)["tool"] == "people"
+
+
+def test_any_ai_failure_falls_back(tmp_path):
+    import httpx
+    for error in (httpx.ConnectError("refused"), RuntimeError("botocore said no")):
+        v = verify(cand("critical"), ctx(tmp_path), FakeLLM([error]))
+        assert v.status == "unverified"
+    v = verify(cand("critical"), ctx(tmp_path), FakeLLM([json.dumps({"tool": "crop_zoom", "args": "now", "why": "."}),
+                                                          step("raise_alert", summary="Real.")]))
+    assert v.status == "alert"

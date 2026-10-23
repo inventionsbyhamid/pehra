@@ -34,7 +34,7 @@ class Verdict:
 def _fallback(c: Candidate, trace: list[TraceStep], why: str) -> Verdict:
     seen = "; ".join(c.evidence.get("reasons", [])) or "OpenCV flagged it"
     if c.severity == "critical":
-        return Verdict("unverified", f"{c.watch_name}: {seen}. Not checked by the AI ({why}).", trace)
+        return Verdict("unverified", plain(f"{c.watch_name}: {seen}. Not checked by the AI ({why})."), trace)
     return Verdict("dismissed", f"Not verified ({why}).", trace)
 
 
@@ -73,12 +73,14 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
         t0 = time.monotonic()
         try:
             raw = llm.complete(system, messages, images=images, json_schema=SCHEMA, timeout_s=min(20.0, left))
-        except (TimeoutError, AIError, AILimitReached) as e:
-            return _fallback(c, trace, "the AI did not answer" if not isinstance(e, AILimitReached) else
-                             "daily AI limit reached")
+        except AILimitReached:
+            return _fallback(c, trace, "daily AI limit reached")
+        except Exception:  # timeouts, refused connections, provider errors: the alert must not be lost
+            return _fallback(c, trace, "the AI did not answer")
         try:
             step = parse_json(raw)
-            tool, args, why = step["tool"], step.get("args") or {}, step.get("why", "")
+            tool, args, why = str(step["tool"]), step.get("args"), str(step.get("why", ""))
+            args = args if isinstance(args, dict) else {}
         except (ValueError, KeyError):
             bad += 1
             if bad >= 2:

@@ -60,3 +60,14 @@ def test_push_source_keeps_latest():
     assert frame.ts == 250.0
     assert abs(int(frame.image.mean()) - 250) <= 3
     assert src.read(timeout=0.05) is None
+
+
+def test_realtime_demo_does_not_race_after_a_pause():
+    src = FileSource(VTEST, fps=5, realtime=True)
+    for _ in range(3):
+        src.read()
+    time.sleep(1.5)  # nobody watching: the camera paused without reading
+    t = time.monotonic()
+    for _ in range(5):
+        src.read()
+    assert time.monotonic() - t >= 0.6  # five frames at 5 fps take about a second, not an instant

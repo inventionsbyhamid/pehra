@@ -13,7 +13,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 
-from watchful.agent.verifier import Verdict, verify
+from watchful.agent.verifier import Verdict, _fallback, verify
 from watchful.components import (make_blobs, make_embedder, make_faces, make_llm, make_metrics, make_notifier,
                                  make_repo)
 from watchful.config import Settings
@@ -364,9 +364,13 @@ class WorkerManager:
         c = pack.candidate
         try:
             verdict = verify(c, evidence_context(pack, self.repo, self.blobs), self.llm)
-            return self._store(pack, verdict).id
         except Exception:
             log.exception("verifying %s failed", c.fingerprint)
+            verdict = _fallback(c, [], "the check failed")
+        try:
+            return self._store(pack, verdict).id
+        except Exception:
+            log.exception("storing the alert %s failed", c.fingerprint)
             return None
         finally:
             with self._lock:
