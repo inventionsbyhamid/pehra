@@ -26,6 +26,7 @@ class Camera:
     zones: list[Zone] = field(default_factory=list)
     enabled: bool = True
     tuning: dict = field(default_factory=dict)
+    last_scan: dict | None = None
 
 
 @dataclass
@@ -67,6 +68,7 @@ class AlertRow:
     trace: list[dict]
     feedback: Literal["up", "down"] | None
     fingerprint: str
+    track_id: int | None = None
 
 
 class Repository(Protocol):
@@ -74,6 +76,8 @@ class Repository(Protocol):
     def get_camera(self, camera_id: str) -> Camera | None: ...
     def list_cameras(self) -> list[Camera]: ...
     def update_camera(self, cam: Camera) -> None: ...
+    def delete_camera(self, camera_id: str) -> None: ...
+    def delete_camera_events(self, camera_id: str) -> int: ...
     def add_events(self, rows: list[EventRow]) -> None: ...
     def query_events(self, camera_id: str | None = None, kinds: list[str] | None = None, zone: str | None = None,
                      cls: str | None = None, since: float | None = None, until: float | None = None,
@@ -152,6 +156,17 @@ class SqliteRepository:
 
     def update_camera(self, cam: Camera) -> None:
         self._write("update cameras set data = ? where id = ?", (json.dumps(asdict(cam)), cam.id))
+
+    def delete_camera(self, camera_id: str) -> None:
+        with self.lock, self.db:
+            for table in ("events", "watches", "alerts"):
+                self.db.execute(f"delete from {table} where camera_id = ?", (camera_id,))
+            self.db.execute("delete from person_labels where camera_id = ?", (camera_id,))
+            self.db.execute("delete from cameras where id = ?", (camera_id,))
+
+    def delete_camera_events(self, camera_id: str) -> int:
+        with self.lock, self.db:
+            return self.db.execute("delete from events where camera_id = ?", (camera_id,)).rowcount
 
     def add_events(self, rows: list[EventRow]) -> None:
         with self.lock, self.db:

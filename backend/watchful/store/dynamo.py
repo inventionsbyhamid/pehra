@@ -82,6 +82,23 @@ class DynamoRepository:
                                       ExpressionAttributeNames={"#d": "data"},
                                       ExpressionAttributeValues={":d": json.dumps(asdict(cam))})
 
+    def delete_camera(self, camera_id: str) -> None:
+        self.delete_camera_events(camera_id)
+        for name in ("watches", "alerts"):
+            for i in self._all(self.t[name].scan):
+                if i.get("camera_id") == camera_id:
+                    self.t[name].delete_item(Key={"id": i["id"]})
+        for i in self.t["labels"].query(KeyConditionExpression=Key("camera_id").eq(camera_id))["Items"]:
+            self.t["labels"].delete_item(Key={"camera_id": camera_id, "group_id": i["group_id"]})
+        self.t["cameras"].delete_item(Key={"id": camera_id})
+
+    def delete_camera_events(self, camera_id: str) -> int:
+        items = self._all(self.t["events"].query, KeyConditionExpression=Key("camera_id").eq(camera_id))
+        with self.t["events"].batch_writer() as batch:
+            for i in items:
+                batch.delete_item(Key={"camera_id": camera_id, "sk": i["sk"]})
+        return len(items)
+
     def add_watch(self, row: WatchRow) -> WatchRow:
         row.id = row.id or new_id("wat")
         self.t["watches"].put_item(Item={"id": row.id, "camera_id": row.camera_id, "seq": time.time_ns(),

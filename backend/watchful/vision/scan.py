@@ -25,9 +25,9 @@ from watchful.tuning import ScanTuning, Tuning
 from watchful.vision.faces import Enrollment
 from watchful.vision.perceive import Needs, Perceiver, Perception
 from watchful.vision.reason import Reasoner
-from watchful.vision.track import iou
+from watchful.vision.track import iou, session_id_base
 
-TRACK_ID_SPAN = 1_000_000  # keeps chunk local track ids apart before stitching
+TRACK_ID_SPAN = 10_000  # keeps chunk local track ids apart before stitching
 EPS = 1e-6
 
 
@@ -95,6 +95,7 @@ class _Job:
     needs: Needs
     enrollments: list[Enrollment]
     start_epoch: float
+    id_base: int = 0
 
 
 def _run_chunk(job: _Job) -> ChunkResult:
@@ -109,7 +110,7 @@ def _run_chunk(job: _Job) -> ChunkResult:
         faces = _W["faces"]
     perceiver = Perceiver(job.camera, s, t, make_blobs(s), faces, job.needs,
                           detector=_W["detector"], pose=_W["pose"])
-    perceiver.tracker._next_id = (job.index + 1) * TRACK_ID_SPAN
+    perceiver.tracker._next_id = job.id_base + (job.index + 1) * TRACK_ID_SPAN
     cap = cv2.VideoCapture(job.path, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, t.scan.decode_threads])
     cap.set(cv2.CAP_PROP_POS_MSEC, job.start * 1000)
     step = 1.0 / s.analysis_fps
@@ -270,7 +271,8 @@ def scan_file(path: str | Path, camera: Camera, watches: list[tuple[str, Watch]]
     needs = needs_for([w for _, w in watches]) if watches else Needs(classes={"person"})
     plan = chunk_plan(duration, pool.workers, settings.scan_overlap_s, tuning.scan.min_chunk_s,
                       tuning.scan.target_chunk_s)
-    jobs = [_Job(i, path, a, b, camera, needs, enrollments or [], start_epoch) for i, (a, b) in enumerate(plan)]
+    base = session_id_base()
+    jobs = [_Job(i, path, a, b, camera, needs, enrollments or [], start_epoch, base) for i, (a, b) in enumerate(plan)]
 
     chunks = []
     futures = [pool.ex.submit(_run_chunk, j) for j in jobs]

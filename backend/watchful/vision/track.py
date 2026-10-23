@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass, field
 
 import cv2
@@ -7,6 +8,11 @@ from watchful.tuning import TrackTuning
 from watchful.vision.detect import Detection
 
 Box = tuple[float, float, float, float]
+
+
+def session_id_base() -> int:
+    """Track ids start from the clock so ids from different runs of a camera never collide."""
+    return (int(time.time()) % 10**7) * 10**6
 
 
 def iou(a: Box, b: Box) -> float:
@@ -95,13 +101,13 @@ def _greedy(tracks: list[Track], preds: dict[int, Box], dets: list[Detection], t
 class Tracker:
     """Kalman plus IoU tracking by detection, two passes like ByteTrack."""
 
-    def __init__(self, cfg: TrackTuning = TrackTuning()):
+    def __init__(self, cfg: TrackTuning = TrackTuning(), first_id: int | None = None):
         self.cfg = cfg
         self.iou_threshold = cfg.iou
         self.max_age_s = cfg.max_age_s
         self.min_hits = cfg.min_hits
         self.tracks: list[Track] = []
-        self._next_id = 1
+        self._next_id = first_id if first_id is not None else session_id_base() + 1
 
     def update(self, dets: list[Detection], ts: float) -> TrackUpdate:
         preds = {t.id: t.predict(ts) for t in self.tracks}

@@ -28,10 +28,14 @@ class S3BlobStore:
         return self.s3.generate_presigned_url("get_object", Params={"Bucket": self.bucket, "Key": key},
                                               ExpiresIn=self.url_ttl_s)
 
-    def delete_older_than(self, days: int) -> int:
+    def delete(self, key: str) -> None:
+        self.s3.delete_object(Bucket=self.bucket, Key=key)
+
+    def delete_older_than(self, days: int, keep: tuple[str, ...] = ("people/",)) -> int:
         cutoff, removed = time.time() - days * 86400, 0
         for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket):
-            old = [{"Key": o["Key"]} for o in page.get("Contents", []) if o["LastModified"].timestamp() < cutoff]
+            old = [{"Key": o["Key"]} for o in page.get("Contents", [])
+                   if o["LastModified"].timestamp() < cutoff and not o["Key"].startswith(keep)]
             for i in range(0, len(old), 1000):
                 self.s3.delete_objects(Bucket=self.bucket, Delete={"Objects": old[i:i + 1000]})
                 removed += len(old[i:i + 1000])

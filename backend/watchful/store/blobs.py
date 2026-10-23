@@ -9,7 +9,8 @@ class BlobStore(Protocol):
     def put(self, key: str, data: bytes, content_type: str) -> None: ...
     def get(self, key: str) -> bytes: ...
     def url(self, key: str) -> str: ...
-    def delete_older_than(self, days: int) -> int: ...
+    def delete(self, key: str) -> None: ...
+    def delete_older_than(self, days: int, keep: tuple[str, ...] = ("people/",)) -> int: ...
 
 
 @register("blobs", "local")
@@ -36,10 +37,16 @@ class LocalBlobStore:
     def url(self, key: str) -> str:
         return f"/blobs/{key}"
 
-    def delete_older_than(self, days: int) -> int:
+    def delete(self, key: str) -> None:
+        self._path(key).unlink(missing_ok=True)
+
+    def delete_older_than(self, days: int, keep: tuple[str, ...] = ("people/",)) -> int:
+        """Retention; enrolment photos stay until the person is deleted."""
         cutoff = time.time() - days * 86400
         removed = 0
         for path in self.root.rglob("*"):
+            if path.relative_to(self.root).as_posix().startswith(keep):
+                continue
             if path.is_file() and path.stat().st_mtime < cutoff:
                 path.unlink()
                 removed += 1

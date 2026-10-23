@@ -30,6 +30,11 @@ from watchful.vision.scan import ScanPool, scan_file
 log = logging.getLogger("watchful.workers")
 
 
+def should_record(repo, camera: Camera) -> bool:
+    """A demo camera records its timeline once; later runs only show the live view and alerts."""
+    return camera.kind != "demo" or not repo.query_events(camera_id=camera.id, limit=1)
+
+
 @dataclass
 class WorkerStatus:
     running: bool = False
@@ -71,6 +76,7 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
     evidence = EvidenceBuffer(tuning.evidence, camera.zones)
     pending: list[tuple[float, object]] = []
     loops, last_pos, last_status, last_frame_sent, last_done = 0, None, 0.0, 0.0, float("-inf")
+    recording = should_record(repo, camera)
     frames_done, t_start = 0, time.monotonic()
 
     def send(msg: dict) -> None:
@@ -103,13 +109,13 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
             continue
         if frame.pos is not None and last_pos is not None and frame.pos < last_pos:
             loops += 1
+            recording = recording and camera.kind != "demo"
         last_pos = frame.pos
         if scanning.value > 0 and frame.ts - last_done < 1.0 / settings.live_fps_during_scan:
             continue
         last_done = frame.ts
         draw = viewers.value > 0 and now - last_frame_sent >= 1.0 / settings.analysis_fps
-        # a demo loop records its timeline once; later loops only show the live view and alerts
-        result = pipe.process(frame, draw, record=not (camera.kind == "demo" and loops >= 1))
+        result = pipe.process(frame, draw, record=recording)
         frames_done += 1
         clips.on_frame(frame)
         evidence.add(frame, result.tick)
@@ -343,7 +349,7 @@ class WorkerManager:
         row = self.repo.add_alert(AlertRow(None, c.camera_id, c.watch_id, c.ts, c.severity, v.status,
                                            v.summary or c.watch_name, c.clip_key,
                                            c.keyframe_keys[0] if c.keyframe_keys else None,
-                                           [asdict(t) for t in v.trace], None, c.fingerprint))
+                                           [asdict(t) for t in v.trace], None, c.fingerprint, c.track_id))
         self._publish(c.camera_id, {"type": "alert", "alert": asdict(row)})
         self.metrics.put("Alerts", 1, {"Status": v.status})
         return row
@@ -389,6 +395,8 @@ class WorkerManager:
                                on_progress=lambda p: info.update(progress=round(p, 3)))
             self.repo.add_events(result.events)
             info.update(state="checking", stats=asdict(result.stats))
+            cam.last_scan = {**asdict(result.stats), "finished_at": time.time()}
+            self.repo.update_camera(cam)
             self.metrics.put("ScanRealtimeFactor", result.stats.x_realtime)
             self.metrics.put("ScanSecondsPerMinute", result.stats.wall_s / max(result.stats.duration_s / 60, 1e-6))
             packs = [file_pack(cam.url, start_epoch, c, result.paths.get(c.track_id, []),

@@ -86,6 +86,8 @@ def people_groups(ctx: AskContext, since=None, until=None) -> list[dict]:
             ctx.track_groups[tid] = (g.group_id, g.ambiguous)
         out.append({"group_id": g.group_id, "label": labels.get(g.group_id) or g.label, "first_ts": g.first_ts,
                     "last_ts": g.last_ts, "track_ids": g.track_ids, "ambiguous": g.ambiguous,
+                    "tracks": [{"track_id": m.track_id, "first_ts": m.first_ts, "last_ts": m.last_ts}
+                               for m in g.members],
                     "thumbnail_key": g.thumbnail_key,
                     "visits": sorted((v for tid in g.track_ids for v in tracks[tid]["visits"]), key=lambda v: v["ts"])})
     return out

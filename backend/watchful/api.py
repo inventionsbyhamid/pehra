@@ -138,6 +138,7 @@ class LookoutIn(BaseModel):
     person_id: str | None = None
     description: str | None = None
     event_id: str | None = None
+    alert_id: str | None = None
     hours: float = 24
 
 
@@ -205,6 +206,22 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
             raise HTTPException(404, "No such camera.")
         return cam
 
+    @app.get("/api/cameras/{camera_id}", dependencies=auth)
+    def get_camera(camera_id: str, request: Request):
+        w = _w(request)
+        return _camera_json(w, _camera(w, camera_id))
+
+    @app.delete("/api/cameras/{camera_id}", dependencies=auth)
+    def delete_camera(camera_id: str, request: Request):
+        w = _w(request)
+        cam = _camera(w, camera_id)
+        w.manager.stop(cam.id)
+        w.repo.delete_camera(cam.id)
+        if cam.kind == "file" and cam.url and Path(cam.url).resolve().is_relative_to(
+                (Path(w.settings.data_dir) / "uploads").resolve()):
+            Path(cam.url).unlink(missing_ok=True)
+        return {"ok": True}
+
     @app.patch("/api/cameras/{camera_id}", dependencies=auth)
     def patch_camera(camera_id: str, body: CameraPatch, request: Request):
         w = _w(request)
@@ -214,6 +231,8 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         if body.zones is not None:
             cam.zones = [Zone(z.get("id") or new_id("zone"), z["name"], [tuple(p) for p in z["polygon"]])
                          for z in body.zones]
+            if cam.kind == "demo":
+                w.repo.delete_camera_events(cam.id)  # the next loop records the timeline with the new zones
         if body.enabled is not None:
             cam.enabled = body.enabled
         if body.tuning is not None:
@@ -474,10 +493,20 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         w = _w(request)
         w.repo.delete_enrollment(person_id)
         w.faces.remove(person_id)
+        w.blobs.delete(f"people/{person_id}.jpg")
         for cam in w.repo.list_cameras():
             if cam.kind in LIVE_KINDS:
                 w.manager.restart(cam.id)
         return {"ok": True}
+
+    def _alert_sighting(w: State, alert_id: str):
+        """The best recorded sighting of the person an alert is about."""
+        a = _alert(w, alert_id)
+        if a.track_id is None:
+            return None
+        rows = [e for e in w.repo.query_events(camera_id=a.camera_id, since=a.ts - 3600, until=a.ts + 60, limit=5000)
+                if e.track_id == a.track_id]
+        return max(rows, key=lambda e: (e.embedding is not None, e.signature is not None), default=None)
 
     @app.post("/api/lookouts", dependencies=auth)
     def lookout(body: LookoutIn, request: Request):
@@ -487,8 +516,8 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
             fill["who"] = body.person_id
         elif body.description:
             fill["text"] = body.description
-        elif body.event_id:
-            e = w.repo.get_event(body.event_id)
+        elif body.event_id or body.alert_id:
+            e = w.repo.get_event(body.event_id) if body.event_id else _alert_sighting(w, body.alert_id)
             if e is None:
                 raise HTTPException(404, "No such sighting.")
             fill["same_as"] = SameAs(event_id=e.id, signature=e.signature, embedding=e.embedding,
