@@ -5,6 +5,7 @@ from typing import Literal, Protocol
 import httpx
 
 from watchful.config import Settings
+from watchful.registry import register
 
 
 class AILimitReached(Exception):
@@ -26,9 +27,12 @@ class LLM(Protocol):
                  timeout_s: float = 20) -> str: ...
 
 
+@register("llm", "openrouter")
 class OpenRouterLLM:
-    def __init__(self, settings: Settings, client: httpx.Client | None = None):
+    def __init__(self, settings: Settings, client: httpx.Client | None = None, model: str | None = None,
+                 name: str = "openrouter"):
         self.s = settings
+        self.model = model or settings.openrouter_model
         self.client = client or httpx.Client()
 
     def complete(self, system, messages, images=(), json_schema=None, timeout_s=20) -> str:
@@ -41,7 +45,7 @@ class OpenRouterLLM:
                 msgs.append({"role": "user", "content": parts})
             else:
                 msgs.append({"role": m.role, "content": m.text})
-        body = {"model": self.s.openrouter_model, "messages": msgs, "temperature": 0,
+        body = {"model": self.model, "messages": msgs, "temperature": 0,
                 "max_tokens": self.s.ai_max_tokens, "provider": {"sort": "throughput"},
                 "reasoning": {"effort": "none"}}
         if json_schema:
@@ -60,9 +64,11 @@ class OpenRouterLLM:
             raise AIError("unexpected AI response") from e
 
 
+@register("llm", "bedrock")
 class BedrockLLM:
-    def __init__(self, settings: Settings, client=None):
+    def __init__(self, settings: Settings, client=None, model: str | None = None, name: str = "bedrock"):
         self.s = settings
+        self.model = model or settings.bedrock_model
         if client is None:
             import boto3
             from botocore.config import Config
@@ -79,7 +85,7 @@ class BedrockLLM:
             msgs.append({"role": m.role, "content": content})
         if json_schema:
             system += "\nReply with one JSON object only."
-        r = self.client.converse(modelId=self.s.bedrock_model, system=[{"text": system}], messages=msgs,
+        r = self.client.converse(modelId=self.model, system=[{"text": system}], messages=msgs,
                                  inferenceConfig={"maxTokens": self.s.ai_max_tokens, "temperature": 0})
         return "".join(p.get("text", "") for p in r["output"]["message"]["content"])
 
@@ -113,7 +119,3 @@ class LimitedLLM:
         self.repo.record_ai_call()
         return self.inner.complete(system, messages, images, json_schema, timeout_s)
 
-
-def make_llm(settings: Settings, repo) -> LLM:
-    inner = BedrockLLM(settings) if settings.ai_provider == "bedrock" else OpenRouterLLM(settings)
-    return LimitedLLM(inner, repo, settings.ai_daily_call_limit)

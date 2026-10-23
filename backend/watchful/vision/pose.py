@@ -2,11 +2,13 @@
 # handling follows the Zoo's mp_pose.py. The region of interest comes from the track box, and a
 # box wider than tall is tried turned both ways, keeping the more confident result.
 from dataclasses import dataclass
+from typing import Protocol
 
 import cv2
 import numpy as np
 
 from watchful.config import Settings
+from watchful.registry import register
 from watchful.tuning import PoseTuning
 from watchful.vision.models import load_net
 
@@ -33,8 +35,13 @@ def torso_signals(lm: np.ndarray) -> tuple[float, float, float]:
     return angle, float(hips[1]), 3.3 * length
 
 
-class PoseEstimator:
-    def __init__(self, cfg: PoseTuning = PoseTuning(), settings: Settings | None = None):
+class PoseEstimator(Protocol):
+    def estimate(self, image: np.ndarray, box) -> PoseResult | None: ...
+
+
+@register("pose", "mediapipe")
+class MediaPipePose:
+    def __init__(self, name: str = "mediapipe", cfg: PoseTuning = PoseTuning(), settings: Settings | None = None):
         self.net = load_net("pose", settings)
         self.names = self.net.getUnconnectedOutLayersNames()
         self.cfg = cfg

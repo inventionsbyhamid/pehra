@@ -3,7 +3,7 @@ import time
 import cv2
 import pytest
 
-from watchful.vision.detect import Detector
+from watchful.vision.detect import YoloxDetector as Detector
 from watchful.vision.models import sample_path
 
 MODELS = ["yolox_nano", "yolox_tiny", "yolox_s"]

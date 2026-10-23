@@ -2,18 +2,20 @@
 # and YOLOX demo/ONNXRuntime/onnx_inference.py, both Apache 2.0.
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 import cv2
 import numpy as np
 
 from watchful.config import Settings
+from watchful.registry import register
 from watchful.tuning import DetectTuning
 from watchful.vision.models import load_net
 
 COCO = (Path(__file__).resolve().parents[1] / "data" / "coco80.txt").read_text().split("\n")[:80]
 
 # input size and channel order per model, as each source's own demo feeds it
-MODEL_INPUT = {"yolox_nano": (416, False), "yolox_tiny": (416, False), "yolox_s": (640, True)}
+YOLOX_INPUT = {"yolox_nano": (416, False), "yolox_tiny": (416, False), "yolox_s": (640, True)}
 STRIDES = (8, 16, 32)
 
 
@@ -34,10 +36,20 @@ def _grids(size: int) -> tuple[np.ndarray, np.ndarray]:
     return np.concatenate(grids).astype(np.float32), np.concatenate(strides).astype(np.float32)
 
 
-class Detector:
-    def __init__(self, model: str = "yolox_tiny", classes: set[str] | None = None,
+class Detector(Protocol):
+    name: str
+
+    def set_classes(self, classes: set[str] | None) -> None: ...
+
+    def detect(self, image: np.ndarray) -> list[Detection]: ...
+
+
+@register("detector", *YOLOX_INPUT)
+class YoloxDetector:
+    def __init__(self, name: str = "yolox_nano", classes: set[str] | None = None,
                  cfg: DetectTuning = DetectTuning(), settings: Settings | None = None):
-        self.size, self.rgb = MODEL_INPUT[model]
+        model = self.name = name
+        self.size, self.rgb = YOLOX_INPUT[model]
         self.net = load_net(model, settings)
         self.conf, self.nms = cfg.conf, cfg.nms
         self.set_classes(classes)

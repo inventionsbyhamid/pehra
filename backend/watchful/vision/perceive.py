@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from watchful.components import make_detector, make_pose
 from watchful.config import Settings
 from watchful.ingest.sources import Frame
 from watchful.store.blobs import BlobStore
@@ -92,7 +93,7 @@ class Perceiver:
         self.camera, self.settings, self.t, self.blobs = camera, settings, tuning, blobs
         self.faces, self.embedder = faces, embedder
         self.gate = MotionGate(tuning.motion)
-        self.detector = detector or Detector(settings.detector, needs.classes, tuning.detect, settings)
+        self.detector = detector or make_detector(settings, tuning, needs.classes)
         self.tracker = Tracker(tuning.track)
         self.tamper = TamperMonitor(tuning.tamper)
         self.pose = pose
@@ -105,7 +106,7 @@ class Perceiver:
         self.needs = needs
         self.detector.set_classes(None if needs.classes is None else needs.classes | {"person"})
         if (needs.pose or needs.posture) and self.pose is None:
-            self.pose = PoseEstimator(self.t.pose, self.settings)
+            self.pose = make_pose(self.settings, self.t)
 
     def stats(self) -> dict:
         c = dict(self.counts)

@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import pytest
 
-from watchful.vision.embed import Embedder
+from watchful.vision.embed import OnnxEmbedder as Embedder
 from watchful.vision.models import sample_path
 
 RED_TOP = (505, 215, 36, 91)

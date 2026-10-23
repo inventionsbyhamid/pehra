@@ -18,13 +18,12 @@ from watchful.config import Settings
 from watchful.ingest.sources import Frame, fit_width
 from watchful.rules.engine import Candidate, RuleEngine, needs_for
 from watchful.rules.watch import Watch
-from watchful.store.blobs import BlobStore, make_blobs
+from watchful.components import make_blobs, make_detector, make_faces, make_pose
+from watchful.store.blobs import BlobStore
 from watchful.store.db import Camera, EventRow
 from watchful.tuning import ScanTuning, Tuning
-from watchful.vision.detect import Detector
-from watchful.vision.faces import Enrollment, FaceIndex
+from watchful.vision.faces import Enrollment
 from watchful.vision.perceive import Needs, Perceiver, Perception
-from watchful.vision.pose import PoseEstimator
 from watchful.vision.reason import Reasoner
 from watchful.vision.track import iou
 
@@ -74,7 +73,7 @@ def _init(settings_json: str, tuning_json: str) -> None:
     settings = Settings(**json.loads(settings_json), _env_file=None)
     tuning = Tuning.model_validate_json(tuning_json)
     _W.update(settings=settings, tuning=tuning, pose=None, faces=None,
-              detector=Detector(settings.detector, None, tuning.detect, settings))
+              detector=make_detector(settings, tuning))
 
 
 def _ping(_: int) -> int:
@@ -97,11 +96,11 @@ class _Job:
 def _run_chunk(job: _Job) -> ChunkResult:
     s, t = _W["settings"], _W["tuning"]
     if (job.needs.pose or job.needs.posture) and _W["pose"] is None:
-        _W["pose"] = PoseEstimator(t.pose, s)
+        _W["pose"] = make_pose(s, t)
     faces = None
     if job.needs.faces and job.enrollments:
         if _W["faces"] is None:
-            _W["faces"] = FaceIndex(t.faces, s)
+            _W["faces"] = make_faces(s, t)
         _W["faces"].load(job.enrollments)
         faces = _W["faces"]
     perceiver = Perceiver(job.camera, s, t, make_blobs(s), faces, job.needs,

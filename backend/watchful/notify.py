@@ -2,6 +2,8 @@ import logging
 import time
 from typing import Protocol
 
+from watchful.registry import register
+
 log = logging.getLogger("watchful.notify")
 
 
@@ -9,13 +11,18 @@ class Notifier(Protocol):
     def send(self, subject: str, body: str) -> None: ...
 
 
+@register("notify", "log")
 class LogNotifier:
+    def __init__(self, name: str = "log", **_):
+        pass
+
     def send(self, subject: str, body: str) -> None:
         log.info("notify: %s | %s", subject, body)
 
 
+@register("notify", "sns")
 class SnsNotifier:
-    def __init__(self, topic_arn: str, region: str, client=None):
+    def __init__(self, topic_arn: str, region: str, client=None, name: str = "sns"):
         if client is None:
             import boto3
             client = boto3.client("sns", region_name=region)
@@ -40,8 +47,3 @@ class ApprovalNotifier:
         self.notifier.send(f"Watchful: {alert.summary[:80]}", f"{alert.summary}\nCamera: {alert.camera_id}")
         return True
 
-
-def make_notifier(settings) -> Notifier:
-    if settings.notify == "sns" and settings.sns_topic_arn:
-        return SnsNotifier(settings.sns_topic_arn, settings.aws_region)
-    return LogNotifier()

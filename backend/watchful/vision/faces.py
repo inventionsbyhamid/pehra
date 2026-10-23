@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 
 from watchful.config import Settings
+from watchful.registry import register
 from watchful.tuning import FaceTuning
 from watchful.vision.models import model_path
 
@@ -33,10 +34,11 @@ class FaceMatch:
     score: float
 
 
+@register("faces", "yunet_sface")
 class FaceIndex:
     """YuNet finds faces, SFace compares them with people the owner enrolled with consent."""
 
-    def __init__(self, cfg: FaceTuning = FaceTuning(), settings: Settings | None = None):
+    def __init__(self, name: str = "yunet_sface", cfg: FaceTuning = FaceTuning(), settings: Settings | None = None):
         self.cfg = cfg
         self.threshold = cfg.cosine
         self.detector = cv2.FaceDetectorYN.create(str(model_path("yunet", settings)), "", (320, 320),

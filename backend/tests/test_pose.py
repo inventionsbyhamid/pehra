@@ -1,8 +1,8 @@
 import cv2
 
-from watchful.vision.detect import Detector
+from watchful.vision.detect import YoloxDetector as Detector
 from watchful.vision.models import sample_path
-from watchful.vision.pose import PoseEstimator
+from watchful.vision.pose import MediaPipePose as PoseEstimator
 
 
 def test_pose_on_vtest_person():

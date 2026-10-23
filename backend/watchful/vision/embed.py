@@ -1,8 +1,11 @@
+from typing import Protocol
+
 import cv2
 import numpy as np
 from tokenizers import Tokenizer
 
 from watchful.config import Settings
+from watchful.registry import register
 from watchful.vision.models import EMBEDDERS, embedder_path
 
 
@@ -11,7 +14,14 @@ def _unit(v: np.ndarray) -> np.ndarray:
     return v / (np.linalg.norm(v) or 1.0)
 
 
-class Embedder:
+class Embedder(Protocol):
+    def image(self, crop: np.ndarray) -> np.ndarray: ...
+
+    def text(self, query: str) -> np.ndarray: ...
+
+
+@register("embedder", *EMBEDDERS)
+class OnnxEmbedder:
     """Images and text in one embedding space, both towers on the OpenCV DNN engine.
     The text tower is large, so it loads on first use."""
 
@@ -44,4 +54,8 @@ class Embedder:
 
     @staticmethod
     def similarity(a: np.ndarray, b: np.ndarray) -> float:
-        return float(np.dot(a, b))
+        return similarity(a, b)
+
+
+def similarity(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.dot(a, b))

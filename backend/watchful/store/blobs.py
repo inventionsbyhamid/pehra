@@ -2,6 +2,8 @@ import time
 from pathlib import Path
 from typing import Protocol
 
+from watchful.registry import register
+
 
 class BlobStore(Protocol):
     def put(self, key: str, data: bytes, content_type: str) -> None: ...
@@ -10,8 +12,9 @@ class BlobStore(Protocol):
     def delete_older_than(self, days: int) -> int: ...
 
 
+@register("blobs", "local")
 class LocalBlobStore:
-    def __init__(self, data_dir: str | Path):
+    def __init__(self, data_dir: str | Path, name: str = "local"):
         self.root = Path(data_dir) / "blobs"
         self.root.mkdir(parents=True, exist_ok=True)
 
@@ -42,6 +45,3 @@ class LocalBlobStore:
                 removed += 1
         return removed
 
-
-def make_blobs(settings) -> BlobStore:
-    return LocalBlobStore(settings.data_dir)
