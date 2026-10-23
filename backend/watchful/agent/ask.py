@@ -58,7 +58,8 @@ def events_tool(ctx: AskContext, zone=None, cls=None, kinds=None, since=None, un
                      f"{e.track_id} | {e.person_label or ''}" for e in rows), []
 
 
-def people_tool(ctx: AskContext, since=None, until=None) -> tuple[str, list]:
+def people_groups(ctx: AskContext, since=None, until=None) -> list[dict]:
+    """People grouped by face and clothing, each with their zone visits; marks look alikes."""
     rows = ctx.repo.query_events(camera_id=ctx.camera_id, kinds=PERSON_KINDS, cls="person", since=since,
                                  until=until, limit=5000)
     tracks: dict[int, dict] = {}
@@ -70,25 +71,34 @@ def people_tool(ctx: AskContext, since=None, until=None) -> tuple[str, list]:
         t["label"] = t["label"] or e.person_label
         t["key"] = t["key"] or e.keyframe_key
         if e.kind in ("enter", "exit"):
-            t["visits"].append((e.kind, e.zone, e.ts, e.id))
-    if not tracks:
-        return "nobody was seen", []
+            t["visits"].append({"kind": e.kind, "zone": e.zone, "ts": e.ts, "event_id": e.id})
     sightings = [TrackSighting(tid, t["first"], t["last"],
                                np.asarray(t["sig"], np.float32).reshape(30, 32) if t["sig"] else
                                np.zeros((30, 32), np.float32), t["key"], t["label"], t["label"])
                  for tid, t in tracks.items()]
-    groups = link_tracks(sightings, ctx.appearance)
     labels = ctx.repo.person_labels(ctx.camera_id) if ctx.camera_id else {}
-    lines = []
-    for g in groups:
-        name = labels.get(g.group_id) or g.label or "unknown person"
-        flag = " LOOK ALIKE: may be confused with another person" if g.ambiguous else ""
-        lines.append(f"{g.group_id} ({name}) seen {_clock(g.first_ts, ctx.tz)} to {_clock(g.last_ts, ctx.tz)}, "
-                     f"tracks {g.track_ids}{flag}")
+    out = []
+    for g in link_tracks(sightings, ctx.appearance):
         for tid in g.track_ids:
             ctx.track_groups[tid] = (g.group_id, g.ambiguous)
-            for kind, zone, ts, eid in tracks[tid]["visits"]:
-                lines.append(f"    {kind} {zone} at {_clock(ts, ctx.tz)} (ts {ts:.1f}) [{eid}]")
+        out.append({"group_id": g.group_id, "label": labels.get(g.group_id) or g.label, "first_ts": g.first_ts,
+                    "last_ts": g.last_ts, "track_ids": g.track_ids, "ambiguous": g.ambiguous,
+                    "thumbnail_key": g.thumbnail_key,
+                    "visits": sorted((v for tid in g.track_ids for v in tracks[tid]["visits"]), key=lambda v: v["ts"])})
+    return out
+
+
+def people_tool(ctx: AskContext, since=None, until=None) -> tuple[str, list]:
+    groups = people_groups(ctx, since, until)
+    if not groups:
+        return "nobody was seen", []
+    lines = []
+    for g in groups:
+        flag = " LOOK ALIKE: may be confused with another person" if g["ambiguous"] else ""
+        lines.append(f"{g['group_id']} ({g['label'] or 'unknown person'}) seen {_clock(g['first_ts'], ctx.tz)} to "
+                     f"{_clock(g['last_ts'], ctx.tz)}, tracks {g['track_ids']}{flag}")
+        lines += [f"    {v['kind']} {v['zone']} at {_clock(v['ts'], ctx.tz)} (ts {v['ts']:.1f}) [{v['event_id']}]"
+                  for v in g["visits"]]
     return "\n".join(lines), []
 
 
