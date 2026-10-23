@@ -91,3 +91,16 @@ def test_enrolment_photo_kept_by_retention_and_removed_on_delete(tmp_path):
     assert blobs.get(f"people/{pid}.jpg")
     c.delete(f"/api/people/{pid}")
     assert not (tmp_path / "blobs" / "people" / f"{pid}.jpg").exists()
+
+
+def test_upload_clip_is_cut_at_the_alert_moment(tmp_path, monkeypatch):
+    import watchful.api as api
+    app, c = app_client(tmp_path)
+    repo = app.state.w.repo
+    cam = repo.add_camera(Camera(None, "Upload", "file", str(tmp_path / "v.mp4"), last_scan={"start_epoch": 1000.0}))
+    repo.add_events([EventRow(None, cam.id, 1030.0, "enter", 1, "person", "z", {}, None, None, None, None)])
+    a = repo.add_alert(AlertRow(None, cam.id, None, 1042.5, "info", "alert", "x", None, None, [], None, "fp9"))
+    seen = {}
+    monkeypatch.setattr(api, "cut_clip", lambda path, pos, s, t: seen.setdefault("pos", pos) and b"mp4" or b"mp4")
+    c.get(f"/api/alerts/{a.id}/clip", follow_redirects=False)
+    assert seen["pos"] == 42.5

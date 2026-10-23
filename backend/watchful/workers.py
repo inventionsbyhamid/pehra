@@ -422,7 +422,7 @@ class WorkerManager:
                                on_progress=lambda p: info.update(progress=round(p, 3)))
             self.repo.add_events(result.events)
             info.update(state="checking", stats=asdict(result.stats))
-            cam.last_scan = {**asdict(result.stats), "finished_at": time.time()}
+            cam.last_scan = {**asdict(result.stats), "start_epoch": start_epoch, "finished_at": time.time()}
             self.repo.update_camera(cam)
             self.metrics.put("ScanRealtimeFactor", result.stats.x_realtime)
             self.metrics.put("ScanSecondsPerMinute", result.stats.wall_s / max(result.stats.duration_s / 60, 1e-6))

@@ -403,7 +403,9 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
             cam = w.repo.get_camera(a.camera_id)
             if cam is None or cam.kind != "file":
                 raise HTTPException(404, "The clip is still being written. Try again in a few seconds.")
-            start = min((e.ts for e in w.repo.query_events(camera_id=cam.id, limit=1)), default=a.ts)
+            start = (cam.last_scan or {}).get("start_epoch")
+            if start is None:
+                raise HTTPException(404, "Scan this video again to make its clips.")
             data = cut_clip(cam.url, max(0.0, a.ts - start), w.settings, w.tuning)
             w.blobs.put(key, data, "video/mp4")
             a.clip_key = key
