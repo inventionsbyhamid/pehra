@@ -120,6 +120,7 @@ class EvidenceTuning(_Section):
 
 class ScanTuning(_Section):
     min_chunk_s: float = 4.0
+    target_chunk_s: float = 15.0  # long videos are cut finer than one chunk per worker, for load balance
     decode_threads: int = 1  # each chunk worker decodes on one thread; the chunks already fill the CPUs
     join_iou: float = 0.5  # mean box overlap in the shared seconds that joins two tracks
     join_distance: float = 0.5  # fallback: centre distance in box heights between last and first boxes

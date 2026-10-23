@@ -60,8 +60,10 @@ class ScanResult:
     poses: dict[int, list] = field(default_factory=dict)
 
 
-def chunk_plan(duration_s: float, workers: int, overlap_s: float, min_chunk_s: float) -> list[tuple[float, float]]:
-    k = max(1, min(workers, math.ceil(duration_s / min_chunk_s)))
+def chunk_plan(duration_s: float, workers: int, overlap_s: float, min_chunk_s: float,
+               target_chunk_s: float = 15.0) -> list[tuple[float, float]]:
+    """At least one chunk per worker; long videos get chunks of about target_chunk_s so idle workers keep busy."""
+    k = max(1, min(workers, math.ceil(duration_s / min_chunk_s)), math.ceil(duration_s / target_chunk_s))
     length = duration_s / k
     return [(max(0.0, i * length - (overlap_s if i else 0.0)), (i + 1) * length) for i in range(k)]
 
@@ -266,7 +268,8 @@ def scan_file(path: str | Path, camera: Camera, watches: list[tuple[str, Watch]]
     start_epoch = time.time() if start_epoch is None else start_epoch
     duration = probe_duration(path)
     needs = needs_for([w for _, w in watches]) if watches else Needs(classes={"person"})
-    plan = chunk_plan(duration, pool.workers, settings.scan_overlap_s, tuning.scan.min_chunk_s)
+    plan = chunk_plan(duration, pool.workers, settings.scan_overlap_s, tuning.scan.min_chunk_s,
+                      tuning.scan.target_chunk_s)
     jobs = [_Job(i, path, a, b, camera, needs, enrollments or [], start_epoch) for i, (a, b) in enumerate(plan)]
 
     chunks = []

@@ -33,6 +33,11 @@ def clip40():
     return out
 
 
+def test_long_videos_get_more_chunks_than_workers():
+    plan = chunk_plan(600.0, workers=6, overlap_s=2.0, min_chunk_s=4.0, target_chunk_s=15.0)
+    assert len(plan) == 40 and plan[-1][1] == 600.0
+
+
 def test_chunk_plan_overlap():
     plan = chunk_plan(60.0, workers=6, overlap_s=1.0, min_chunk_s=4.0)
     assert len(plan) == 6
