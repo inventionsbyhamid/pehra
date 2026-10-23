@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     metrics: str = "log"
     notify: str = "log"
     detector: str = "yolox_nano"
+    scan_detector: str = "yolox_nano_320"  # recordings: 45% faster, about 2 more people in 100 missed
     pose_model: str = "mediapipe"
     face_model: str = "yunet_sface"
     embedder: str = "siglip2"

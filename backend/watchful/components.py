@@ -19,9 +19,9 @@ def load_all() -> None:
     import watchful.vision.pose  # noqa: F401
 
 
-def make_detector(settings: Settings, tuning: Tuning, classes: set[str] | None = None):
+def make_detector(settings: Settings, tuning: Tuning, classes: set[str] | None = None, name: str | None = None):
     load_all()
-    return build("detector", settings.detector, classes=classes, cfg=tuning.detect, settings=settings)
+    return build("detector", name or settings.detector, classes=classes, cfg=tuning.detect, settings=settings)
 
 
 def make_pose(settings: Settings, tuning: Tuning):

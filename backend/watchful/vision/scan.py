@@ -77,7 +77,7 @@ def _init(settings_json: str, tuning_json: str) -> None:
     settings = Settings(**json.loads(settings_json), _env_file=None)
     tuning = Tuning.model_validate_json(tuning_json)
     _W.update(settings=settings, tuning=tuning, pose=None, faces=None,
-              detector=make_detector(settings, tuning))
+              detector=make_detector(settings, tuning, name=settings.scan_detector))
 
 
 def _ping(_: int) -> int:

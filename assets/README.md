@@ -5,6 +5,7 @@
 | Name | Source | License |
 | --- | --- | --- |
 | yolox_nano | YOLOX release 0.1.1rc0, `yolox_nano.onnx` (github.com/Megvii-BaseDetection/YOLOX) | Apache 2.0 |
+| yolox_nano_320, yolox_nano_384 | Exported from the YOLOX nano weights at smaller inputs, see `scripts/export_yolox` | Apache 2.0 |
 | yolox_tiny | YOLOX release 0.1.1rc0, `yolox_tiny.onnx` (github.com/Megvii-BaseDetection/YOLOX) | Apache 2.0 |
 | yolox_s | OpenCV Model Zoo, object_detection_yolox 2022nov | Apache 2.0 |
 | pose | OpenCV Model Zoo, pose_estimation_mediapipe 2023mar | Apache 2.0 |

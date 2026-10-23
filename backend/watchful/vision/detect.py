@@ -15,7 +15,8 @@ from watchful.vision.models import load_net
 COCO = (Path(__file__).resolve().parents[1] / "data" / "coco80.txt").read_text().split("\n")[:80]
 
 # input size and channel order per model, as each source's own demo feeds it
-YOLOX_INPUT = {"yolox_nano": (416, False), "yolox_tiny": (416, False), "yolox_s": (640, True)}
+YOLOX_INPUT = {"yolox_nano": (416, False), "yolox_nano_384": (384, False), "yolox_nano_320": (320, False),
+               "yolox_tiny": (416, False), "yolox_s": (640, True)}
 STRIDES = (8, 16, 32)
 
 
