@@ -195,6 +195,23 @@ class WorkerManager:
         self.metrics = make_metrics(settings)
         threading.Thread(target=self._listen, daemon=True).start()
         threading.Thread(target=self._report, daemon=True).start()
+        threading.Thread(target=self._janitor, daemon=True).start()
+
+    def _janitor(self, every_s: float = 6 * 3600) -> None:
+        """Retention: clips, keyframes, uploads and events older than retention_days are deleted."""
+        from pathlib import Path
+        while not self._closed:
+            try:
+                days = self.settings.retention_days
+                self.blobs.delete_older_than(days)
+                self.repo.delete_events_before(time.time() - days * 86400)
+                uploads = Path(self.settings.data_dir) / "uploads"
+                for f in uploads.glob("*") if uploads.is_dir() else []:
+                    if f.stat().st_mtime < time.time() - days * 86400:
+                        f.unlink(missing_ok=True)
+            except Exception:
+                log.exception("retention cleanup failed")
+            time.sleep(every_s)
 
     def _report(self, every_s: float = 60) -> None:
         while not self._closed:
