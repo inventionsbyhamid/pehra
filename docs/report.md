@@ -62,7 +62,19 @@ reasoner and rules as live cameras. On the CPU used for development, a crowded m
 16 s through these steps: YOLOX Nano instead of Tiny, pose only when needed, clips cut only when an alert is
 opened, one worker per available core, the detector stride. Graviton results: FILL.
 
-### 4.5 Embeddings in OpenCV
+### 4.5 Find anything
+A frame is stored every 3 s while something moves (once a minute otherwise) and every finished track keeps its best
+crop; a background indexer embeds both with SigLIP 2 on the OpenCV DNN engine, so cameras and scans never wait.
+A search is turned by the AI into a caption plus camera, time and class filters, ranked by SigLIP's own sigmoid
+calibration p = sigmoid(exp(4.72) cos - 16.77) (read from the released checkpoint), and the top matches are
+confirmed by the AI in one call. Searches about something missing ("without a helmet") compare the caption with
+its contrast. A photo of a person searches by face, only with consent.
+
+### 4.6 Live view
+Video goes to the browser at 10 frames per second as plain JPEG with the latest boxes as data, drawn on a canvas;
+analysis runs at 5. A webcam is shown straight from the browser's camera and only boxes come back.
+
+### 4.7 Embeddings in OpenCV
 SigLIP 2 base image and text towers run in OpenCV 5's new DNN engine. We also tried Google's EmbeddingGemma 2:
 it runs in OpenCV DNN after clipping Tanh inputs (OpenCV 5.0 `Tanh` returns NaN for large inputs), but its image
 path was five times slower and did not rank our CCTV crops better.
