@@ -206,12 +206,16 @@ class Perceiver:
             m.face = self.faces.identify(image, t.box)
         if started or ts - m.keyframe_ts >= self.t.perceive.keyframe_every_s:
             self._keyframe(image, t, ts, m)
-        if person and self.embedder and self.needs.embed and m.best_crop is not None \
-                and m.embeds < self.t.perceive.max_embeds_per_track and ts - m.embed_ts >= self.t.perceive.embed_every_s:
-            m.embed_ts = ts
-            m.embeds += 1
-            self.counts["embeds"] += 1
-            m.embedding = self.embedder.image(m.best_crop)
+        cap = self.t.perceive.max_embeds_per_track
+        if person and self.embedder and self.needs.embed and (not cap or m.embeds < cap) \
+                and ts - m.embed_ts >= self.t.perceive.embed_every_s:
+            now_crop = crop(image, t.box)
+            if min(now_crop.shape[:2]) >= 24:
+                # what the person looks like now, so actions like eating show up, not their sharpest moment
+                m.embed_ts = ts
+                m.embeds += 1
+                self.counts["embeds"] += 1
+                m.embedding = self.embedder.image(now_crop)
         obs.face, obs.signature, obs.embedding = m.face, m.signature, m.embedding
         obs.keyframe_key, obs.best_key = m.keyframe_key, m.best_key
         return obs

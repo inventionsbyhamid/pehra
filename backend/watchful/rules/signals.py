@@ -264,8 +264,9 @@ def _text_vec(ctx, text: str):
 
 
 @signal("looks_like", "track", "bool",
-        "Open vocabulary appearance of the subject: closer to params.text than to params.not_text (for example "
-        "'a person not wearing glasses' against 'a person wearing glasses', or helmets, vests, masks, carried things).",
+        "Open vocabulary look or action of the subject, checked locally by an image and text model with no AI cost: "
+        "closer to params.text than to params.not_text for params.hold_s seconds (for example 'a person eating' "
+        "against 'a person not eating', or glasses, helmets, vests, masks, phones, carried things).",
         needs=("embed",))
 def looks_like(ctx, cond, track):
     import numpy as np
@@ -275,7 +276,15 @@ def looks_like(ctx, cond, track):
     v = np.asarray(track.embedding, np.float32)
     score = float(np.dot(v, _text_vec(ctx, text)))
     if not_text:
-        ok = score - float(np.dot(v, _text_vec(ctx, not_text))) >= ctx.tuning.contrast_margin
+        now = score - float(np.dot(v, _text_vec(ctx, not_text))) >= ctx.tuning.contrast_margin
     else:
-        ok = score >= ctx.tuning.looks_like_threshold
-    return SignalValue(ok, f"looks like {text}" if ok else None)
+        now = score >= ctx.tuning.looks_like_threshold
+    since = ctx.state.setdefault("looks_like_since", {})
+    key = (text, track.track_id)
+    if not now:
+        since.pop(key, None)
+        return SignalValue(False)
+    start = since.setdefault(key, ctx.tick.ts)
+    held = ctx.tick.ts - start
+    ok = held >= float(cond.params.get("hold_s", 0))
+    return SignalValue(ok, f"looks like {text} for {held:.0f} s" if ok else None)

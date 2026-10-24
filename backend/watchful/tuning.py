@@ -114,8 +114,8 @@ class PerceiveTuning(_Section):
     keyframe_every_s: float = 2.0
     scene_every_s: float = 3.0  # a whole frame for the search index while something moves
     scene_idle_every_s: float = 60.0  # and now and then when nothing does
-    embed_every_s: float = 10.0
-    max_embeds_per_track: int = 3
+    embed_every_s: float = 3.0  # people's current crop, while a watch or search needs embeddings (local, no AI)
+    max_embeds_per_track: int = 0  # 0 means no limit
     jpeg_quality: int = 80
 
 
