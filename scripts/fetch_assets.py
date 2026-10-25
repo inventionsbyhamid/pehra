@@ -6,7 +6,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from watchful.vision.models import EMBEDDERS, MODEL_FILES, SAMPLES, embedder_path, model_path, sample_path  # noqa: E402
+from watchful.vision.models import (EMBEDDERS, MODEL_EXTRAS, MODEL_FILES, SAMPLES, embedder_path,  # noqa: E402
+                                    extra_path, model_path, sample_path)
 
 
 def sha256(path: Path) -> str:
@@ -37,6 +38,13 @@ def main() -> int:
             bad += 1
         else:
             print(f"{name}: {digest} {dest.stat().st_size // 1024} KB")
+    for name, files in MODEL_EXTRAS.items():
+        for file, (url, want) in files.items():
+            dest = extra_path(file)
+            fetch(url, dest)
+            if sha256(dest) != want:
+                print(f"{name} {file}: sha256 mismatch {sha256(dest)}")
+                bad += 1
     for name, spec in EMBEDDERS.items():
         for file, url in spec.files.items():
             fetch(url, embedder_path(name, file))

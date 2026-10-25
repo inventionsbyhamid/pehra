@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -5,8 +6,11 @@ import cv2
 
 from watchful.config import Settings
 
+log = logging.getLogger(__name__)
+
 HF = "https://huggingface.co/opencv"
 OUR_RELEASE = "https://github.com/inventionsbyhamid/watchful/releases/download/models-v1"
+PADDLE = "https://huggingface.co/PaddlePaddle"
 
 
 @dataclass(frozen=True)
@@ -49,7 +53,37 @@ MODEL_FILES: dict[str, ModelFile] = {
         f"{HF}/face_recognition_sface/resolve/main/face_recognition_sface_2021dec.onnx",
         "face_recognition_sface_2021dec.onnx", "Apache-2.0 (OpenCV Model Zoo)",
         "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"),
+    # trained on Chinese plates; a plate it misses falls back to PP-OCR text boxes (vision/plates.py)
+    "lpd_yunet": ModelFile(
+        f"{HF}/license_plate_detection_yunet/resolve/main/license_plate_detection_lpd_yunet_2023mar.onnx",
+        "license_plate_detection_lpd_yunet_2023mar.onnx", "Apache-2.0 (OpenCV Model Zoo, LPD-YuNet by watrix.ai)",
+        "6d4978a7b6d25514d5e24811b82bfb511d166bdd8ca3b03aa63c1623d4d039c7"),
+    "text_det": ModelFile(
+        f"{HF}/text_detection_ppocr/resolve/main/text_detection_en_ppocrv3_2023may.onnx",
+        "text_detection_en_ppocrv3_2023may.onnx", "Apache-2.0 (OpenCV Model Zoo, PaddleOCR PP-OCRv3 English DB)",
+        "03f550c6b406fda8bf54bd8327815f6c7e2edd98cea02348c93d879254366587"),
+    # grey 100x32 input; reads digits and lowercase letters
+    "text_rec": ModelFile(
+        f"{HF}/text_recognition_crnn/resolve/main/text_recognition_CRNN_EN_2021sep.onnx",
+        "text_recognition_CRNN_EN_2021sep.onnx", "Apache-2.0 (OpenCV Model Zoo, CRNN English)",
+        "a84b1f6e11a65c2d733cb0cc1f014aae3f99051e3f11447dc282faa678eee544"),
+    # colour 48 px high input, any case; the classic engine cannot read it, and its 1 x T x C output is decoded by
+    # hand (TextRecognitionModel returns an empty string for it); its symbols are in MODEL_EXTRAS
+    "text_rec_v5": ModelFile(
+        f"{PADDLE}/en_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx",
+        "ppocrv5/en_rec_mobile.onnx", "Apache-2.0 (PaddleOCR PP-OCRv5 English mobile recognition, ONNX by Paddle)",
+        "b5f833dfc5d0eb71da397b4efa06ebeee9b431b690a47d6af40d77d8eabc557f"),
 }
+
+# side files a model needs: local name to (url, sha256)
+MODEL_EXTRAS: dict[str, dict[str, tuple[str, str]]] = {
+    "text_rec_v5": {"ppocrv5/en_rec_mobile.yml": (
+        f"{PADDLE}/en_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml",
+        "27e91d0582f40168aa218303c76e184bc78fa7a5d105aad0cfbad8458b441067")},
+}
+
+# symbols after the CTC blank at index 0; PP-OCR models keep theirs in a side file
+CHARSETS = {"text_rec": "0123456789abcdefghijklmnopqrstuvwxyz"}
 
 SIGLIP2 = "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/"
 SIGLIP2_B32 = "https://huggingface.co/onnx-community/siglip2-base-patch32-256-ONNX/resolve/main/"
@@ -113,3 +147,30 @@ def embedder_path(name: str, file: str, settings: Settings | None = None) -> Pat
 def load_net(name: str, settings: Settings | None = None) -> cv2.dnn.Net:
     engine = ENGINES[settings.dnn_engine if settings else "auto"]
     return cv2.dnn.readNetFromONNX(str(model_path(name, settings)), engine)
+
+
+def extra_path(file: str, settings: Settings | None = None) -> Path:
+    base = settings.models_dir if settings else Path("models")
+    return base / file
+
+
+def read_net(path: Path, engine: str = "auto") -> cv2.dnn.Net:
+    """Read an ONNX file on the chosen engine. The classic engine cannot read some graphs (PP-OCRv5
+    recognition); those fall back to the new engine."""
+    try:
+        return cv2.dnn.readNetFromONNX(str(path), ENGINES[engine])
+    except cv2.error:
+        if engine != "classic" or not path.exists():
+            raise
+        log.info("%s: the classic engine cannot read it, using the new engine", path.name)
+        return cv2.dnn.readNetFromONNX(str(path), cv2.dnn.ENGINE_NEW)
+
+
+def vocabulary(name: str, settings: Settings | None = None) -> list[str]:
+    """A text recogniser's symbols in class order, after the CTC blank at index 0."""
+    if name in CHARSETS:
+        return list(CHARSETS[name])
+    import yaml
+    side = next(iter(MODEL_EXTRAS[name]))
+    config = yaml.safe_load(extra_path(side, settings).read_text(encoding="utf-8"))
+    return [str(c) for c in config["PostProcess"]["character_dict"]] + [" "]  # PaddleOCR adds the space last
