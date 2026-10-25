@@ -108,14 +108,14 @@ class FakeLLM:
 
 
 class LimitedLLM:
-    """Counts every call against the daily cap."""
+    """Counts every call against its society's daily cap (the repository's society), recorded with its task."""
 
-    def __init__(self, inner: LLM, repo, limit: int):
-        self.inner, self.repo, self.limit = inner, repo, limit
+    def __init__(self, inner: LLM, repo, limit: int, task: str = "ai"):
+        self.inner, self.repo, self.limit, self.task = inner, repo, limit, task
 
     def complete(self, system, messages, images=(), json_schema=None, timeout_s=20) -> str:
         if self.repo.count_ai_calls_today() >= self.limit:
             raise AILimitReached("daily AI limit reached")
-        self.repo.record_ai_call()
+        self.repo.record_ai_call(self.task)
         return self.inner.complete(system, messages, images, json_schema, timeout_s)
 

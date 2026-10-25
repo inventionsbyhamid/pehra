@@ -1,5 +1,6 @@
 """baseline: the platform tables from packsure e97a509 and a society's cameras, watches, events, alerts,
-incidents, gate ledger, staff register, device tokens and Telegram links, every one keyed by workspace_id
+incidents, gate ledger, staff register, device tokens and Telegram links, every one keyed by workspace_id; rows that
+point at a camera or a staff member must be in the same society (composite foreign keys)
 
 Revision ID: 0001
 Revises:
@@ -137,7 +138,8 @@ def upgrade() -> None:
     sa.Column('settings_json', JSON, nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], name=op.f('fk_cameras_workspace_id_workspaces'), ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id', name=op.f('pk_cameras'))
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_cameras')),
+    sa.UniqueConstraint('workspace_id', 'id', name='uq_cameras_ws_id')
     )
     with op.batch_alter_table('cameras', schema=None) as batch_op:
         batch_op.create_index('ix_cameras_ws_created', ['workspace_id', 'created_at'], unique=False)
@@ -253,7 +255,8 @@ def upgrade() -> None:
     sa.Column('active', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], name=op.f('fk_staff_workspace_id_workspaces'), ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id', name=op.f('pk_staff'))
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_staff')),
+    sa.UniqueConstraint('workspace_id', 'id', name='uq_staff_ws_id')
     )
     with op.batch_alter_table('staff', schema=None) as batch_op:
         batch_op.create_index('ix_staff_ws_active', ['workspace_id', 'active'], unique=False)
@@ -341,7 +344,7 @@ def upgrade() -> None:
     sa.Column('first_in', sa.DateTime(timezone=True), nullable=True),
     sa.Column('last_out', sa.DateTime(timezone=True), nullable=True),
     sa.Column('camera_ids_json', JSON, nullable=False),
-    sa.ForeignKeyConstraint(['staff_id'], ['staff.id'], name=op.f('fk_attendance_staff_id_staff'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workspace_id', 'staff_id'], ['staff.workspace_id', 'staff.id'], name='fk_attendance_staff_id_staff', ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], name=op.f('fk_attendance_workspace_id_workspaces'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_attendance')),
     sa.UniqueConstraint('workspace_id', 'staff_id', 'day', name='uq_attendance_ws_staff_day')
@@ -356,14 +359,13 @@ def upgrade() -> None:
     sa.Column('token_hash', sa.String(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('rotated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.ForeignKeyConstraint(['camera_id'], ['cameras.id'], name=op.f('fk_device_tokens_camera_id_cameras'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workspace_id', 'camera_id'], ['cameras.workspace_id', 'cameras.id'], name='fk_device_tokens_camera_id_cameras', ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], name=op.f('fk_device_tokens_workspace_id_workspaces'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_device_tokens')),
     sa.UniqueConstraint('token_hash', name=op.f('uq_device_tokens_token_hash'))
     )
     with op.batch_alter_table('device_tokens', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_device_tokens_camera_id'), ['camera_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_device_tokens_workspace_id'), ['workspace_id'], unique=False)
+        batch_op.create_index('ix_device_tokens_ws_camera', ['workspace_id', 'camera_id'], unique=False)
 
     op.create_table('staff_faces',
     sa.Column('id', sa.String(), nullable=False),
@@ -372,13 +374,12 @@ def upgrade() -> None:
     sa.Column('embedding', sa.LargeBinary(), nullable=False),
     sa.Column('picture_key', sa.String(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['staff_id'], ['staff.id'], name=op.f('fk_staff_faces_staff_id_staff'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workspace_id', 'staff_id'], ['staff.workspace_id', 'staff.id'], name='fk_staff_faces_staff_id_staff', ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], name=op.f('fk_staff_faces_workspace_id_workspaces'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_staff_faces'))
     )
     with op.batch_alter_table('staff_faces', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_staff_faces_staff_id'), ['staff_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_staff_faces_workspace_id'), ['workspace_id'], unique=False)
+        batch_op.create_index('ix_staff_faces_ws_staff', ['workspace_id', 'staff_id'], unique=False)
 
     op.create_table('zones',
     sa.Column('camera_id', sa.String(), nullable=False),
@@ -388,7 +389,7 @@ def upgrade() -> None:
     sa.Column('polygon_json', JSON, nullable=False),
     sa.Column('kind', sa.String(), nullable=False),
     sa.Column('position', sa.Integer(), nullable=False),
-    sa.ForeignKeyConstraint(['camera_id'], ['cameras.id'], name=op.f('fk_zones_camera_id_cameras'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workspace_id', 'camera_id'], ['cameras.workspace_id', 'cameras.id'], name='fk_zones_camera_id_cameras', ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], name=op.f('fk_zones_workspace_id_workspaces'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('camera_id', 'id', name=op.f('pk_zones'))
     )
@@ -404,7 +405,7 @@ def upgrade() -> None:
     sa.Column('picture_key', sa.String(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['camera_id', 'zone_id'], ['zones.camera_id', 'zones.id'], name='fk_state_examples_zone_zones', ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['camera_id'], ['cameras.id'], name=op.f('fk_state_examples_camera_id_cameras'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workspace_id', 'camera_id'], ['cameras.workspace_id', 'cameras.id'], name='fk_state_examples_camera_id_cameras', ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], name=op.f('fk_state_examples_workspace_id_workspaces'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_state_examples'))
     )
@@ -423,13 +424,11 @@ def downgrade() -> None:
 
     op.drop_table('zones')
     with op.batch_alter_table('staff_faces', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_staff_faces_workspace_id'))
-        batch_op.drop_index(batch_op.f('ix_staff_faces_staff_id'))
+        batch_op.drop_index('ix_staff_faces_ws_staff')
 
     op.drop_table('staff_faces')
     with op.batch_alter_table('device_tokens', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_device_tokens_workspace_id'))
-        batch_op.drop_index(batch_op.f('ix_device_tokens_camera_id'))
+        batch_op.drop_index('ix_device_tokens_ws_camera')
 
     op.drop_table('device_tokens')
     with op.batch_alter_table('attendance', schema=None) as batch_op:

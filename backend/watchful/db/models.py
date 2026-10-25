@@ -89,6 +89,12 @@ def workspace_fk(**kw):
     return mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), **kw)
 
 
+def same_society(table: str, column: str, target: str):
+    """A foreign key on (workspace_id, column): the row it points at must be in the same society."""
+    return ForeignKeyConstraint(["workspace_id", column], [f"{target}.workspace_id", f"{target}.id"],
+                                name=f"fk_{table}_{column}_{target}", ondelete="CASCADE")
+
+
 # platform (from packsure e97a509)
 
 class Workspace(Base):
@@ -221,7 +227,8 @@ class AiCall(Base):
 
 class Camera(Base):
     __tablename__ = "cameras"
-    __table_args__ = (Index("ix_cameras_ws_created", "workspace_id", "created_at"),)
+    __table_args__ = (Index("ix_cameras_ws_created", "workspace_id", "created_at"),
+                      UniqueConstraint("workspace_id", "id", name="uq_cameras_ws_id"))
     id: Mapped[str] = id_column("cam")
     workspace_id: Mapped[str] = workspace_fk()
     name: Mapped[str]
@@ -238,7 +245,8 @@ class Camera(Base):
 class Zone(Base):
     """An area, a water area or a line drawn on a camera; its id is unique within the camera."""
     __tablename__ = "zones"
-    camera_id: Mapped[str] = mapped_column(ForeignKey("cameras.id", ondelete="CASCADE"), primary_key=True)
+    __table_args__ = (same_society("zones", "camera_id", "cameras"),)
+    camera_id: Mapped[str] = mapped_column(primary_key=True)
     id: Mapped[str] = mapped_column(primary_key=True)
     workspace_id: Mapped[str] = workspace_fk(index=True)
     name: Mapped[str]
@@ -252,10 +260,11 @@ class StateExample(Base):
     __tablename__ = "state_examples"
     __table_args__ = (ForeignKeyConstraint(["camera_id", "zone_id"], ["zones.camera_id", "zones.id"],
                                            name="fk_state_examples_zone_zones", ondelete="CASCADE"),
+                      same_society("state_examples", "camera_id", "cameras"),
                       Index("ix_state_examples_ws_camera", "workspace_id", "camera_id"))
     id: Mapped[str] = id_column("stx")
     workspace_id: Mapped[str] = workspace_fk()
-    camera_id: Mapped[str] = mapped_column(ForeignKey("cameras.id", ondelete="CASCADE"))
+    camera_id: Mapped[str]
     zone_id: Mapped[str]
     state: Mapped[str]
     picture_key: Mapped[str | None]
@@ -370,7 +379,8 @@ class VehiclePassage(Base):
 class Staff(Base):
     """A consenting adult staff member (maid, driver, cook, guard). Kept, inactive, when their faces are deleted."""
     __tablename__ = "staff"
-    __table_args__ = (Index("ix_staff_ws_active", "workspace_id", "active"),)
+    __table_args__ = (Index("ix_staff_ws_active", "workspace_id", "active"),
+                      UniqueConstraint("workspace_id", "id", name="uq_staff_ws_id"))
     id: Mapped[str] = id_column("stf")
     workspace_id: Mapped[str] = workspace_fk()
     name: Mapped[str]
@@ -384,9 +394,11 @@ class Staff(Base):
 class StaffFace(Base):
     """A face template (float32 vector) of a staff member; never a face from anyone who did not consent."""
     __tablename__ = "staff_faces"
+    __table_args__ = (same_society("staff_faces", "staff_id", "staff"),
+                      Index("ix_staff_faces_ws_staff", "workspace_id", "staff_id"))
     id: Mapped[str] = id_column("sfc")
-    workspace_id: Mapped[str] = workspace_fk(index=True)
-    staff_id: Mapped[str] = mapped_column(ForeignKey("staff.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = workspace_fk()
+    staff_id: Mapped[str]
     embedding: Mapped[bytes]
     picture_key: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
@@ -396,10 +408,11 @@ class Attendance(Base):
     """First in and last out of one staff member on one day (the society's time zone)."""
     __tablename__ = "attendance"
     __table_args__ = (UniqueConstraint("workspace_id", "staff_id", "day", name="uq_attendance_ws_staff_day"),
+                      same_society("attendance", "staff_id", "staff"),
                       Index("ix_attendance_ws_day", "workspace_id", "day"))
     id: Mapped[str] = id_column("att")
     workspace_id: Mapped[str] = workspace_fk()
-    staff_id: Mapped[str] = mapped_column(ForeignKey("staff.id", ondelete="CASCADE"))
+    staff_id: Mapped[str]
     day: Mapped[str]  # "2026-10-25"
     first_in: Mapped[datetime | None]
     last_out: Mapped[datetime | None]
@@ -409,9 +422,11 @@ class Attendance(Base):
 class DeviceToken(Base):
     """Lets a browser, phone or bridge push frames for one camera; only the token's hash is kept."""
     __tablename__ = "device_tokens"
+    __table_args__ = (same_society("device_tokens", "camera_id", "cameras"),
+                      Index("ix_device_tokens_ws_camera", "workspace_id", "camera_id"))
     id: Mapped[str] = id_column("dev")
-    workspace_id: Mapped[str] = workspace_fk(index=True)
-    camera_id: Mapped[str] = mapped_column(ForeignKey("cameras.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = workspace_fk()
+    camera_id: Mapped[str]
     token_hash: Mapped[str] = mapped_column(unique=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     rotated_at: Mapped[datetime | None]

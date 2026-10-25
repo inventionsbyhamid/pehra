@@ -25,6 +25,7 @@ from watchful.db import models as m
 from watchful.db.session import alembic_config
 from watchful.registry import build
 from watchful.store.db import DEFAULT_WORKSPACE, AlertRow
+from watchful.store.sql import ensure_workspace
 
 BASE = "https://watchful.test"
 CLIENT_ID = "client-1.apps.googleusercontent.com"
@@ -321,6 +322,9 @@ def test_operator_signin_link_works_once(env, capsys):
     assert again.headers["location"] == "/login?error=link" and session_cookie(again) is None
     assert other.get(urlsplit(url).path).status_code == 410
 
+    with pytest.raises(SystemExit):  # the demo society exists only once seeded; nothing makes it implicitly
+        link("judge@example.com", "--workspace-id", DEFAULT_WORKSPACE)
+    ensure_workspace(env.db.engine, DEFAULT_WORKSPACE, "Demo society")
     demo = link("judge@example.com", "--workspace-id", DEFAULT_WORKSPACE, "--role", "supervisor")
     judge = browser(env.app)
     assert judge.post("/auth/link", data={"token": demo.rsplit("/", 1)[1]}, follow_redirects=False).status_code == 303
@@ -340,7 +344,8 @@ def test_settings_start_without_a_demo_password(monkeypatch):
     monkeypatch.delenv("DEMO_PASSWORD", raising=False)
     s = Settings(session_secret="y", _env_file=None)
     assert not hasattr(s, "demo_password") and s.auth_providers == ["google"]
-    assert Settings(session_secret="y", auth_providers="fake, google", _env_file=None).auth_providers == ["fake", "google"]
+    listed = Settings(session_secret="y", auth_providers="fake, google", _env_file=None)
+    assert listed.auth_providers == ["fake", "google"]
 
 
 def test_client_address_trusts_cloudflare_only_when_told(monkeypatch):

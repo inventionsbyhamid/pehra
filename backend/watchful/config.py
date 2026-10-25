@@ -31,7 +31,8 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
     database_url: str | None = None  # default sqlite:///{data_dir}/watchful.db, see `database`
-    data_key: str | None = None  # encrypts camera addresses at rest; SESSION_SECRET when unset
+    data_key: str  # encrypts camera addresses at rest (store/sql.py UrlBox); required
+    data_key_old: Names = []  # earlier keys, still read while their addresses are rewritten (rotation)
     web_dist: Path | None = None  # the built web app; defaults to web/dist in the repo
     models_dir: Path = Path("models")
     analysis_fps: float = 5.0
@@ -80,7 +81,7 @@ class Settings(BaseSettings):
     max_upload_mb: int = 200
     max_upload_minutes: int = 10
 
-    @field_validator("auth_providers", mode="before")
+    @field_validator("auth_providers", "data_key_old", mode="before")
     @classmethod
     def _names(cls, value):
         if isinstance(value, str):

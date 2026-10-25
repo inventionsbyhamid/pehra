@@ -11,18 +11,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from sqlalchemy import Engine, delete, func, insert, or_, orm, select, update
+from sqlalchemy.dialects import postgresql, sqlite
 
 from watchful.db import models as m
 from watchful.registry import register
-from watchful.store.db import DEFAULT_WORKSPACE, AlertRow, Camera, EventRow, WatchRow
+from watchful.store.db import AlertRow, Camera, EventRow, WatchRow
 from watchful.vision.faces import Enrollment
 from watchful.vision.zones import Zone
 
 log = logging.getLogger("watchful.store")
 
-DEFAULT_NAME = "Demo society"
 KIND_TO_ROW = {"stream": "rtsp", "webcam": "push", "file": "file", "demo": "file"}
 ROW_TO_KIND = {"rtsp": "stream", "push": "webcam", "file": "file"}
 ZONE_FIELDS = {f.name for f in fields(Zone)}
@@ -38,12 +38,15 @@ def _epoch(dt: datetime | None) -> float | None:
 
 
 class UrlBox:
-    """Camera addresses carry NVR passwords, so they are stored encrypted with a key derived from the secret.
-    Without a secret (tests and tools on a scratch database) they are stored as given, marked plain."""
+    """Camera addresses carry NVR passwords, so they are stored encrypted (Fernet) with DATA_KEY; earlier keys
+    (DATA_KEY_OLD) still open what they sealed. Without keys (tests and tools on a scratch database) addresses are
+    stored as given, marked plain."""
 
-    def __init__(self, secret: str | None):
-        key = hashlib.sha256(b"camera-url:" + secret.encode()).digest() if secret else None
-        self._fernet = Fernet(base64.urlsafe_b64encode(key)) if key else None
+    def __init__(self, keys: str | list[str] | None):
+        keys = [keys] if isinstance(keys, str) else [k for k in keys or [] if k]
+        fernets = [Fernet(base64.urlsafe_b64encode(hashlib.sha256(b"camera-url:" + k.encode()).digest()))
+                   for k in keys]
+        self._fernet = MultiFernet(fernets) if fernets else None
 
     def seal(self, url: str | None) -> str | None:
         if url is None:
@@ -53,6 +56,7 @@ class UrlBox:
         return "f1:" + self._fernet.encrypt(url.encode()).decode()
 
     def open(self, value: str | None) -> str | None:
+        """The address, or None when there is none or no key here opens it (the stored value is then kept)."""
         if value is None:
             return None
         scheme, _, body = value.partition(":")
@@ -61,8 +65,19 @@ class UrlBox:
         try:
             return self._fernet.decrypt(body.encode()).decode() if self._fernet else None
         except InvalidToken:
-            log.warning("a camera address was stored with another key (DATA_KEY changed?)")
+            log.warning("a camera address was sealed with a key this server does not have (see DATA_KEY_OLD)")
             return None
+
+
+def upsert(s: orm.Session, model, values: dict, keys: list[str], update_columns: list[str] = ()) -> None:
+    """INSERT, or on a clash of `keys` update these columns (or do nothing), in one statement."""
+    dialect = postgresql if s.get_bind().dialect.name == "postgresql" else sqlite
+    stmt = dialect.insert(model).values(**values)
+    if update_columns:
+        stmt = stmt.on_conflict_do_update(index_elements=keys, set_={c: values[c] for c in update_columns})
+    else:
+        stmt = stmt.on_conflict_do_nothing(index_elements=keys)
+    s.execute(stmt)
 
 
 def create_workspace(engine: Engine, name: str, *, id: str | None = None, timezone: str = "Asia/Kolkata",
@@ -73,19 +88,22 @@ def create_workspace(engine: Engine, name: str, *, id: str | None = None, timezo
     return ws
 
 
-def ensure_workspace(engine: Engine, workspace_id: str, name: str = DEFAULT_NAME) -> None:
-    with orm.Session(engine) as s:
-        if s.get(m.Workspace, workspace_id) is not None:
-            return
-    create_workspace(engine, name, id=workspace_id)
+def ensure_workspace(engine: Engine, workspace_id: str, name: str, timezone: str = "Asia/Kolkata") -> None:
+    """Makes this society unless it exists: the demo seed and the legacy import name theirs explicitly."""
+    with orm.Session(engine) as s, s.begin():
+        upsert(s, m.Workspace, {"id": workspace_id, "name": name, "timezone": timezone, "plan": "free",
+                                "created_at": m.utcnow()}, ["id"])
 
 
-def open_sqlite(path: str | Path, workspace_id: str = DEFAULT_WORKSPACE, secret: str | None = None):
+def open_sqlite(path: str | Path, workspace_id: str | None = None, secret: str | None = None):
+    """A repository on a SQLite file for tests and tools, migrated; a new society unless one is named."""
     from watchful.db.session import make_engine, migrate
     engine = make_engine(f"sqlite:///{path}")
     migrate(engine)
-    if workspace_id == DEFAULT_WORKSPACE:
-        ensure_workspace(engine, DEFAULT_WORKSPACE)
+    if workspace_id is None:
+        workspace_id = create_workspace(engine, "Test society").id
+    else:
+        ensure_workspace(engine, workspace_id, "Test society")
     return SqlRepository(engine, workspace_id, secret=secret)
 
 
@@ -127,7 +145,9 @@ def _alert_columns(row: AlertRow) -> dict:
 
 
 class SqlRepository:
-    def __init__(self, engine: Engine, workspace_id: str, secret: str | None = None):
+    def __init__(self, engine: Engine, workspace_id: str, secret: str | list[str] | None = None):
+        if not workspace_id:
+            raise ValueError("a repository is bound to one society: give its workspace_id")
         self.engine, self.workspace_id = engine, workspace_id
         self._sessions = orm.sessionmaker(engine, expire_on_commit=False)
         self._box = UrlBox(secret)
@@ -151,7 +171,11 @@ class SqlRepository:
 
     def _write_camera(self, s: orm.Session, row: m.Camera, cam: Camera) -> None:
         row.name, row.purpose, row.kind = cam.name, cam.purpose or "other", KIND_TO_ROW.get(cam.kind, cam.kind)
-        row.url_enc, row.status, row.enabled = self._box.seal(cam.url), cam.status, cam.enabled
+        row.status, row.enabled = cam.status, cam.enabled
+        stored = self._box.open(row.url_enc)
+        unreadable = row.url_enc is not None and stored is None
+        if cam.url != stored and not (unreadable and cam.url is None):
+            row.url_enc = self._box.seal(cam.url)  # sealed again only when the address itself changed
         row.last_frame_at = _dt(cam.last_frame_at)
         row.settings_json = {"tuning": cam.tuning or {}, "last_scan": cam.last_scan, "loop": cam.kind == "demo"}
         have = {z.id: z for z in s.scalars(select(m.Zone).where(m.Zone.camera_id == row.id, self._mine(m.Zone)))}
@@ -291,11 +315,8 @@ class SqlRepository:
 
     def set_meta(self, key: str, value: str) -> None:
         with self.tx() as s:
-            row = s.get(m.Meta, (self.workspace_id, key))
-            if row is None:
-                s.add(m.Meta(workspace_id=self.workspace_id, key=key, value=value))
-            else:
-                row.value = value
+            upsert(s, m.Meta, {"workspace_id": self.workspace_id, "key": key, "value": value},
+                   ["workspace_id", "key"], ["value"])
 
     # watches
 
@@ -366,7 +387,7 @@ class SqlRepository:
     def list_enrollments(self) -> list[Enrollment]:
         with self.tx() as s:
             rows = s.execute(select(m.Staff, m.StaffFace).join(m.StaffFace, m.StaffFace.staff_id == m.Staff.id)
-                             .where(self._mine(m.Staff), m.Staff.active.is_(True))
+                             .where(self._mine(m.Staff), self._mine(m.StaffFace), m.Staff.active.is_(True))
                              .order_by(m.Staff.created_at, m.Staff.id, m.StaffFace.created_at)).all()
         seen, out = set(), []
         for staff, face in rows:
@@ -402,12 +423,9 @@ class SqlRepository:
 
     def set_person_label(self, camera_id: str, group_id: str, label: str) -> None:
         with self.tx() as s:
-            row = s.get(m.PersonLabel, (self.workspace_id, camera_id, group_id))
-            if row is None:
-                s.add(m.PersonLabel(workspace_id=self.workspace_id, camera_id=camera_id, group_id=group_id,
-                                    label=label))
-            else:
-                row.label = label
+            upsert(s, m.PersonLabel, {"workspace_id": self.workspace_id, "camera_id": camera_id,
+                                      "group_id": group_id, "label": label},
+                   ["workspace_id", "camera_id", "group_id"], ["label"])
 
     def person_labels(self, camera_id: str) -> dict[str, str]:
         with self.tx() as s:
@@ -452,5 +470,5 @@ def _as_stored(row: WatchRow) -> WatchRow:
 
 @register("repo", "sql", "sqlite", "postgresql")
 def open_repo(engine: Engine, workspace_id: str, settings=None, name: str = "sql", **_) -> SqlRepository:
-    secret = (settings.data_key or settings.session_secret) if settings is not None else None
-    return SqlRepository(engine, workspace_id, secret=secret)
+    keys = [settings.data_key, *settings.data_key_old] if settings is not None else None
+    return SqlRepository(engine, workspace_id, secret=keys)

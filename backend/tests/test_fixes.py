@@ -4,14 +4,14 @@ import time
 import cv2
 import numpy as np
 
-from accounts import browser
+from accounts import SOCIETY, browser
 from test_api import StubManager, watch_reply
 from watchful.agent.ask import AskContext, people_groups
 from watchful.agent.llm import FakeLLM
 from watchful.api import create_app
 from watchful.config import Settings
 from watchful.store.blobs import LocalBlobStore
-from watchful.store.db import DEFAULT_WORKSPACE, AlertRow, Camera, EventRow, SqliteRepository
+from watchful.store.db import AlertRow, Camera, EventRow, SqliteRepository
 from watchful.vision.track import Tracker
 from watchful.workers import should_record
 
@@ -38,7 +38,7 @@ def test_demo_records_once(tmp_path):
 
 def test_zone_change_clears_a_demo_timeline(tmp_path):
     app, c = app_client(tmp_path)
-    repo = app.state.ctx.repo_for(DEFAULT_WORKSPACE)
+    repo = app.state.ctx.repo_for(SOCIETY)
     cam = repo.add_camera(Camera(None, "Plaza", "demo", "x.mp4"))
     repo.add_events([EventRow(None, cam.id, 1.0, "enter", 1, "person", "z", {}, None, None, None, None)])
     zones = [{"name": "left", "polygon": [[0, 0], [1, 0], [1, 1]]}]
@@ -56,7 +56,7 @@ def test_people_groups_list_their_tracks(tmp_path):
 
 def test_get_and_delete_camera(tmp_path):
     app, c = app_client(tmp_path)
-    repo = app.state.ctx.repo_for(DEFAULT_WORKSPACE)
+    repo = app.state.ctx.repo_for(SOCIETY)
     cam = c.post("/api/cameras", json={"name": "Gate", "kind": "stream", "url": "rtsp://x"}).json()
     assert c.get(f"/api/cameras/{cam['id']}").json()["name"] == "Gate"
     repo.add_alert(AlertRow(None, cam["id"], None, 1.0, "info", "alert", "x", None, None, [], None, "f"))
@@ -66,7 +66,7 @@ def test_get_and_delete_camera(tmp_path):
 
 def test_lookout_from_an_alert(tmp_path):
     app, c = app_client(tmp_path)
-    repo = app.state.ctx.repo_for(DEFAULT_WORKSPACE)
+    repo = app.state.ctx.repo_for(SOCIETY)
     cam = c.post("/api/cameras", json={"name": "Gate", "kind": "stream", "url": "rtsp://x"}).json()
     repo.add_events([EventRow(None, cam["id"], 100.0, "track_start", 5, "person", None, {}, "k.jpg", [0.1] * 4,
                               [1.0, 0.0], None)])
@@ -94,7 +94,7 @@ def test_enrolment_photo_kept_by_retention_and_removed_on_delete(tmp_path):
 def test_upload_clip_is_cut_at_the_alert_moment(tmp_path, monkeypatch):
     import watchful.api.alerts as api
     app, c = app_client(tmp_path)
-    repo = app.state.ctx.repo_for(DEFAULT_WORKSPACE)
+    repo = app.state.ctx.repo_for(SOCIETY)
     cam = repo.add_camera(Camera(None, "Upload", "file", str(tmp_path / "v.mp4"), last_scan={"start_epoch": 1000.0}))
     repo.add_events([EventRow(None, cam.id, 1030.0, "enter", 1, "person", "z", {}, None, None, None, None)])
     a = repo.add_alert(AlertRow(None, cam.id, None, 1042.5, "info", "alert", "x", None, None, [], None, "fp9"))
@@ -106,7 +106,7 @@ def test_upload_clip_is_cut_at_the_alert_moment(tmp_path, monkeypatch):
 
 def test_alerts_carry_a_ready_picture_url(tmp_path):
     app, c = app_client(tmp_path)
-    app.state.ctx.repo_for(DEFAULT_WORKSPACE).add_alert(AlertRow(None, "cam", None, 1.0, "info", "alert", "x", None, "cam/kf/1.jpg", [], None, "f"))
+    app.state.ctx.repo_for(SOCIETY).add_alert(AlertRow(None, "cam", None, 1.0, "info", "alert", "x", None, "cam/kf/1.jpg", [], None, "f"))
     assert c.get("/api/alerts").json()[0]["keyframe_url"].startswith("/api/blobs/cam/kf/1.jpg?e=")
 
 
@@ -136,7 +136,7 @@ def test_saving_zones_turns_off_watches_that_lost_their_zone(tmp_path):
     from watchful.rules.presets import preset
     from watchful.store.db import WatchRow
     app, c = app_client(tmp_path)
-    repo = app.state.ctx.repo_for(DEFAULT_WORKSPACE)
+    repo = app.state.ctx.repo_for(SOCIETY)
     cam = c.post("/api/cameras", json={"name": "Gate", "kind": "stream", "url": "rtsp://x"}).json()
     c.patch(f"/api/cameras/{cam['id']}", json={"zones": [{"name": "door", "polygon": [[0, 0], [1, 0], [1, 1]]}]})
     repo.add_watch(WatchRow(None, cam["id"], "x", preset("enters", zone="door").model_dump(), True))

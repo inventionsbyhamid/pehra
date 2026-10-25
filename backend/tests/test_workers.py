@@ -4,8 +4,9 @@ import time
 
 import pytest
 
+from accounts import society_repo
 from watchful.agent.llm import FakeLLM
-from watchful.components import make_blobs, make_repo
+from watchful.components import make_blobs
 from watchful.config import Settings
 from watchful.rules.presets import preset
 from watchful.store.db import Camera, WatchRow
@@ -31,7 +32,7 @@ def clip20():
 def manager(tmp_path):
     s = Settings(demo_password="x", session_secret="y", data_dir=tmp_path, demo_realtime=False, index_embeddings=False, scan_pool_at_start=False,
                  _env_file=None)
-    repo = make_repo(s)
+    repo = society_repo(s)
     m = WorkerManager(s, Tuning(), repo, make_blobs(s), llm=FakeLLM([ALERT] * 200))
     yield m, repo
     m.shutdown()

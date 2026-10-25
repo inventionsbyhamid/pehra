@@ -4,17 +4,21 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from watchful.db import models as m
-from watchful.store.db import DEFAULT_WORKSPACE
 
 BASE = "http://localhost:8000"  # Settings' default PUBLIC_BASE_URL
+SOCIETY = "ws_test_society"  # the society tests sign in to unless they name another
 
 
-def join(app, email: str, workspace_id: str = DEFAULT_WORKSPACE, role: str = "owner",
-         name: str | None = None) -> str:
+def society_repo(settings, name: str = "Test society"):
+    """The repository of a new society made for this test."""
+    from watchful.components import make_engine, make_repo
+    from watchful.store.sql import create_workspace
+    return make_repo(settings, create_workspace(make_engine(settings), name).id)
+
+
+def join(app, email: str, workspace_id: str = SOCIETY, role: str = "owner", name: str | None = None) -> str:
     """The user's id, made a member of the society (made too when missing) with this role."""
     ctx = app.state.ctx
-    if workspace_id == DEFAULT_WORKSPACE:
-        ctx.repo_for(DEFAULT_WORKSPACE)
     with ctx.db.tx() as s:
         if s.get(m.Workspace, workspace_id) is None:
             s.add(m.Workspace(id=workspace_id, name=name or workspace_id))
@@ -37,7 +41,7 @@ def session_cookie(app, user_id: str, workspace_id: str) -> tuple[str, str]:
     return sessions.cookie, sessions.encode(user_id, workspace_id)
 
 
-def browser(app, email: str = "judge@example.com", workspace_id: str = DEFAULT_WORKSPACE, role: str = "owner",
+def browser(app, email: str = "judge@example.com", workspace_id: str = SOCIETY, role: str = "owner",
             base: str = BASE) -> TestClient:
     name, value = session_cookie(app, join(app, email, workspace_id, role), workspace_id)
     client = TestClient(app, base_url=base, headers={"origin": base})

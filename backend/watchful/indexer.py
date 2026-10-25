@@ -38,10 +38,15 @@ def index_once(repo, blobs, embedder, kinds: list[str] = INDEX_KINDS, limit: int
 
 
 class Indexer:
-    def __init__(self, repo, blobs, embedder_factory, every_s: float = 5.0, busy=lambda: False):
-        self.repo, self.blobs, self.factory, self.every_s = repo, blobs, embedder_factory, every_s
+    """`repos`: a repository, or a callable giving every society's (each society's index is its own)."""
+
+    def __init__(self, repos, blobs, embedder_factory, every_s: float = 5.0, busy=lambda: False,
+                 model: str | None = None):
+        self.repos = repos if callable(repos) else (lambda: [repos])
+        self.blobs, self.factory, self.every_s, self.model = blobs, embedder_factory, every_s, model
         self.busy = busy  # a scan is running: wait, so it gets the CPUs
         self._embedder = None
+        self._checked: set[str] = set()  # societies whose index was checked against the model
         self._stop = threading.Event()
 
     def start(self) -> None:
@@ -57,8 +62,12 @@ class Indexer:
             try:
                 if self._embedder is None:
                     self._embedder = self.factory()
-                while not self.busy() and index_once(self.repo, self.blobs, self._embedder) and not self._stop.is_set():
-                    pass
+                for repo in self.repos():
+                    if self.model and repo.workspace_id not in self._checked:
+                        reset_if_model_changed(repo, self.model)
+                        self._checked.add(repo.workspace_id)
+                    while not self.busy() and index_once(repo, self.blobs, self._embedder) and not self._stop.is_set():
+                        pass
             except Exception:
                 log.exception("indexing failed")
                 time.sleep(30)

@@ -16,7 +16,8 @@ import pytest
 import yaml
 from moto import mock_aws
 
-from watchful.components import make_blobs, make_repo
+from accounts import society_repo
+from watchful.components import make_blobs
 from watchful.config import Settings
 from watchful.metrics import CloudWatchMetrics
 from watchful.notify import SnsNotifier
@@ -43,7 +44,7 @@ def settings(tmp_path, **kw):
 
 @pytest.fixture
 def repo(tmp_path, aws):
-    return make_repo(settings(tmp_path))
+    return society_repo(settings(tmp_path))
 
 
 def ev(cam, ts, zone="kitchen", kind="enter"):

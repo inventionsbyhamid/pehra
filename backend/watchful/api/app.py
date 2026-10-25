@@ -19,7 +19,6 @@ from watchful.brand import BRAND
 from watchful.components import make_blobs, make_detector, make_embedder, make_faces, make_llm, make_repo
 from watchful.config import Settings, get_settings
 from watchful.db import models as m
-from watchful.store.db import DEFAULT_WORKSPACE
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 NOT_APP = ("api", "ws", "auth", "healthz", "blobs")  # paths the web app never answers
@@ -43,8 +42,8 @@ class AppContext(AuthContext):
         self._parts = threading.Lock()
         if manager is None:
             from watchful.workers import WorkerManager
-            manager = WorkerManager(settings, self.tuning, self.repo_for(DEFAULT_WORKSPACE), self.blobs,
-                                    repo_for=self.repo_for)
+            manager = WorkerManager(settings, self.tuning, None, self.blobs, repo_for=self.repo_for,
+                                    societies=self.workspace_ids)
         self.manager = manager
 
     def repo_for(self, workspace_id: str):

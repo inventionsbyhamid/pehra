@@ -35,7 +35,8 @@ def societies(tmp_path):
 
 
 def fill(repo, tag: str) -> Rows:
-    cam = repo.add_camera(Camera(None, f"{tag} gate", "stream", f"rtsp://{tag}", [Zone("z1", "gate", [(0, 0), (1, 1)])]))
+    gate = Zone("z1", "gate", [(0, 0), (1, 1)])
+    cam = repo.add_camera(Camera(None, f"{tag} gate", "stream", f"rtsp://{tag}", [gate]))
     event = EventRow(None, cam.id, 10.0, "enter", 1, "person", "gate", {}, "k.jpg", [0.1], None, f"{tag} label")
     scene = EventRow(None, cam.id, 20.0, "scene", None, None, None, {}, "s.jpg", None, None, None)
     repo.add_events([event, scene])
@@ -71,7 +72,9 @@ def test_a_society_never_sees_another_societys_rows(societies):
                       *repo.list_enrollments()]
         assert {x.workspace_id for x in everything} == {ws}
     a.set_event_embedding(rows["A"].scene.id, [1.0, 0.0])
-    assert a.clear_embeddings() == 1 and b.events_missing_embedding(["scene"])[0].id == rows["B"].scene.id
+    b.set_event_embedding(rows["B"].scene.id, [0.0, 1.0])
+    assert a.clear_embeddings() == 1
+    assert b.get_event(rows["B"].scene.id).embedding == [0.0, 1.0] and b.events_missing_embedding(["scene"]) == []
 
 
 def test_ids_from_another_society_are_not_found(societies):
@@ -110,13 +113,27 @@ def test_ids_from_another_society_are_not_found(societies):
 
 
 def test_make_repo_scopes_by_workspace(tmp_path):
-    s = Settings(demo_password="x", session_secret="y", data_dir=tmp_path, _env_file=None)
-    default = components.make_repo(s)
-    other_id = create_workspace(components.make_engine(s), "Lake View").id
-    other = components.make_repo(s, other_id)
-    default.add_camera(Camera(None, "Plaza", "demo", "/clips/plaza.mp4"))
-    assert default.workspace_id == DEFAULT_WORKSPACE and other.list_cameras() == []
-    assert components.make_engine(s) is components.make_engine(s)
+    s = Settings(session_secret="y", data_dir=tmp_path, _env_file=None)
+    engine = components.make_engine(s)
+    green, lake = (components.make_repo(s, create_workspace(engine, n).id) for n in ("Green Park", "Lake View"))
+    cam = green.add_camera(Camera(None, "Plaza", "demo", "/clips/plaza.mp4"))
+    assert cam.workspace_id == green.workspace_id and lake.list_cameras() == []
+    assert components.make_engine(s) is engine
+
+
+def test_rows_under_another_societys_ids_are_refused(societies):
+    a, b = societies
+    theirs = fill(b, "B")
+    for write in (lambda: a.add_watch(WatchRow(theirs.watch.id, None, "x", {"name": "x"}, True)),
+                  lambda: a.add_alert(AlertRow(theirs.alert.id, "c", None, 1.0, "info", "alert", "x", None, None, [],
+                                               None, "fp")),
+                  lambda: a.add_events([EventRow(theirs.event.id, "c", 1.0, "enter", 1, "person", None, {}, None,
+                                                 None, None, None)])):
+        with pytest.raises(Exception):
+            write()
+    assert next(w for w in b.list_watches() if w.id == theirs.watch.id).text == "B watch"
+    assert b.get_alert(theirs.alert.id).summary == "B" and b.get_event(theirs.event.id).zone == "gate"
+    assert a.list_watches() == [] and a.list_alerts() == [] and a.query_events() == []
 
 
 LEGACY_SCHEMA = """
@@ -150,9 +167,24 @@ def test_an_earlier_database_becomes_the_default_society(tmp_path):
         old.execute("insert into alerts (id, data) values (?, ?)", ("alt_1", json.dumps(alert)))
         old.execute("insert into meta values ('embedder', 'siglip2_b32')")
     old.close()
-    repo = components.make_repo(Settings(demo_password="x", session_secret="y", data_dir=tmp_path, _env_file=None))
+    repo = components.make_repo(Settings(session_secret="y", data_dir=tmp_path, _env_file=None), DEFAULT_WORKSPACE)
     got = repo.get_camera("cam_1")
     assert got.kind == "demo" and got.zones[0].name == "door" and got.workspace_id == DEFAULT_WORKSPACE
     assert repo.get_event("evt_1").embedding == [0.5] and repo.list_watches("cam_1")[0].text == "enters"
     assert repo.get_alert("alt_1").summary == "came in" and repo.get_meta("embedder") == "siglip2_b32"
-    assert len(list(tmp_path.glob("watchful.legacy-*.db"))) == 1
+    assert len(list(tmp_path.glob("watchful.legacy-*.db"))) == 1 and not list(tmp_path.glob("*.importing*"))
+
+
+def test_a_failed_import_leaves_the_earlier_database_in_place(tmp_path, monkeypatch):
+    from watchful.db import legacy
+    old = sqlite3.connect(tmp_path / "watchful.db")
+    old.executescript(LEGACY_SCHEMA)
+    with old:
+        old.execute("insert into cameras values ('cam_1', '{\"not\": \"a camera\"}')")
+    old.close()
+    before = (tmp_path / "watchful.db").read_bytes()
+    s = Settings(session_secret="y", data_dir=tmp_path, _env_file=None)
+    with pytest.raises(TypeError):
+        components.make_engine(s)
+    assert (tmp_path / "watchful.db").read_bytes() == before and legacy.is_legacy(tmp_path / "watchful.db")
+    assert not list(tmp_path.glob("*.importing*")) and not list(tmp_path.glob("*.legacy-*"))

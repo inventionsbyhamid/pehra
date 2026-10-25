@@ -8,7 +8,8 @@ from typing import Literal, Protocol
 from watchful.vision.faces import Enrollment
 from watchful.vision.zones import Zone
 
-DEFAULT_WORKSPACE = "default"  # the single society of the demo until sign in brings real ones
+DEFAULT_WORKSPACE = "default"  # the earlier single tenant data (db/legacy.py) and the demo seed only; never a fallback
+DEFAULT_SOCIETY_NAME = "Demo society"
 
 
 def new_id(prefix: str) -> str:
@@ -25,7 +26,7 @@ class Camera:
     enabled: bool = True
     tuning: dict = field(default_factory=dict)
     last_scan: dict | None = None
-    workspace_id: str = DEFAULT_WORKSPACE
+    workspace_id: str | None = None  # set by the repository, which is bound to one society
     purpose: str = "other"
     status: str = "offline"
     last_frame_at: float | None = None
@@ -45,7 +46,7 @@ class EventRow:
     signature: list[float] | None
     embedding: list[float] | None
     person_label: str | None
-    workspace_id: str = DEFAULT_WORKSPACE
+    workspace_id: str | None = None  # set by the repository, which is bound to one society
 
 
 @dataclass
@@ -55,7 +56,7 @@ class WatchRow:
     text: str
     watch: dict
     enabled: bool = True
-    workspace_id: str = DEFAULT_WORKSPACE
+    workspace_id: str | None = None  # set by the repository, which is bound to one society
     # scope, excluded_cameras, output and severity follow the watch spec when it has them
     scope: Literal["camera", "site"] = "camera"
     excluded_cameras: list[str] = field(default_factory=list)
@@ -81,7 +82,7 @@ class AlertRow:
     feedback: Literal["up", "down"] | None
     fingerprint: str
     track_id: int | None = None
-    workspace_id: str = DEFAULT_WORKSPACE
+    workspace_id: str | None = None  # set by the repository, which is bound to one society
 
 
 class Repository(Protocol):
@@ -123,7 +124,7 @@ class Repository(Protocol):
     def delete_state_example(self, example_id: str) -> bool: ...
 
 
-def SqliteRepository(path: str | Path, workspace_id: str = DEFAULT_WORKSPACE):
-    """A repository on a SQLite file, its schema migrated and the default workspace made; for tests and tools."""
+def SqliteRepository(path: str | Path, workspace_id: str | None = None):
+    """A repository on a SQLite file for tests and tools, its schema migrated; a new society unless one is named."""
     from watchful.store.sql import open_sqlite
     return open_sqlite(path, workspace_id)

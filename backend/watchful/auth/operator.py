@@ -92,9 +92,8 @@ def take_link(db, token: str, now: datetime | None = None) -> tuple[m.User, str 
 
 
 def main(argv: list[str] | None = None, settings=None) -> None:
-    from watchful.components import make_db, make_repo
+    from watchful.components import make_db
     from watchful.config import get_settings
-    from watchful.store.db import DEFAULT_WORKSPACE
     from watchful.tuning import load_tuning
 
     args = argparse.ArgumentParser(prog="python -m watchful.auth")
@@ -107,8 +106,6 @@ def main(argv: list[str] | None = None, settings=None) -> None:
     one.add_argument("--role", default="owner", choices=list(ROLES))
     opts = args.parse_args(argv)
     settings = settings or get_settings()
-    if opts.workspace_id == DEFAULT_WORKSPACE:
-        make_repo(settings, DEFAULT_WORKSPACE)  # the demo's society exists once anything has opened it
     try:
         url, until = make_link(make_db(settings), settings, load_tuning(settings.tuning_file), opts.email,
                                opts.workspace, opts.workspace_id, opts.role)

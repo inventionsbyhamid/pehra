@@ -54,7 +54,7 @@ def make_llm(settings: Settings, repo, task: str = "verify"):
     load_all()
     model = getattr(settings, f"ai_model_{task}", None)
     return LimitedLLM(build("llm", settings.ai_provider, settings=settings, model=model), repo,
-                      settings.ai_daily_call_limit)
+                      settings.ai_daily_call_limit, task)
 
 
 def make_blobs(settings: Settings, tuning: Tuning | None = None):
@@ -77,7 +77,7 @@ def make_engine(settings: Settings):
     url = settings.database
     with _engines_lock:
         if url not in _engines:
-            adopt_legacy(url, settings.data_key or settings.session_secret)
+            adopt_legacy(url, [settings.data_key, *settings.data_key_old])
             engine = engine_for(url)
             migrate(engine)
             _engines[url] = engine
@@ -95,16 +95,12 @@ def make_auth_providers(settings: Settings) -> dict:
     return {name: build("auth", name, settings=settings) for name in settings.auth_providers}
 
 
-def make_repo(settings: Settings, workspace_id: str | None = None):
-    """The repository of one society. Until sign in brings real societies, the demo's single society is used."""
-    from watchful.store.db import DEFAULT_WORKSPACE
-    from watchful.store.sql import ensure_workspace
+def make_repo(settings: Settings, workspace_id: str):
+    """The repository of one society; every read and write it makes is that society's."""
+    if not workspace_id:
+        raise ValueError("make_repo needs the society's workspace_id")
     load_all()
-    engine = make_engine(settings)
-    if workspace_id is None or workspace_id == DEFAULT_WORKSPACE:
-        workspace_id = DEFAULT_WORKSPACE
-        ensure_workspace(engine, DEFAULT_WORKSPACE)
-    return build("repo", settings.db, engine=engine, workspace_id=workspace_id, settings=settings)
+    return build("repo", settings.db, engine=make_engine(settings), workspace_id=workspace_id, settings=settings)
 
 
 def make_metrics(settings: Settings):

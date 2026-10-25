@@ -13,19 +13,22 @@ from sqlalchemy import select, text
 
 from watchful.db import models as m
 from watchful.db.session import make_engine, migrate
-from watchful.store.db import DEFAULT_WORKSPACE, AlertRow, Camera, EventRow, WatchRow
+from watchful.store.db import AlertRow, Camera, EventRow, WatchRow
 from watchful.store.sql import SqlRepository, ensure_workspace
 from watchful.tuning import ClipTuning
 from watchful.vision.faces import Enrollment
 from watchful.vision.zones import Zone
 
 
+WS = "ws_green_park"
+
+
 @pytest.fixture(params=["sqlite_file", "sqlite_memory"])
 def repo(request, tmp_path):
     engine = make_engine(f"sqlite:///{tmp_path / 'w.db'}" if request.param == "sqlite_file" else "sqlite://")
     migrate(engine)
-    ensure_workspace(engine, DEFAULT_WORKSPACE)
-    return SqlRepository(engine, DEFAULT_WORKSPACE, secret="a test secret")
+    ensure_workspace(engine, WS, "Green Park")
+    return SqlRepository(engine, WS, secret="a test secret")
 
 
 def event(cam, ts, zone="kitchen", kind="enter", cls="person"):
@@ -101,13 +104,65 @@ def test_camera_fields_round_trip(repo):
 def test_camera_addresses_are_stored_encrypted(tmp_path):
     engine = make_engine(f"sqlite:///{tmp_path / 'w.db'}")
     migrate(engine)
-    ensure_workspace(engine, DEFAULT_WORKSPACE)
-    repo = SqlRepository(engine, DEFAULT_WORKSPACE, secret="one key")
+    ensure_workspace(engine, WS, "Green Park")
+    repo = SqlRepository(engine, WS, secret="one key")
     cam = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://admin:hunter2@10.0.0.5/ch1"))
     with engine.connect() as c:
         stored = c.execute(select(m.Camera.url_enc)).scalar()
     assert "hunter2" not in stored and repo.get_camera(cam.id).url == "rtsp://admin:hunter2@10.0.0.5/ch1"
-    assert SqlRepository(engine, DEFAULT_WORKSPACE, secret="another key").get_camera(cam.id).url is None
+    assert SqlRepository(engine, WS, secret="another key").get_camera(cam.id).url is None
+
+
+def test_a_changed_key_never_erases_an_address(tmp_path):
+    engine = make_engine(f"sqlite:///{tmp_path / 'w.db'}")
+    migrate(engine)
+    ensure_workspace(engine, WS, "Green Park")
+    url = "rtsp://admin:hunter2@10.0.0.5/ch1"
+    cam = SqlRepository(engine, WS, secret="old").add_camera(Camera(None, "Gate", "stream", url))
+    new = SqlRepository(engine, WS, secret="new")
+    seen = new.get_camera(cam.id)
+    assert seen.url is None
+    seen.name, seen.last_scan = "Front gate", {"start_epoch": 1.0}  # a routine edit under the new key
+    new.update_camera(seen)
+    back = SqlRepository(engine, WS, secret="old").get_camera(cam.id)
+    assert back.url == url and back.name == "Front gate"
+    rotated = SqlRepository(engine, WS, secret=["new", "old"])  # DATA_KEY=new, DATA_KEY_OLD=old
+    assert rotated.get_camera(cam.id).url == url
+    moved = rotated.get_camera(cam.id)
+    moved.url = "rtsp://admin:hunter3@10.0.0.6/ch1"
+    rotated.update_camera(moved)
+    assert new.get_camera(cam.id).url == moved.url  # a changed address is sealed with the current key
+
+
+def test_rows_must_point_into_their_own_society(tmp_path):
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy import orm
+    engine = make_engine(f"sqlite:///{tmp_path / 'w.db'}")
+    migrate(engine)
+    ensure_workspace(engine, "ws_a", "A")
+    ensure_workspace(engine, "ws_b", "B")
+    theirs = SqlRepository(engine, "ws_b").add_camera(Camera(None, "Lake gate", "stream", "rtsp://lake"))
+    SqlRepository(engine, "ws_b").add_enrollment(Enrollment("per_b", "Lake staff", [0.5] * 4))
+    bad = [m.DeviceToken(workspace_id="ws_a", camera_id=theirs.id, token_hash="h1"),
+           m.Zone(workspace_id="ws_a", camera_id=theirs.id, id="z1", name="gate"),
+           m.StaffFace(workspace_id="ws_a", staff_id="per_b", embedding=b"\0" * 16),
+           m.Attendance(workspace_id="ws_a", staff_id="per_b", day="2026-10-25")]
+    for row in bad:
+        with pytest.raises(IntegrityError), orm.Session(engine) as s, s.begin():
+            s.add(row)
+    with orm.Session(engine) as s, s.begin():
+        s.add(m.DeviceToken(workspace_id="ws_b", camera_id=theirs.id, token_hash="h2"))
+
+
+def test_make_repo_needs_a_society(tmp_path):
+    from watchful.components import make_repo
+    from watchful.config import Settings
+    s = Settings(session_secret="y", data_dir=tmp_path, _env_file=None)
+    with pytest.raises(TypeError):
+        make_repo(s)
+    for missing in (None, ""):
+        with pytest.raises(ValueError):
+            make_repo(s, missing)
 
 
 def test_migrations_match_the_models(tmp_path):

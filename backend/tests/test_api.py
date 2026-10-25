@@ -6,11 +6,11 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from accounts import browser
+from accounts import SOCIETY, browser
 from watchful.agent.llm import FakeLLM
 from watchful.api import create_app
 from watchful.config import Settings
-from watchful.store.db import DEFAULT_WORKSPACE, AlertRow, EventRow
+from watchful.store.db import AlertRow, EventRow
 from watchful.vision.models import sample_path
 from watchful.workers import Subscription, WorkerStatus
 
@@ -110,7 +110,7 @@ def test_upload_valid_starts_scan(app_and_client, tmp_path):
 
 def test_alerts_feedback_and_ask(app_and_client):
     app, c = app_and_client
-    repo = app.state.ctx.repo_for(DEFAULT_WORKSPACE)
+    repo = app.state.ctx.repo_for(SOCIETY)
     a = repo.add_alert(AlertRow(None, "cam", "w", 1.0, "info", "alert", "Someone came in.", None, None, [], None, "f"))
     assert c.get("/api/alerts").json()[0]["summary"] == "Someone came in."
     assert c.post(f"/api/alerts/{a.id}/feedback", json={"value": "up"}).status_code == 200

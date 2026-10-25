@@ -9,7 +9,7 @@ import pytest
 import uvicorn
 from websockets.sync.client import connect
 
-from accounts import join, session_cookie
+from accounts import SOCIETY, join, session_cookie
 from test_api import StubManager
 from watchful.agent.llm import FakeLLM
 from watchful.api import create_app
@@ -43,7 +43,7 @@ def server(tmp_path):
     srv.should_exit = True
 
 
-def _signed_in(server, email="judge@example.com", workspace_id="default"):
+def _signed_in(server, email="judge@example.com", workspace_id=SOCIETY):
     app = server_app(server)
     name, value = session_cookie(app, join(app, email, workspace_id), workspace_id)
     c = httpx.Client(base_url=f"http://{server}", headers={"origin": f"http://{server}"}, cookies={name: value})

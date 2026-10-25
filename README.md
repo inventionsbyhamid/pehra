@@ -91,13 +91,14 @@ python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.lock
 python scripts/fetch_assets.py            # models and sample clips, checked by sha256
 (cd web && npm ci && npm run build)
-export SESSION_SECRET=... OPENROUTER_API_KEY=... PUBLIC_BASE_URL=http://localhost:8000
+export SESSION_SECRET=... DATA_KEY=... OPENROUTER_API_KEY=... PUBLIC_BASE_URL=http://localhost:8000
 PYTHONPATH=backend uvicorn watchful.api:create_app --factory --port 8000
 PYTHONPATH=backend python -m watchful.auth signin-link you@example.com --workspace "Green Park"
 ```
 
 Sign in with Google (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) or with a single use link the operator prints on
-the server, as above (`--workspace-id default` opens the demo society). Roles: viewer, supervisor, admin, owner.
+the server, as above (`--workspace-id default` opens the demo society that `scripts/seed_demo.py` makes). Roles:
+viewer, supervisor, admin, owner.
 
 Tests: `pytest -q` (about 140 tests); the speed check is `pytest -q -m slow`.
 

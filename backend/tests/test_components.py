@@ -1,5 +1,6 @@
 import pytest
 
+from accounts import society_repo
 from watchful import components
 from watchful.config import Settings
 from watchful.registry import available
@@ -31,6 +32,6 @@ def test_unknown_choice_says_what_exists():
 
 def test_task_models_override_the_default(tmp_path):
     s = settings(openrouter_api_key="k", ai_model_compile="some/other-model", data_dir=tmp_path)
-    repo = components.make_repo(s)
+    repo = society_repo(s)
     assert components.make_llm(s, repo, "compile").inner.model == "some/other-model"
     assert components.make_llm(s, repo, "verify").inner.model == s.openrouter_model

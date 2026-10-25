@@ -24,7 +24,7 @@ from watchful.notify import ApprovalNotifier
 from watchful.rules.engine import RuleEngine, log_row, needs_for, validate
 from watchful.rules.watch import Watch
 from watchful.rules.zonestate import load_states
-from watchful.store.db import DEFAULT_WORKSPACE, AlertRow, Camera
+from watchful.store.db import AlertRow, Camera
 from watchful.tuning import Tuning, load_tuning
 from watchful.vision.embed import TextCache, watch_texts
 from watchful.vision.perceive import Needs
@@ -44,15 +44,19 @@ TAMPER_TEXT = {"covered": "The camera picture went flat, as if the lens is cover
                "moved": "The camera seems to have been turned or moved."}
 
 
-def run_retention(settings: Settings, repo, blobs) -> None:
+def run_retention(settings: Settings, repos, blobs) -> None:
     """Clips, pictures, uploads, events and alerts older than retention_days are deleted, except enrolment photos
-    and demo cameras, which replay consented clips for the whole judging period."""
+    and demo cameras, which replay consented clips for the whole judging period. `repos`: every society's
+    repository (or one), since the blob store is shared."""
     from pathlib import Path
+    repos = repos if isinstance(repos, (list, tuple)) else [repos]
     cutoff = time.time() - settings.retention_days * 86400
-    demos = [c.id for c in repo.list_cameras() if c.kind == "demo"]
-    blobs.delete_older_than(settings.retention_days, keep=("people/", *(f"{d}/" for d in demos)))
-    repo.delete_events_before(cutoff, keep_cameras=demos)
-    repo.delete_alerts_before(cutoff, keep_cameras=demos)
+    demos = {id(r): [c.id for c in r.list_cameras() if c.kind == "demo"] for r in repos}
+    keep = ("people/", *(f"{d}/" for ids in demos.values() for d in ids))
+    blobs.delete_older_than(settings.retention_days, keep=keep)
+    for r in repos:
+        r.delete_events_before(cutoff, keep_cameras=demos[id(r)])
+        r.delete_alerts_before(cutoff, keep_cameras=demos[id(r)])
     uploads = Path(settings.data_dir) / "uploads"
     for f in uploads.glob("*") if uploads.is_dir() else []:
         if f.stat().st_mtime < cutoff:
@@ -244,13 +248,17 @@ class _Handle:
 
 
 class WorkerManager:
-    """Cameras of every society; each camera's rows go through its own society's repository (repo_for). Retention,
-    metrics and the search index still cover `repo`'s society only, until the shared pool (Task 3)."""
+    """Cameras of every society; each camera's rows go through its own society's repository (repo_for), known from
+    start or scan_upload. A manager given one society's `repo` (tests, tools) serves that society; the app gives
+    repo_for and `societies` (every society's id) instead."""
 
-    def __init__(self, settings: Settings, tuning: Tuning, repo, blobs, llm=None, repo_for=None):
+    def __init__(self, settings: Settings, tuning: Tuning, repo, blobs, llm=None, repo_for=None, societies=None):
+        if repo is None and (repo_for is None or societies is None):
+            raise ValueError("give one society's repo, or repo_for and societies")
         self.settings, self.tuning, self.repo, self.blobs = settings, tuning, repo, blobs
-        self.home = getattr(repo, "workspace_id", DEFAULT_WORKSPACE)
+        self.home = repo.workspace_id if repo is not None else None
         self.repo_for = repo_for or (lambda ws: repo if ws == self.home else make_repo(settings, ws))
+        self.societies = societies or (lambda: [self.home])
         self.camera_ws: dict[str, str] = {}  # camera id to its society, filled by start and scan_upload
         self._llms: dict[str, object] = {}
         self.ctx = mp.get_context("spawn")
@@ -278,15 +286,18 @@ class WorkerManager:
         threading.Thread(target=self._janitor, daemon=True).start()
         self.indexer = None
         if settings.index_embeddings:
-            from watchful.indexer import Indexer, reset_if_model_changed
-            reset_if_model_changed(repo, settings.embedder)
-            self.indexer = Indexer(repo, blobs, lambda: make_embedder(settings), busy=lambda: self.scanning.value > 0)
+            from watchful.indexer import Indexer
+            self.indexer = Indexer(self._all_repos, blobs, lambda: make_embedder(settings),
+                                   busy=lambda: self.scanning.value > 0, model=settings.embedder)
             self.indexer.start()
+
+    def _all_repos(self) -> list:
+        return [self.repo_for(ws) for ws in self.societies()]
 
     def _janitor(self, every_s: float = 6 * 3600) -> None:
         while not self._closed:
             try:
-                run_retention(self.settings, self.repo, self.blobs)
+                run_retention(self.settings, self._all_repos(), self.blobs)
             except Exception:
                 log.exception("retention cleanup failed")
             time.sleep(every_s)
@@ -303,19 +314,25 @@ class WorkerManager:
                                           ("detector_runs", "DetectorRuns")):
                             if key in st:
                                 self.metrics.put(name, st[key], dims)
-                self.metrics.put("AICallsToday", self.repo.count_ai_calls_today())
+                self.metrics.put("AICallsToday", sum(r.count_ai_calls_today() for r in self._all_repos()))
                 self.metrics.flush()
             except Exception:
                 log.exception("metrics report failed")
 
     # societies
+    def _society(self, camera_id: str) -> str:
+        ws = self.camera_ws.get(camera_id) or self.home
+        if ws is None:
+            raise KeyError(f"camera {camera_id} has no society here; start it with its workspace_id")
+        return ws
+
     def _repo(self, camera_id: str):
-        return self.repo_for(self.camera_ws.get(camera_id, self.home))
+        return self.repo_for(self._society(camera_id))
 
     def _llm(self, camera_id: str):
         if self.llm is not None:
             return self.llm
-        ws = self.camera_ws.get(camera_id, self.home)
+        ws = self._society(camera_id)
         with self._lock:
             if ws not in self._llms:
                 self._llms[ws] = make_llm(self.settings, self.repo_for(ws), "verify")
@@ -523,6 +540,8 @@ class WorkerManager:
         return row
 
     def approve(self, alert_id: str, workspace_id: str | None = None) -> bool:
+        if not (workspace_id or self.home):
+            raise ValueError("approve needs the alert's society")
         repo = self.repo_for(workspace_id or self.home)
         row = repo.get_alert(alert_id)
         if row is None:
@@ -544,7 +563,7 @@ class WorkerManager:
         scan_id = "scn_" + secrets.token_hex(6)
         self.scans[scan_id] = {"state": "scanning", "progress": 0.0, "stats": None, "alert_ids": [],
                                "camera_id": camera_id, "error": None,
-                               "workspace_id": self.camera_ws.get(camera_id, self.home)}
+                               "workspace_id": self.camera_ws.get(camera_id) or self.home}
         threading.Thread(target=self._run_scan, args=(scan_id, camera_id), daemon=True).start()
         return scan_id
 
