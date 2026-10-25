@@ -44,7 +44,8 @@ Parameters:
     Description: Gets alarm and budget emails (confirm the SNS subscription email once)
   MonthlyBudgetUsd:
     Type: Number
-    Default: 60
+    Default: 150
+    Description: c8g.xlarge running all month in Mumbai is about $105 at list price before Bedrock, transfer and per camera metrics; about 80 suits c8g.large
   BedrockModelId:
     Type: String
     Default: anthropic.claude-haiku-5-5
@@ -224,6 +225,15 @@ Resources:
                 Effect: Deny
                 Action: s3:BypassGovernanceRetention
                 Resource: [!GetAtt Bucket.Arn, !Sub "${Bucket.Arn}/*"]
+              # AmazonSSMManagedInstanceCore (Run Command, Session Manager) allows reading every parameter in the
+              # account, and SecureStrings under the aws/ssm key decrypt for any principal in it: only this stack's
+              # parameters are readable. Run Command and Session Manager do not read parameters.
+              - Sid: OnlyThisStacksParameters
+                Effect: Deny
+                Action: ssm:GetParameter*
+                NotResource:
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Prefix}"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Prefix}/*"
               # the Converse API is authorised as bedrock:InvokeModel; from Mumbai the model runs only through
               # its global inference profile, which may route to the model in any region
               - Sid: BedrockProfile

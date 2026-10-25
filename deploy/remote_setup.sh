@@ -93,9 +93,12 @@ say "web build"
 [ -f "$SRC/web/dist/index.html" ] || { say "the web build made no index.html"; exit 1; }
 
 say "settings"
-# only what the stack decides; secrets (Telegram's among them) and the owner's choices come from SSM under /$STACK/
-# when a service starts (deploy/ssm_env.py). PUBLIC_BASE_URL also sets the socket origin in the page's policy.
+# what the stack decides, then defaults the owner may change. Secrets (Telegram's among them) and the owner's choices
+# come from SSM under /$STACK/ when a service starts (deploy/ssm_env.py) and win over this file, so deploy.sh refuses
+# the stack's names in params.env. PUBLIC_BASE_URL also sets the socket origin in the page's policy. RTSP goes over
+# TCP: the security group lets no UDP out, and FFmpeg would try UDP first.
 cat > /etc/watchful/watchful.env <<EOF
+# decided by the stack (deploy.sh STACK_DECIDED)
 SSM_PREFIX=/$STACK/
 AWS_REGION=$REGION
 AWS_DEFAULT_REGION=$REGION
@@ -103,7 +106,6 @@ STORAGE=s3
 S3_BUCKET=$BUCKET
 METRICS=cloudwatch
 RUN_JOBS_IN_APP=false
-AI_PROVIDER=bedrock
 BEDROCK_MODEL=$BEDROCK_MODEL
 PUBLIC_BASE_URL=https://$DOMAIN
 DATA_DIR=$DATA
@@ -112,6 +114,9 @@ MODELS_DIR=$APP/models
 PYTHONPATH=$APP/current/backend
 PYTHONUNBUFFERED=1
 LD_LIBRARY_PATH=$COOL_LIB
+OPENCV_FFMPEG_CAPTURE_OPTIONS="rtsp_transport;tcp"
+# defaults the owner may change in deploy/params.env
+AI_PROVIDER=bedrock
 EOF
 chown root:watchful /etc/watchful/watchful.env && chmod 640 /etc/watchful/watchful.env
 

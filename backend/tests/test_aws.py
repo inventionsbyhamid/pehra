@@ -321,7 +321,10 @@ def test_template_bucket_locks_incident_clips_and_leaves_the_database_free(mumba
         assert policy["Statement"][0]["Condition"] == {"Bool": {"aws:SecureTransport": "false"}}
 
 
-def test_instance_role_is_least_privilege(mumbai):
+def test_instance_role_is_scoped_to_this_stack(mumbai):
+    """Our own policy allows only this stack's bucket, model, metrics namespace, log groups and parameters. The
+    managed AmazonSSMManagedInstanceCore (Run Command, Session Manager) still allows other SSM agent actions on *;
+    its parameter reads are denied outside /<stack>/ (next test)."""
     rendered = render()
     role = props(rendered, "Role")
     assert role["ManagedPolicyArns"] == ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"]
@@ -377,9 +380,31 @@ def test_object_lock_writes_are_governance_bounded_and_never_bypassed():
     assert int(most) == limits["Default"] and 0 < limits["Default"] <= limits["MaxValue"]
     shorter = locked_writes(render({"MaxLockDays": 45}))[0]["Condition"]["NumericLessThanEqualsIfExists"]
     assert int(shorter["s3:object-lock-remaining-retention-days"]) == 45
-    denies = [s for s in statements if s["Effect"] == "Deny"]
-    assert [(s["Action"], sorted(s["Resource"])) for s in denies] == [
-        ("s3:BypassGovernanceRetention", [f"arn:aws:s3:::{BUCKET}", f"arn:aws:s3:::{BUCKET}/*"])]
+    bypass = [s for s in statements if "s3:BypassGovernanceRetention" in as_list(s["Action"])]
+    assert [(s["Effect"], sorted(s["Resource"])) for s in bypass] == [
+        ("Deny", [f"arn:aws:s3:::{BUCKET}", f"arn:aws:s3:::{BUCKET}/*"])]
+
+
+def test_parameter_reads_are_denied_outside_this_stacks_path(mumbai):
+    """AmazonSSMManagedInstanceCore allows ssm:GetParameter(s) on every parameter, and SecureStrings under the
+    aws/ssm key decrypt for any principal in the account; one Deny keeps the instance to /<stack>/."""
+    rendered = render()
+    denies = [s for s in policy_statements(rendered) if s["Effect"] == "Deny" and "NotResource" in s]
+    assert len(denies) == 1 and "Resource" not in denies[0]
+    deny = denies[0]
+    assert as_list(deny["Action"]) == ["ssm:GetParameter*"]
+    ours = f"arn:aws:ssm:{MUMBAI}:{ACCOUNT}:parameter/{STACK}"
+    assert sorted(deny["NotResource"]) == [ours, f"{ours}/*"]
+    assert "Condition" not in deny
+    # every allowed parameter read lies inside the NotResource, so the Deny never blocks our own settings
+    reads = [r for s in policy_statements(rendered) if s["Effect"] == "Allow" and
+             any(a.startswith("ssm:GetParameter") for a in as_list(s["Action"])) for r in as_list(s["Resource"])]
+    assert reads and set(reads) <= set(deny["NotResource"])
+    other = render({"Prefix": "otherapp"})
+    assert all("/otherapp" in r for s in policy_statements(other) if "NotResource" in s for r in s["NotResource"])
+    with mock_aws():
+        iam = boto3.client("iam")
+        iam.create_policy(PolicyName="deny", PolicyDocument=json.dumps({"Version": "2012-10-17", "Statement": [deny]}))
 
 
 def test_instance_is_graviton_from_the_cool_ami_without_ssh():
@@ -395,8 +420,9 @@ def test_instance_is_graviton_from_the_cool_ami_without_ssh():
     assert render({"SubnetId": "subnet-9"})["Resources"]["Instance"]["Properties"]["SubnetId"] == "subnet-9"
     group = props(rendered, "SecurityGroup")
     assert sorted((r["FromPort"], r["ToPort"]) for r in group["SecurityGroupIngress"]) == [(80, 80), (443, 443)]
-    # out: AWS APIs, packages and Telegram on 443, packages on 80, cameras' RTSP on 554
+    # out, TCP only: AWS APIs, packages and Telegram on 443, packages on 80, cameras' RTSP on 554
     assert sorted(r["FromPort"] for r in group["SecurityGroupEgress"]) == [80, 443, 554]
+    assert {r["IpProtocol"] for r in group["SecurityGroupEgress"]} == {"tcp"}
     assert props(rendered, "Ip")["InstanceId"] == "i-0abc"
 
 
@@ -445,7 +471,7 @@ def test_alarms_logs_dashboard_and_budget_apply_in_moto(mumbai):
         assert ("AWS/EC2", "CPUUtilization") in read
 
     budget = props(rendered, "Budget")
-    assert budget["Budget"]["BudgetLimit"] == {"Amount": 60, "Unit": "USD"}
+    assert budget["Budget"]["BudgetLimit"] == {"Amount": 150, "Unit": "USD"}  # c8g.xlarge all month: about $105
     assert {s["Address"] for n in budget["NotificationsWithSubscribers"] for s in n["Subscribers"]} == {
         "ops@example.com"}
     assert props(rendered, "AlertTopic")["DisplayName"] == f"{BRAND['name']} alerts"
@@ -613,7 +639,7 @@ def test_deploy_dry_run_prints_every_aws_command_and_runs_none(fake_aws):
     out = result.stdout
     for wanted in (f"+ aws cloudformation deploy --stack-name {STACK}", f"Prefix={STACK}", f"BrandName={BRAND['name']}",
                    f"Domain={BRAND['domain']}", "CoolAmiId=ami-0fakecool", "InstanceType=c8g.xlarge",
-                   "MonthlyBudgetUsd=60", "CAPABILITY_IAM",
+                   "MonthlyBudgetUsd=150", "CAPABILITY_IAM",
                    f"+ aws ssm put-parameter --name /{STACK}/TELEGRAM_BOT_TOKEN --type SecureString",
                    "--value file://\\<TELEGRAM_BOT_TOKEN\\>", f"/{STACK}/TELEGRAM_WEBHOOK_SECRET",
                    f"/{STACK}/SESSION_SECRET", "+ aws s3 cp", "+ aws s3 presign", "+ aws ssm send-command",
@@ -840,12 +866,97 @@ def test_caddy_validates_the_caddyfile():
 def test_cloudflare_is_trusted_only_behind_the_ioflood_tunnel():
     tunnel = (DEPLOY / "ioflood.env.example").read_text()
     assert re.search(r"^TRUST_CLOUDFLARE=true$", tunnel, re.M) and "tunnel" in tunnel.lower()
-    for aws in ("params.env.example", "remote_setup.sh", "deploy.sh", "cloudformation.yaml"):
+    for aws in ("params.env.example", "remote_setup.sh", "cloudformation.yaml"):
         assert "TRUST_CLOUDFLARE" not in (DEPLOY / aws).read_text(), aws  # AWS: Caddy is the only way in
+    assert "TRUST_CLOUDFLARE" in stack_decided()  # and deploy.sh refuses it (test below)
     example = ROOT / ".env.example"
     if not example.exists():
         pytest.skip(".env.example is not in this copy (the ioflood sync leaves out .env files)")
-    assert re.search(r"^TRUST_CLOUDFLARE=false$", example.read_text(), re.M)
+    values = re.findall(r"^#? ?TRUST_CLOUDFLARE=(.*)$", example.read_text(), re.M)
+    assert values in ([], ["false"])
+
+
+def test_env_example_lists_every_setting_with_its_default():
+    from watchful.config import Settings
+    example = ROOT / ".env.example"
+    if not example.exists():
+        pytest.skip(".env.example is not in this copy (the ioflood sync leaves out .env files)")
+    lines = re.findall(r"^(# )?([A-Z][A-Z0-9_]*)=(.*)$", example.read_text(), re.M)
+    assert len({name for _, name, _ in lines}) == len(lines)
+    assert {name for _, name, _ in lines} == {name.upper() for name in Settings.model_fields}
+
+    def shown(value) -> str:
+        if isinstance(value, list):
+            return ",".join(value)
+        return str(value).lower() if isinstance(value, bool) else str(value)
+
+    for commented, name, value in lines:
+        field = Settings.model_fields[name.lower()]
+        if field.is_required():
+            assert (commented, value) == ("", ""), name
+        elif field.default is None or field.default == []:
+            assert (commented, value) == ("# ", ""), name
+        else:
+            assert (commented, value) == ("", shown(field.default)), name
+
+
+def stack_decided() -> set[str]:
+    return set(re.search(r'^STACK_DECIDED="([^"]*)"', (DEPLOY / "deploy.sh").read_text(), re.M | re.S)
+               .group(1).replace("\\\n", " ").split())
+
+
+def instance_env_file(tmp_path) -> tuple[Path, list[str]]:
+    """remote_setup.sh's /etc/watchful/watchful.env rendered with test values, and the names in its stack section."""
+    setup = (DEPLOY / "remote_setup.sh").read_text()
+    body = re.search(r"^cat > /etc/watchful/watchful.env <<EOF\n(.*?)\nEOF$", setup, re.M | re.S).group(1)
+    stack_part = body.split("# defaults the owner may change")[0]
+    names = re.findall(r"^([A-Z][A-Z0-9_]*)=", stack_part, re.M)
+    script = tmp_path / "render.sh"
+    script.write_text(f"cat <<EOF\n{body}\nEOF\n")
+    values = {"STACK": STACK, "REGION": MUMBAI, "BUCKET": BUCKET, "BEDROCK_MODEL": f"global.{MODEL}",
+              "DOMAIN": DOMAIN, "DATA": "/var/lib/watchful", "APP": "/opt/watchful", "COOL_LIB": "/opt/cool/lib"}
+    rendered = subprocess.run(["bash", str(script)], capture_output=True, text=True, check=True,
+                              env={**os.environ, **values}).stdout
+    path = tmp_path / "watchful.env"
+    path.write_text(rendered)
+    return path, names
+
+
+def test_instance_settings_force_rtsp_over_tcp_for_systemd_and_shell(tmp_path):
+    """The security group lets no UDP out and FFmpeg tries RTSP over UDP first, so the instance's settings tell
+    OpenCV's FFmpeg to use TCP. systemd (EnvironmentFile) and the watchful-python wrapper (bash `. file`) must read
+    the same value from the file."""
+    env_file, _ = instance_env_file(tmp_path)
+    shell = 'set -a; . "$1"; printf %s "$OPENCV_FFMPEG_CAPTURE_OPTIONS"'
+    sourced = subprocess.run(["bash", "-c", shell, "-", env_file], capture_output=True, text=True, check=True)
+    assert sourced.stdout == "rtsp_transport;tcp" and sourced.stderr == ""
+    for line in env_file.read_text().splitlines():
+        if not line or line.startswith("#"):
+            continue
+        name, value = line.split("=", 1)
+        quoted = len(value) > 1 and value[0] == value[-1] == '"'
+        plain = value[1:-1] if quoted else value
+        assert quoted or not re.search(r"[;\s$`'\"\\]", value), line  # anything special is double quoted
+        got = subprocess.run(["bash", "-c", f'set -a; . "$1"; printf %s "${name}"', "-", env_file],
+                             capture_output=True, text=True, check=True).stdout
+        assert got == plain, line  # what systemd reads (quotes removed) is what the shell reads
+
+
+def test_deploy_refuses_names_the_stack_sets(fake_aws, tmp_path):
+    _, names = instance_env_file(tmp_path)
+    decided = stack_decided()
+    assert names and all(n in decided or n.startswith("AWS_") for n in names), set(names) - decided
+    assert "AI_PROVIDER" not in decided  # an owner's choice, which SSM may change
+    params = tmp_path / "params.env"
+    base = params.read_text()
+    for name in ("STORAGE", "TRUST_CLOUDFLARE", "PUBLIC_BASE_URL", "RUN_JOBS_IN_APP", "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+                 "AWS_ACCESS_KEY_ID", "AWS_REGION"):
+        params.write_text(base + f"{name}=x\n")
+        result, calls = fake_aws("--dry-run")
+        assert result.returncode != 0 and f"{name} is set by the stack" in result.stderr, name
+        assert calls == [] and "+ aws" not in result.stdout, name
+    params.write_text(base)
+    assert fake_aws("--dry-run")[0].returncode == 0
 
 
 def test_deploy_files_agree():

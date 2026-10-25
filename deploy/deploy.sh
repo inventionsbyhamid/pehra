@@ -36,6 +36,10 @@ command -v python3 > /dev/null || die "needs python3 on PATH"
 DEPLOY_NAMES=" AWS_PROFILE REGION STACK DOMAIN COOL_AMI_ID INSTANCE_TYPE VOLUME_GB VPC_ID SUBNET_ID ALERT_EMAIL \
  MONTHLY_BUDGET_USD BEDROCK_MODEL_ID APP_LOG_RETENTION_DAYS ACCESS_LOG_RETENTION_DAYS MAX_LOCK_DAYS "
 GENERATED=" SESSION_SECRET DATA_KEY TELEGRAM_WEBHOOK_SECRET "  # made once when blank, then kept
+# names remote_setup.sh sets on the instance, and TRUST_CLOUDFLARE (never for AWS): SSM wins over the instance's file,
+# so one of these in params.env would silently override the stack. Refused, as is any AWS_ name but AWS_PROFILE.
+STACK_DECIDED=" SSM_PREFIX STORAGE S3_BUCKET METRICS RUN_JOBS_IN_APP BEDROCK_MODEL PUBLIC_BASE_URL DATA_DIR \
+ DATABASE_URL MODELS_DIR PYTHONPATH PYTHONUNBUFFERED LD_LIBRARY_PATH OPENCV_FFMPEG_CAPTURE_OPTIONS TRUST_CLOUDFLARE "
 
 APP_NAMES=""
 n=0
@@ -52,6 +56,8 @@ while IFS= read -r line || [ -n "$line" ]; do
     \"*\") value="${value#\"}"; value="${value%\"}" ;;
     \'*\') value="${value#\'}"; value="${value%\'}" ;;
   esac
+  case "$STACK_DECIDED" in *" $name "*) die "$PARAMS line $n: $name is set by the stack, remove it" ;; esac
+  case "$name" in AWS_PROFILE) ;; AWS_*) die "$PARAMS line $n: $name is set by the stack, remove it" ;; esac
   printf -v "P_$name" '%s' "$value"
   case "$DEPLOY_NAMES" in *" $name "*) ;; *) APP_NAMES="$APP_NAMES $name" ;; esac
 done < "$PARAMS"
@@ -165,7 +171,7 @@ aws_do cloudformation deploy --stack-name "$STACK" --template-file "$ROOT/deploy
   --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --tags "project=$STACK" \
   --parameter-overrides "Prefix=$STACK" "BrandName=$BRAND" "Domain=$DOMAIN" "CoolAmiId=$AMI" "VpcId=$VPC" \
   "SubnetId=$(param SUBNET_ID)" "InstanceType=$INSTANCE_TYPE" "VolumeGb=$(param VOLUME_GB 40)" \
-  "AlertEmail=$EMAIL" "MonthlyBudgetUsd=$(param MONTHLY_BUDGET_USD 60)" \
+  "AlertEmail=$EMAIL" "MonthlyBudgetUsd=$(param MONTHLY_BUDGET_USD 150)" \
   "BedrockModelId=$(param BEDROCK_MODEL_ID anthropic.claude-haiku-5-5)" "MaxLockDays=$(param MAX_LOCK_DAYS 100)" \
   "AppLogRetentionDays=$(param APP_LOG_RETENTION_DAYS 30)" "AccessLogRetentionDays=$(param ACCESS_LOG_RETENTION_DAYS 90)"
 stack_outputs
