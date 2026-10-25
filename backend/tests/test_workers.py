@@ -92,7 +92,9 @@ def test_a_critical_candidate_is_stored_even_if_checking_crashes(manager, monkey
         raise RuntimeError("unexpected")
 
     monkeypatch.setattr(workers, "verify", boom)
-    c = Candidate("w1", "cam", 10.0, 1, "critical", {"reasons": ["fell in the kitchen"]}, [], "fpx", "Fall", "?")
+    # a recent moment: the manager's retention janitor deletes alerts older than RETENTION_DAYS as it starts
+    c = Candidate("w1", "cam", time.time(), 1, "critical", {"reasons": ["fell in the kitchen"]}, [], "fpx", "Fall",
+                  "?")
     m._verify_and_store(EvidencePack(c, [], []))
     a = repo.list_alerts("cam")[0]
     assert a.status == "unverified" and "fell in the kitchen" in a.summary
