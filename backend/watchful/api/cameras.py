@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from watchful.agent.compiler import bare_age_name
 from watchful.api.common import LIVE_KINDS, camera_json, camera_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
+from watchful.billing.limits import daily_ai_cap, start_watching
 from watchful.ingest import nvr
 from watchful.ingest.push import CLOSE_GONE, CLOSE_OFF, push_parts, qr_svg
 from watchful.netguard import check_url, clip_roots, inside
@@ -116,12 +117,16 @@ def make_router(ctx) -> APIRouter:
             problem = check_url(url or "", allow_private=body.kind != "stream" or ctx.settings.allow_private_streams)
             if problem:
                 raise HTTPException(400, problem)
-        cam = repo(member).add_camera(Camera(None, body.name, body.kind, url, purpose=purpose or "other"))
+        cam = repo(member).add_camera(Camera(None, body.name, body.kind, url, purpose=purpose or "other",
+                                             enabled=False))
+        refused = start_watching(ctx.db, member.workspace.id, cam.id)  # over the plan: added, but not watched
+        cam.enabled = refused is None
         ctx.db.audit(member.workspace.id, member.user.id, "camera.add",
-                     {"camera": cam.id, "name": cam.name, "kind": cam.kind, "nvr": body.nvr.brand if body.nvr else None})
-        if body.kind == "stream":
+                     {"camera": cam.id, "name": cam.name, "kind": cam.kind, "nvr": body.nvr.brand if body.nvr else None,
+                      "watched": cam.enabled})
+        if body.kind == "stream" and cam.enabled:
             manager.start(cam.id, member.workspace.id)
-        return camera_json(manager, cam)
+        return {**camera_json(manager, cam), "notice": refused}
 
     @router.get("/api/cameras/{camera_id}")
     def get_camera(camera_id: str, member: CurrentMember = Depends(current_member)):
@@ -148,6 +153,8 @@ def make_router(ctx) -> APIRouter:
     def patch_camera(camera_id: str, body: CameraPatch, member: CurrentMember = Depends(require_role("admin"))):
         r = repo(member)
         cam = camera_or_404(r, camera_id)
+        if body.enabled and not cam.enabled and (refused := start_watching(ctx.db, member.workspace.id, cam.id)):
+            raise HTTPException(403, refused)
         if body.name is not None:
             cam.name = body.name
         if body.purpose is not None:
@@ -358,7 +365,8 @@ def make_router(ctx) -> APIRouter:
             by_status[a.status] = by_status.get(a.status, 0) + 1
         scans = [s for s in getattr(manager, "scans", {}).values() if s.get("stats") and own_scan(member, s)]
         return {"cameras": [camera_json(manager, c) for c in r.list_cameras()],
-                "ai_calls_today": r.count_ai_calls_today(), "ai_daily_limit": ctx.settings.ai_daily_call_limit,
+                "ai_calls_today": r.count_ai_calls_today(),
+                "ai_daily_limit": daily_ai_cap(r, ctx.settings.ai_daily_call_limit),
                 "alerts": by_status, "scans": [s["stats"] for s in scans][-20:]}
 
     return router

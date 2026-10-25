@@ -12,6 +12,7 @@
   },
   "default_plan": "free",
   "billing_unit": "watched_camera",
+  "refund_days_yearly": 7,
   "features": {
     "control_room": "Control room with camera health",
     "any_watch": "Any watch in plain words",
@@ -31,7 +32,7 @@
       "price_year_inr": null,
       "per_camera": false,
       "contact": false,
-      "limits": { "watched_cameras": 2, "min_cameras": null, "retention_days": 7 },
+      "limits": { "watched_cameras": 2, "min_cameras": null, "retention_days": 7, "ai_checks_day": 50, "enrolled_staff": 5 },
       "features": ["control_room", "any_watch", "telegram"]
     },
     {
@@ -42,7 +43,7 @@
       "price_year_inr": 6990,
       "per_camera": true,
       "contact": false,
-      "limits": { "watched_cameras": 49, "min_cameras": null, "retention_days": 30 },
+      "limits": { "watched_cameras": 49, "min_cameras": null, "retention_days": 30, "ai_checks_day": 40, "enrolled_staff": 300 },
       "features": ["control_room", "any_watch", "telegram", "gate_ledger", "staff_register", "daily_summary"]
     },
     {
@@ -53,7 +54,7 @@
       "price_year_inr": null,
       "per_camera": true,
       "contact": true,
-      "limits": { "watched_cameras": null, "min_cameras": 50, "retention_days": null },
+      "limits": { "watched_cameras": null, "min_cameras": 50, "retention_days": null, "ai_checks_day": null, "enrolled_staff": null },
       "features": [
         "control_room",
         "any_watch",

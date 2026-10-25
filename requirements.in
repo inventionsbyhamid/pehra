@@ -17,5 +17,7 @@ alembic==1.20.1
 cryptography==50.0.2  # camera addresses are stored encrypted
 PyYAML==6.0.3
 authlib==1.9.1  # Google sign in (auth/google.py)
+polar-sdk==1.0.2  # billing (billing/polar.py)
+standardwebhooks==1.1.0  # billing webhook signatures
 # dev tool: lints deploy/cloudformation.yaml (not installed on the server)
 cfn-lint==1.58.0

@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import brand, { mailto } from "./brand";
 import PlanGrid, { PlanLinks, PriceExample } from "./PlanGrid";
-import { cameraPlan, freePlan, largePlan, merchant } from "./plans";
+import { cameraPlan, freePlan, largePlan, merchant, refundDays } from "./plans";
 import SiteLayout from "./SiteLayout";
 
 export default function Pricing() {
@@ -48,8 +48,8 @@ export default function Pricing() {
             <div>
               <dt>Refunds</dt>
               <dd>
-                Monthly plans are not refunded for part of a month. Yearly plans can be refunded within 7 days of
-                payment. <Link to="/refunds">Read the refund policy</Link>.
+                Monthly plans are not refunded for part of a month. Yearly plans can be refunded within {refundDays} days
+                of payment. <Link to="/refunds">Read the refund policy</Link>.
               </dd>
             </div>
             <div>

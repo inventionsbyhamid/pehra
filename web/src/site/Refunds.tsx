@@ -1,6 +1,6 @@
 import brand, { mailto } from "./brand";
 import LegalPage from "./LegalPage";
-import { freePlan, merchant } from "./plans";
+import { freePlan, merchant, refundDays } from "./plans";
 
 export default function Refunds() {
   return (
@@ -13,8 +13,8 @@ export default function Refunds() {
 
       <h2>Yearly plans</h2>
       <p>
-        You can get a full refund within 7 days of paying for a yearly plan. After 7 days a yearly plan is not refunded,
-        and it keeps working until the end of the year you paid for.
+        You can get a full refund within {refundDays} days of paying for a yearly plan. After {refundDays} days a yearly
+        plan is not refunded, and it keeps working until the end of the year you paid for.
       </p>
 
       <h2>Fewer watched cameras</h2>

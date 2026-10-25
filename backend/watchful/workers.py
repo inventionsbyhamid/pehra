@@ -47,21 +47,25 @@ TAMPER_TEXT = {"covered": "The camera picture went flat, as if the lens is cover
 
 
 def run_retention(settings: Settings, repos, blobs) -> None:
-    """Clips, pictures, uploads, events and alerts older than retention_days are deleted, except enrolment photos
-    and demo cameras, which replay consented clips for the whole judging period. `repos`: every society's
-    repository (or one), since the blob store is shared."""
+    """Clips, pictures, events and alerts older than each society's plan keeps them (billing.limits.retention_days)
+    are deleted, and uploads older than retention_days, except enrolment photos and demo cameras, which replay
+    consented clips for the whole judging period. `repos`: every society's repository (or one), since the blob store
+    is shared."""
     from pathlib import Path
+    from watchful.billing.limits import retention_days_of
     repos = repos if isinstance(repos, (list, tuple)) else [repos]
-    cutoff = time.time() - settings.retention_days * 86400
+    days = {id(r): retention_days_of(r, settings.retention_days) for r in repos}
     demos = {id(r): [c.id for c in r.list_cameras() if c.kind == "demo"] for r in repos}
     keep = ("people/", *(f"{d}/" for ids in demos.values() for d in ids))
-    blobs.delete_older_than(settings.retention_days, keep=keep)
+    owned = {id(r): (f"{r.workspace_id}/", *(f"{c.id}/" for c in r.list_cameras())) for r in repos}
+    for kept in sorted(set(days.values()) or {settings.retention_days}):  # a longer plan's pictures wait for theirs
+        blobs.delete_older_than(kept, keep=keep + tuple(p for r in repos if days[id(r)] > kept for p in owned[id(r)]))
     for r in repos:
-        r.delete_events_before(cutoff, keep_cameras=demos[id(r)])
-        r.delete_alerts_before(cutoff, keep_cameras=demos[id(r)])
+        r.delete_events_before(time.time() - days[id(r)] * 86400, keep_cameras=demos[id(r)])
+        r.delete_alerts_before(time.time() - days[id(r)] * 86400, keep_cameras=demos[id(r)])
     uploads = Path(settings.data_dir) / "uploads"
     for f in uploads.glob("*") if uploads.is_dir() else []:
-        if f.stat().st_mtime < cutoff:
+        if f.stat().st_mtime < time.time() - settings.retention_days * 86400:
             f.unlink(missing_ok=True)
 
 

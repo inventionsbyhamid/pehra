@@ -7,11 +7,9 @@ for that camera at once (PushHub.close). The hub also keeps each camera's newest
 device sees the phone's picture."""
 import asyncio
 import hashlib
-import json
 import secrets
 import threading
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import cv2
 from sqlalchemy import delete, select
@@ -20,7 +18,6 @@ from watchful.db import models as m
 
 TOKEN_BYTES = 24  # 32 characters, 192 bits
 MAX_TOKEN_CHARS = 64
-PLANS = Path(__file__).resolve().parents[1] / "data" / "plans.json"
 
 # socket close codes a device acts on (the cam page and the bridge stop for good on GONE and UNKNOWN)
 CLOSE_BAD_KIND = 4400
@@ -174,15 +171,12 @@ def needs_faces(repo, camera_id: str) -> bool:
 
 
 def retention_days(workspace, default: int) -> int:
-    """How long this society's recordings are kept, from its plan (data/plans.json)."""
-    plan = getattr(workspace, "comp_plan", None) or getattr(workspace, "plan", None)
+    """How long this society's recordings are kept, from its plan (billing/limits.py)."""
+    from watchful.billing.limits import retention_days as kept
     try:
-        for p in json.loads(PLANS.read_text())["plans"]:
-            if p["id"] == plan and p.get("limits", {}).get("retention_days"):
-                return int(p["limits"]["retention_days"])
-    except (OSError, ValueError, KeyError):
-        pass
-    return default
+        return kept(workspace)
+    except (AttributeError, TypeError):
+        return default
 
 
 def qr_svg(text: str) -> str:

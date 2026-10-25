@@ -105,7 +105,7 @@ def test_every_route_is_scoped(world):
     secrets = [ids["camera_id"], ids["watch_id"], ids["alert_id"], "per_lake", "Lake", "bina@example.com", B]
     for path in ("/api/cameras", "/api/alerts", f"/api/alerts?camera_id={ids['camera_id']}", "/api/metrics",
                  "/api/people", "/api/members", "/api/invites", "/api/me", "/api/incidents", "/api/telegram",
-                 "/api/incidents/precision"):
+                 "/api/incidents/precision", "/api/billing"):
         res = a.get(path)
         assert res.status_code == 200, path
         assert not [x for x in secrets if x in res.text], f"{path} shows another society's data"

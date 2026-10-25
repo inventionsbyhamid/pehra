@@ -1,0 +1,157 @@
+{
+  "type": "subscription.active",
+  "timestamp": "2026-10-24T09:00:02.000000Z",
+  "api_version": "2026-10",
+  "data": {
+    "created_at": "2026-10-24T09:00:00.000000Z",
+    "modified_at": "2026-10-24T09:00:01.000000Z",
+    "id": "5c3b1c0e-2d4f-4f9e-9a59-0f3b2a1d7e10",
+    "amount": 419400,
+    "currency": "inr",
+    "recurring_interval": "month",
+    "recurring_interval_count": 1,
+    "status": "active",
+    "current_period_start": "2026-10-24T09:00:00.000000Z",
+    "current_period_end": "2026-11-24T09:00:00.000000Z",
+    "current_meter_period_start": null,
+    "current_meter_period_end": null,
+    "trial_start": null,
+    "trial_end": null,
+    "cancel_at_period_end": false,
+    "canceled_at": null,
+    "started_at": "2026-10-24T09:00:00.000000Z",
+    "ends_at": null,
+    "ended_at": null,
+    "past_due_at": null,
+    "pause_at_period_end": false,
+    "paused_at": null,
+    "resumes_at": null,
+    "customer_id": "992fae2a-2a17-4b7a-8d9e-e287cf90131b",
+    "product_id": "0c8a8a52-7c9b-4f8e-9a51-3f1f0f6c1a01",
+    "discount_id": null,
+    "checkout_id": "7f6d2c1b-8e3a-4b5c-9d0e-1a2b3c4d5e6f",
+    "seats": null,
+    "units": 6,
+    "customer_cancellation_reason": null,
+    "customer_cancellation_comment": null,
+    "metadata": {
+      "workspace_id": "ws_0000000000000000",
+      "plan": "society",
+      "period": "month",
+      "cameras": 6
+    },
+    "custom_field_data": {},
+    "customer": {
+      "id": "992fae2a-2a17-4b7a-8d9e-e287cf90131b",
+      "created_at": "2026-10-24T08:59:30.000000Z",
+      "modified_at": "2026-10-24T09:00:00.000000Z",
+      "metadata": {},
+      "external_id": "ws_0000000000000000",
+      "email": "asha@example.com",
+      "email_verified": true,
+      "type": "individual",
+      "name": "Asha",
+      "billing_name": "Green Park Residents Welfare Association",
+      "billing_address": {
+        "line1": null,
+        "line2": null,
+        "postal_code": null,
+        "city": null,
+        "state": null,
+        "country": "IN"
+      },
+      "tax_id": null,
+      "locale": "en",
+      "organization_id": "1dbfc517-0bbf-4301-9ba8-555ca42b9737",
+      "default_payment_method_id": null,
+      "deleted_at": null,
+      "first_user_event_at": null,
+      "avatar_url": null
+    },
+    "product": {
+      "id": "0c8a8a52-7c9b-4f8e-9a51-3f1f0f6c1a01",
+      "created_at": "2026-10-20T10:00:00.000000Z",
+      "modified_at": null,
+      "trial_interval": null,
+      "trial_interval_count": null,
+      "name": "Society, monthly",
+      "description": "Watched cameras, footage kept 30 days.",
+      "visibility": "public",
+      "recurring_interval": "month",
+      "recurring_interval_count": 1,
+      "meter_interval": null,
+      "meter_interval_count": null,
+      "is_recurring": true,
+      "is_archived": false,
+      "organization_id": "1dbfc517-0bbf-4301-9ba8-555ca42b9737",
+      "metadata": {},
+      "is_deletable": false,
+      "prices": [
+        {
+          "created_at": "2026-10-20T10:00:00.000000Z",
+          "modified_at": null,
+          "id": "3d1e7a6b-5c4f-4e2d-8b9a-0f1e2d3c4b5a",
+          "source": "catalog",
+          "amount_type": "unit_based",
+          "price_currency": "inr",
+          "tax_behavior": "exclusive",
+          "is_archived": false,
+          "product_id": "0c8a8a52-7c9b-4f8e-9a51-3f1f0f6c1a01",
+          "tiers": {
+            "type": "volume",
+            "tiers": [
+              {
+                "bound": 49,
+                "unit_amount": "69900"
+              }
+            ]
+          },
+          "minimum_units": 1,
+          "unit_label": {
+            "en": {
+              "=1": "camera",
+              "other": "cameras"
+            }
+          },
+          "maximum_units": 49
+        }
+      ],
+      "benefits": [],
+      "medias": [],
+      "attached_custom_fields": []
+    },
+    "discount": null,
+    "prices": [
+      {
+        "created_at": "2026-10-20T10:00:00.000000Z",
+        "modified_at": null,
+        "id": "3d1e7a6b-5c4f-4e2d-8b9a-0f1e2d3c4b5a",
+        "source": "catalog",
+        "amount_type": "unit_based",
+        "price_currency": "inr",
+        "tax_behavior": "exclusive",
+        "is_archived": false,
+        "product_id": "0c8a8a52-7c9b-4f8e-9a51-3f1f0f6c1a01",
+        "tiers": {
+          "type": "volume",
+          "tiers": [
+            {
+              "bound": 49,
+              "unit_amount": "69900"
+            }
+          ]
+        },
+        "minimum_units": 1,
+        "unit_label": {
+          "en": {
+            "=1": "camera",
+            "other": "cameras"
+          }
+        },
+        "maximum_units": 49
+      }
+    ],
+    "meters": [],
+    "pending_update": null
+  }
+}

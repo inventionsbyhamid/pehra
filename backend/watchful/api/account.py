@@ -22,6 +22,7 @@ from watchful.auth.deps import ROLES, CurrentMember, current_session, current_us
 from watchful.auth.operator import link_valid, take_link
 from watchful.auth.providers import AuthError, Flow, Identity
 from watchful.auth.sessions import SessionData, safe_next
+from watchful.billing.limits import effective_plan
 from watchful.brand import BRAND
 from watchful.db import models as m
 from watchful.ratelimit import TooManyTries, client_key
@@ -84,7 +85,7 @@ def user_json(user: m.User) -> dict:
 
 
 def workspace_json(ws: m.Workspace) -> dict:
-    return {"id": ws.id, "name": ws.name, "timezone": ws.timezone, "plan": ws.plan, "demo": ws.demo,
+    return {"id": ws.id, "name": ws.name, "timezone": ws.timezone, "plan": effective_plan(ws), "demo": ws.demo,
             "expires_at": iso(ws.expires_at)}
 
 

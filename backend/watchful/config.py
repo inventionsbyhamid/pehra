@@ -97,8 +97,15 @@ class Settings(BaseSettings):
     auth_providers: Names = ["google"]  # sign in providers offered, in order (auth/providers.py, auth/google.py)
     google_client_id: str | None = None
     google_client_secret: str | None = None
+    # billing (billing/): Polar, or the fake provider when Polar's keys are missing (it takes payments only on http
+    # localhost); POLAR_PRODUCTS is JSON naming the Polar product of each plan and period, {"society_month": ...}
+    billing: str = "polar"
+    polar_access_token: str | None = None
+    polar_webhook_secret: str | None = None
+    polar_server: Literal["sandbox", "production"] = "sandbox"
+    polar_products: Annotated[dict[str, str], NoDecode] = {}
 
-    ai_daily_call_limit: int = 500
+    ai_daily_call_limit: int = 500  # AI requests a day for a plan whose limit is agreed per customer (plans.json)
     retention_days: int = 7
     max_upload_mb: int = 200
     max_upload_minutes: int = 10
@@ -112,6 +119,13 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             value = value.strip()
             return json.loads(value) if value.startswith("[") else [v.strip() for v in value.split(",") if v.strip()]
+        return value
+
+    @field_validator("polar_products", mode="before")
+    @classmethod
+    def _products(cls, value):
+        if isinstance(value, str):
+            return json.loads(value) if value.strip() else {}
         return value
 
     @field_validator("data_key")

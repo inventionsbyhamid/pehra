@@ -135,6 +135,7 @@ def test_rescanning_an_upload_replaces_its_timeline(manager, clip20, tmp_path):
 
 def test_tamper_becomes_an_alert(manager):
     m, repo = manager
-    m._handle({"type": "tamper", "camera_id": "camT", "ts": 100.0, "kind": "covered", "detail": "flat"})
+    # a recent moment: the retention janitor, which starts with the manager, deletes alerts from long ago
+    m._handle({"type": "tamper", "camera_id": "camT", "ts": time.time(), "kind": "covered", "detail": "flat"})
     a = repo.list_alerts("camT")[0]
     assert a.status == "alert" and "covered" in a.summary and a.severity == "warning"

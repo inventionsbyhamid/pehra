@@ -4,6 +4,7 @@ export const plans = data.plans;
 export const featureNames = data.features;
 export const merchant = data.merchant_of_record;
 export const usdInr = data.usd_inr;
+export const refundDays = data.refund_days_yearly;
 
 const inr = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
 const usd = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });

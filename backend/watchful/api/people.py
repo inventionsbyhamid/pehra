@@ -7,6 +7,7 @@ from fastapi.concurrency import run_in_threadpool
 
 from watchful.api.common import LIVE_KINDS
 from watchful.auth.deps import CurrentMember, require_role
+from watchful.billing.limits import staff_allowed, staff_refusal, workspace_of
 from watchful.store.db import new_id
 from watchful.vision.faces import NoFaceFound
 
@@ -37,6 +38,9 @@ def make_router(ctx) -> APIRouter:
         repo = ctx.repo_for(ws)
         if consent.lower() != "true":
             raise HTTPException(400, "Enrolling someone needs their consent.")
+        society = workspace_of(ctx.db, ws)
+        if (most := staff_allowed(society)) is not None and len(repo.list_enrollments()) >= most:
+            raise HTTPException(403, staff_refusal(society))
         if photo is not None:
             data = await photo.read()
         elif event_id and (e := repo.get_event(event_id)) and e.keyframe_key:

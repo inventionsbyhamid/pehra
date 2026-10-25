@@ -298,6 +298,12 @@ class LimitsTuning(_Section):
     api_per_min_workspace: int = 600  # signed in API requests a minute per society (several people, pages polling)
     public_per_min_ip: int = 120  # pages behind a valid link a minute per IP
     misses_per_min_ip: int = 10  # unknown sign in link tokens a minute per IP: guessing
+    grace_days: int = 5  # a society keeps its plan this many days after a failed renewal
+    webhook_ids_days: int = 90  # handled billing webhook ids are kept this long, to drop retries
+    webhook_kb: int = 512  # largest billing webhook body
+    billing_link_s: int = 3600  # a test billing link (the fake provider) works this long
+    billing_api_timeout_s: float = 10.0  # one request to the billing provider's API
+    plan_check_s: float = 300.0  # how often the app switches off cameras a plan no longer covers
 
 
 class PushTuning(_Section):

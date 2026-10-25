@@ -1,5 +1,5 @@
 import brand from "./brand";
-import { cameraPlan, freePlan, rupees } from "./plans";
+import { cameraPlan, freePlan, refundDays, rupees } from "./plans";
 
 export interface PageMeta {
   path: string;
@@ -34,7 +34,7 @@ export const PAGES: PageMeta[] = [
   {
     path: "/refunds",
     title: `Refunds and cancellation | ${name}`,
-    description: `Monthly plans can be cancelled any time. Yearly plans can be refunded within 7 days of payment. How watched cameras, cancelling and refunds work at ${name}.`,
+    description: `Monthly plans can be cancelled any time. Yearly plans can be refunded within ${refundDays} days of payment. How watched cameras, cancelling and refunds work at ${name}.`,
   },
   {
     path: "/login",

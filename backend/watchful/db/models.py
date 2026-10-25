@@ -108,11 +108,19 @@ class Workspace(Base):
     polar_customer_id: Mapped[str | None]  # the billing provider's customer id
     grace_until: Mapped[datetime | None]
     subscription_id: Mapped[str | None]  # the provider's, for the subscription last applied
+    subscription_period: Mapped[str | None]  # month or year
+    subscription_units: Mapped[int | None]  # watched cameras paid for
+    subscription_units_next: Mapped[int | None]  # paid for from the next renewal, when lowered
+    subscription_period_start: Mapped[datetime | None]
     subscription_period_end: Mapped[datetime | None]
     subscription_ends_at: Mapped[datetime | None]  # set while cancelled for the end of the period
     billing_synced_at: Mapped[datetime | None]  # when the provider last changed the subscription last applied
     comp_plan: Mapped[str | None]  # a plan given by the operator, not a subscription
+    comp_cameras: Mapped[int | None]
     comp_until: Mapped[datetime | None]
+    # footage saved under a longer retention keeps it this long after the plan changed (billing/limits.py)
+    retention_hold_days: Mapped[int | None]
+    retention_hold_until: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     demo: Mapped[str | None] = mapped_column(index=True)  # sandbox (one demo visitor's) or showcase (read only)
     expires_at: Mapped[datetime | None]  # a sandbox is deleted by the daily demo reset after this

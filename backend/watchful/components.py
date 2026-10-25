@@ -1,4 +1,5 @@
 """Builds the parts the settings name. Swap a model or a service by changing a setting."""
+import logging
 import threading
 
 from watchful.config import Settings
@@ -51,11 +52,27 @@ def make_embedder(settings: Settings):
 
 
 def make_llm(settings: Settings, repo, task: str = "verify"):
+    """The AI for one society, counted against its plan's AI checks a day (read at each call, so a plan change
+    applies at once)."""
     from watchful.agent.llm import LimitedLLM
+    from watchful.billing.limits import daily_ai_cap
     load_all()
     model = getattr(settings, f"ai_model_{task}", None)
     return LimitedLLM(build("llm", settings.ai_provider, settings=settings, model=model), repo,
-                      settings.ai_daily_call_limit, task)
+                      lambda: daily_ai_cap(repo, settings.ai_daily_call_limit), task)
+
+
+def make_billing(settings: Settings, tuning: Tuning | None = None):
+    """The payment provider BILLING names. Polar without its keys (POLAR_ACCESS_TOKEN, POLAR_WEBHOOK_SECRET and
+    POLAR_PRODUCTS) is the fake provider, which takes test payments only on http localhost."""
+    import watchful.billing.fake  # noqa: F401
+    from watchful.billing.polar import configured
+    from watchful.tuning import load_tuning
+    name = settings.billing
+    if name == "polar" and not configured(settings):
+        logging.getLogger(__name__).warning("Polar's keys are not set; billing uses the fake provider")
+        name = "fake"
+    return build("billing", name, settings=settings, tuning=tuning or load_tuning(settings.tuning_file))
 
 
 def make_blobs(settings: Settings, tuning: Tuning | None = None):
