@@ -37,6 +37,7 @@ class Candidate:
     verify: str = ""
     clip_key: str | None = None
     output: str = "alert"
+    cls: str | None = None  # the track's class (person, car, ...); None for a zone or scene watch
 
 
 @dataclass
@@ -333,7 +334,8 @@ class RuleEngine:
             evidence["method"] = self._method(w)
         severity = "info" if w.output == "log" else w.severity
         return Candidate(wid, camera_id, tick.ts, s.track_id if s else None, severity, evidence, keys,
-                         hashlib.sha1(basis.encode()).hexdigest(), w.name, w.verify, output=w.output)
+                         hashlib.sha1(basis.encode()).hexdigest(), w.name, w.verify, output=w.output,
+                         cls=s.cls if s else None)
 
     def _settle(self, s: TrackState, h: TrackHistory, tick: Tick, image, slow: bool, new: bool) -> None:
         """Where a box settled and since when, for stationary_s; a new track on a remembered parked spot takes

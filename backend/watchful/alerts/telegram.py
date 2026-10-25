@@ -24,7 +24,7 @@ import numpy as np
 from sqlalchemy import delete, select
 
 from watchful.alerts import incidents as inc_
-from watchful.alerts.crops import blurred_crop
+from watchful.alerts.crops import StillMaker
 from watchful.db import models as m
 from watchful.jobs import Defer, JobContext, handler, on_start
 from watchful.registry import register
@@ -42,9 +42,11 @@ UPDATES = ["message", "callback_query", "my_chat_member"]
 class TelegramError(Exception):
     """A Bot API call that failed; the message never holds the token."""
 
-    def __init__(self, method: str, description: str, code: int | None = None, retry_after: float | None = None):
+    def __init__(self, method: str, description: str, code: int | None = None, retry_after: float | None = None,
+                 migrate_to: str | None = None):
         super().__init__(f"telegram {method}: {description}")
         self.method, self.description, self.code, self.retry_after = method, description, code, retry_after
+        self.migrate_to = migrate_to  # the group became a supergroup with this chat id
 
     @property
     def gone(self) -> bool:
@@ -77,9 +79,10 @@ class TelegramBot:
         except (httpx.HTTPError, ValueError) as e:
             raise TelegramError(method, type(e).__name__) from None  # never the request, whose address holds the token
         if not body.get("ok"):
-            retry = (body.get("parameters") or {}).get("retry_after")
+            params = body.get("parameters") or {}
+            retry, moved = params.get("retry_after"), params.get("migrate_to_chat_id")
             raise TelegramError(method, str(body.get("description", "failed")), body.get("error_code"),
-                                float(retry) if retry is not None else None)
+                                float(retry) if retry is not None else None, str(moved) if moved else None)
         return body.get("result")
 
     def get_me(self) -> dict:
@@ -139,14 +142,31 @@ class TelegramChannel:
 
 class ChatLimiter:
     """Telegram's limits per chat, kept by the one worker that sends: a gap between messages, and no more than
-    `per_min` in any minute; a 429's retry_after blocks the chat until then."""
+    `per_min` in any minute; a 429's retry_after blocks the chat until then. Calls to one chat go one at a time
+    (chat_lock), so the worker's two lanes never both take its last free slot; other chats are not held up. It also
+    counts each chat's failures per message, so a group that keeps failing is given up after Tuning
+    alerts.chat_tries."""
 
     def __init__(self, cfg: AlertTuning):
         self.per_min, self.gap_s = cfg.chat_per_min, cfg.chat_gap_s
         self._sent: dict[str, deque] = defaultdict(deque)
         self._blocked: dict[str, float] = {}
         self._lock = threading.Lock()
-        self.sending = threading.Lock()
+        self._chat_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+        self._failures: dict[tuple[str, str], int] = defaultdict(int)
+
+    def chat_lock(self, chat_id: str) -> threading.Lock:
+        with self._lock:
+            return self._chat_locks[chat_id]
+
+    def failed(self, chat_id: str, what: str) -> int:
+        with self._lock:
+            self._failures[chat_id, what] += 1
+            return self._failures[chat_id, what]
+
+    def succeeded(self, chat_id: str, what: str) -> None:
+        with self._lock:
+            self._failures.pop((chat_id, what), None)
 
     def hold(self, chat_id: str, now: datetime) -> float:
         """Seconds until this chat may get the next message; 0 when it may now."""
@@ -323,9 +343,17 @@ def status_line(inc: m.Incident, tz: ZoneInfo) -> str:
     return "Not acknowledged yet." if inc.severity == "critical" else ""
 
 
+def told(inc: m.Incident) -> str:
+    """The incident's reason as people are told it: what the AI saw stays a possibility (they decide)."""
+    reason = inc.reason or ""
+    if (inc.agent_json or {}).get("verdict") == "alert" and reason and not reason.lower().startswith("possible"):
+        return f"Possible: {reason}"
+    return reason
+
+
 def caption(inc: m.Incident, camera_name: str, tz: ZoneInfo, base_url: str) -> str:
     lines = [f"{SEVERITY_WORD.get(inc.severity, inc.severity.title())}, {camera_name}, {_clock(inc.opened_at, tz)}",
-             inc.reason]
+             told(inc)]
     why = (inc.agent_json or {}).get("why")
     if why and inc.status in inc_.ACTIVE:
         lines.append(f"Graded {inc.severity}: {why}")
@@ -348,12 +376,13 @@ def buttons(inc: m.Incident, base_url: str) -> list:
     return rows
 
 
-def reminder(inc: m.Incident, camera_name: str, n: int, t: AlertTuning, tz: ZoneInfo) -> tuple[str, list]:
-    """A reminder's text and buttons: while the incident is open it asks again; after, it says who acted."""
+def reminder(inc: m.Incident, camera_name: str, sent_at: datetime, tz: ZoneInfo) -> tuple[str, list]:
+    """A reminder's text and buttons: while the incident is open it asks again, saying how long it has been open when
+    the reminder went; after, it says who acted."""
     if inc.status == inc_.OPEN:
-        first = (inc.reason or "").split("\n")[0]
-        minutes = f"{n * t.escalate_min:g}"
-        return (f"Still not acknowledged after {minutes} minutes. {camera_name}: {first}",
+        first = told(inc).split("\n")[0]
+        minutes = max(1, round((sent_at - inc.opened_at).total_seconds() / 60))
+        return (f"Still not acknowledged after {minutes} minute{'s' if minutes != 1 else ''}. {camera_name}: {first}",
                 [[("Acknowledge", f"ack:{inc.id}"), ("False alarm", f"false:{inc.id}")]])
     return f"{camera_name}: {status_line(inc, tz)}", []
 
@@ -383,9 +412,8 @@ def _camera_name(repo, camera_id: str | None) -> str:
 
 
 def _call(limiter: ChatLimiter, chat: str, now: datetime, fn):
-    """Runs one Bot API call to a chat within its limits: (result, None), or (None, seconds to wait). Calls go one
-    at a time, so the worker's two lanes never both take a chat's last free slot."""
-    with limiter.sending:
+    """Runs one Bot API call to a chat within its limits: (result, None), or (None, seconds to wait)."""
+    with limiter.chat_lock(chat):
         hold = limiter.hold(chat, now)
         if hold > 0:
             return None, hold
@@ -400,11 +428,62 @@ def _call(limiter: ChatLimiter, chat: str, now: datetime, fn):
         return result, None
 
 
+def move_chat(db, old: str, new: str) -> None:
+    """A group that became a supergroup has a new chat id: its link follows it."""
+    with db.tx() as s:
+        if s.scalar(select(m.TelegramLink.id).where(m.TelegramLink.chat_id == new)) is not None:
+            s.execute(delete(m.TelegramLink).where(m.TelegramLink.chat_id == old))
+        else:
+            s.execute(m.TelegramLink.__table__.update().where(m.TelegramLink.chat_id == old).values(chat_id=new))
+    log.info("a linked group became a supergroup; its link moved to the new chat")
+
+
+def deliver(db, limiter: ChatLimiter, chat: str, now: datetime, t: AlertTuning, what: str, send):
+    """One call, `send(chat)`, to one group, so a group that fails never holds up the others. A group that became a
+    supergroup is followed; a group the bot cannot reach any more is skipped; any other failure is tried again after
+    Tuning alerts.chat_retry_s, at most alerts.chat_tries times for this `what`. Returns (result, seconds to wait,
+    the group's chat id)."""
+    for _ in range(2):
+        try:
+            result, wait = _call(limiter, chat, now, lambda: send(chat))
+        except TelegramError as e:
+            if e.migrate_to and e.migrate_to != chat:
+                move_chat(db, chat, e.migrate_to)
+                chat = e.migrate_to
+                continue
+            if e.gone:
+                log.warning("chat %s is not reachable (%s); skipped", chat, e.description)
+                return None, None, chat
+            tries = limiter.failed(chat, what)
+            if tries >= t.chat_tries:
+                log.error("chat %s failed %s times for %s (%s); given up", chat, tries, what, e.description)
+                return None, None, chat
+            log.warning("chat %s failed for %s (%s); trying again later", chat, what, e.description)
+            return None, t.chat_retry_s, chat
+        if wait is None:
+            limiter.succeeded(chat, what)
+        return result, wait, chat
+    return None, t.chat_retry_s, chat
+
+
+def _send_post(channel, chat: str, text: str, photo: bytes | None, rows: list) -> tuple[str, bool]:
+    """The incident's own message: the still, or the text alone when Telegram refuses the picture."""
+    if photo:
+        try:
+            return channel.send(chat, text, photo, rows), True
+        except TelegramError as e:
+            if e.code != 400 or e.migrate_to or e.gone:
+                raise
+            log.warning("chat %s refused the still (%s); sent as text", chat, e.description)
+    return channel.send(chat, text, None, rows), False
+
+
 def sync_incident(repo, channel, limiter: ChatLimiter, incident_id: str, now: datetime, tuning: AlertTuning,
                   base_url: str, picture=lambda inc: None) -> float | None:
     """Brings the incident's messages in every linked group up to date: posts its message if it has none yet and
     should go to Telegram, and edits the ones whose text or buttons changed (a count change waits out
-    edit_every_s; a status change goes at once). Returns the seconds to wait before trying again, or None."""
+    edit_every_s; a status change goes at once). Each group on its own. Returns the seconds to wait before trying
+    again, or None."""
     with repo.tx() as s:
         inc = s.scalar(select(m.Incident).where(m.Incident.id == incident_id,
                                                 m.Incident.workspace_id == repo.workspace_id))
@@ -416,7 +495,8 @@ def sync_incident(repo, channel, limiter: ChatLimiter, incident_id: str, now: da
     tz, chats, warnings = _society(repo)
     camera = _camera_name(repo, inc.camera_id)
     text, rows = caption(inc, camera, tz, base_url), buttons(inc, base_url)
-    wanted = inc.status in inc_.ACTIVE and inc_.pushable(inc.severity, warnings)
+    wanted = (inc.status in inc_.ACTIVE and inc_.pushable(inc.severity, warnings)
+              and not (inc.agent_json or {}).get("held"))
     if not chats:
         if wanted:
             log.info("Telegram is not connected for %s; alert: %s", repo.workspace_id, text.replace("\n", " | "))
@@ -431,27 +511,23 @@ def sync_incident(repo, channel, limiter: ChatLimiter, incident_id: str, now: da
                 continue
             if not still:
                 still.append(picture(inc))
-            try:
-                mid, wait = _call(limiter, chat, now, lambda: channel.send(chat, text, still[0], rows))
-            except TelegramError as e:
-                if not e.gone:
-                    raise
-                log.warning("could not post to chat %s: %s", chat, e.description)
-                continue
+            sent, wait, chat = deliver(repo, limiter, chat, now, tuning, f"post {inc.id}",
+                                       lambda c: _send_post(channel, c, text, still[0], rows))
             if wait:
                 waits.append(wait)
+            if sent is None:
                 continue
+            mid, photo = sent
             with repo.tx() as s:
                 s.add(m.TelegramMessage(workspace_id=repo.workspace_id, incident_id=inc.id, chat_id=chat,
-                                        message_id=mid, kind="incident", photo=bool(still[0]),
+                                        message_id=mid, kind="incident", photo=photo,
                                         shown=_shown(inc, text, rows), sent_at=now))
                 row = s.get(m.Incident, inc.id)
                 if row is not None and row.telegram_message_id is None:
                     row.telegram_message_id = mid
             continue
         for msg in mine:
-            n = sum(1 for x in mine if x.kind == "reminder" and x.sent_at <= msg.sent_at)
-            body, keys = (text, rows) if msg.kind == "incident" else reminder(inc, camera, n, tuning, tz)
+            body, keys = (text, rows) if msg.kind == "incident" else reminder(inc, camera, msg.sent_at, tz)
             want = _shown(inc, body, keys)
             if msg.shown == want:
                 continue
@@ -459,17 +535,12 @@ def sync_incident(repo, channel, limiter: ChatLimiter, incident_id: str, now: da
             if msg.shown.rsplit(":", 1)[0] == _phase(inc) and since < tuning.edit_every_s:
                 waits.append(tuning.edit_every_s - since)
                 continue
-            try:
-                _, wait = _call(limiter, chat, now, lambda: channel.edit(chat, msg.message_id, body, keys, msg.photo))
-            except TelegramError as e:
-                if not e.gone:
-                    raise
-                log.warning("could not edit message %s in chat %s: %s", msg.message_id, chat, e.description)
-                wait = None
+            done, wait, _ = deliver(repo, limiter, chat, now, tuning, f"edit {msg.id}",
+                                    lambda c: channel.edit(c, msg.message_id, body, keys, msg.photo) or True)
             if wait:
                 waits.append(wait)
                 continue
-            with repo.tx() as s:
+            with repo.tx() as s:  # edited, or given up: either way it is not tried again for this text
                 s.execute(m.TelegramMessage.__table__.update().where(m.TelegramMessage.id == msg.id)
                           .values(shown=want, edited_at=now))
     return min(waits) if waits else None
@@ -477,33 +548,30 @@ def sync_incident(repo, channel, limiter: ChatLimiter, incident_id: str, now: da
 
 def repost(repo, channel, limiter: ChatLimiter, incident_id: str, n: int, now: datetime, tuning: AlertTuning
            ) -> tuple[bool, float | None]:
-    """Escalation step n: a reminder in reply to the incident's message in each group, while nobody has acted.
-    Returns whether the incident is still open, and the seconds to wait when a group is busy."""
+    """Escalation step n: a reminder in reply to the incident's message in each group, while nobody has acted; each
+    group on its own. Returns whether the incident is still open, and the seconds to wait when a group is busy or
+    failed."""
     with repo.tx() as s:
         inc = s.scalar(select(m.Incident).where(m.Incident.id == incident_id,
                                                 m.Incident.workspace_id == repo.workspace_id))
         msgs = [] if inc is None else list(s.scalars(select(m.TelegramMessage).where(
             m.TelegramMessage.workspace_id == repo.workspace_id, m.TelegramMessage.incident_id == incident_id)))
-    if inc is None or inc.status != inc_.OPEN or inc.severity != "critical":
+    if inc is None or inc.status != inc_.OPEN or inc.severity != "critical" or (inc.agent_json or {}).get("held"):
         return False, None
     tz, chats, _ = _society(repo)
     camera = _camera_name(repo, inc.camera_id)
-    body, keys = reminder(inc, camera, n, tuning, tz)
+    body, keys = reminder(inc, camera, now, tz)
     waits = []
     for chat in chats:
         mine = [x for x in msgs if x.chat_id == chat]
         main = next((x for x in mine if x.kind == "incident"), None)
         if main is None or sum(1 for x in mine if x.kind == "reminder") >= n:
             continue
-        try:
-            mid, wait = _call(limiter, chat, now, lambda: channel.send(chat, body, None, keys, main.message_id))
-        except TelegramError as e:
-            if not e.gone:
-                raise
-            log.warning("could not post a reminder to chat %s: %s", chat, e.description)
-            continue
+        mid, wait, chat = deliver(repo, limiter, chat, now, tuning, f"remind {inc.id} {n}",
+                                  lambda c: channel.send(c, body, None, keys, main.message_id))
         if wait:
             waits.append(wait)
+        if mid is None:
             continue
         with repo.tx() as s:
             s.add(m.TelegramMessage(workspace_id=repo.workspace_id, incident_id=inc.id, chat_id=chat, message_id=mid,
@@ -529,28 +597,38 @@ def _limiter(ctx: JobContext) -> ChatLimiter:
         return ctx.worker.state.setdefault("telegram_limiter", ChatLimiter(ctx.tuning.alerts))
 
 
-def _faces(ctx: JobContext, repo):
-    """The society's enrolled faces for blurring, read again every Tuning alerts.faces_refresh_s; None when the face
-    models cannot be loaded (then no picture leaves the app)."""
+def _stills(ctx: JobContext) -> StillMaker | None:
+    """The worker's one face detector and recognizer (YuNet and SFace), loaded once for every society; None when
+    the face models cannot be loaded (then no picture leaves the app; tried again after alerts.faces_refresh_s)."""
     from watchful.components import make_faces
     with _faces_lock:
-        cache = ctx.worker.state.setdefault("faces", {})
-        held = cache.get(repo.workspace_id)
+        state = ctx.worker.state
+        if state.get("stills") is None and time.monotonic() - state.get("stills_failed", -1e9) >= \
+                ctx.tuning.alerts.faces_refresh_s:
+            try:
+                state["stills"] = StillMaker(make_faces(ctx.settings, ctx.tuning))
+            except Exception:
+                state["stills_failed"] = time.monotonic()
+                log.exception("the face models could not be loaded; alerts go without a picture")
+        return state.get("stills")
+
+
+def _people(ctx: JobContext, repo) -> list:
+    """The society's enrolled faces, read again every Tuning alerts.faces_refresh_s."""
+    with _faces_lock:
+        held = ctx.worker.state.setdefault("people", {}).get(repo.workspace_id)
         if held is not None and time.monotonic() - held[0] < ctx.tuning.alerts.faces_refresh_s:
             return held[1]
-        try:
-            index = held[1] if held else make_faces(ctx.settings, ctx.tuning)
-            index.load(repo.list_enrollments())
-        except Exception:
-            log.exception("the face models could not be loaded; alerts go without a picture")
-            return None
-        cache[repo.workspace_id] = (time.monotonic(), index)
-        return index
+    people = repo.list_enrollments()
+    with _faces_lock:
+        ctx.worker.state["people"][repo.workspace_id] = (time.monotonic(), people)
+    return people
 
 
 def still_for(ctx: JobContext, repo, inc: m.Incident) -> bytes | None:
     """Telegram's still: cut from the incident's private picture (or its keyframe) with faces of anyone not enrolled
-    blurred. None when there is no picture or faces cannot be checked."""
+    blurred, and, for a person, the head too when no enrolled face is found in it (a face from above, in profile,
+    small or under infrared light is often not found). None when there is no picture or faces cannot be checked."""
     key = inc.picture_key or inc.keyframe_key
     if not key:
         return None
@@ -558,13 +636,15 @@ def still_for(ctx: JobContext, repo, inc: m.Incident) -> bytes | None:
         image = cv2.imdecode(np.frombuffer(ctx.worker.blobs.get(key), np.uint8), cv2.IMREAD_COLOR)
     except (OSError, KeyError):
         return None
-    faces = _faces(ctx, repo) if image is not None else None
-    if faces is None:
+    stills = _stills(ctx) if image is not None else None
+    if stills is None:
         return None
     box = inc.picture_box if inc.picture_key and inc.picture_box else None
-    heads = [box] if box and (inc.agent_json or {}).get("cls") == "person" else []
+    heads = []
+    if (inc.agent_json or {}).get("cls") == "person":  # a keyframe is the person's own box
+        heads = [box] if box else [(0, 0, image.shape[1], image.shape[0])]
     try:
-        return blurred_crop(image, box, faces, heads, ctx.tuning.crops)
+        return stills.make(image, box, _people(ctx, repo), heads, ctx.tuning.crops)
     except (cv2.error, ValueError):
         log.exception("the still for %s could not be made", inc.id)
         return None
@@ -592,11 +672,15 @@ def _escalate(ctx: JobContext, payload: dict) -> None:
         still_open, wait = repost(repo, ctx.worker.channel, _limiter(ctx), payload["incident_id"], n, ctx.now, t)
     if wait:
         raise Defer(wait)
-    if still_open and n < t.escalate_times:
-        since = datetime.fromisoformat(payload["since"])
-        ctx.queue.enqueue(inc_.ESCALATE, {**payload, "n": n + 1},
-                          run_after=since + timedelta(minutes=(n + 1) * t.escalate_min),
-                          key=f"escalate|{payload['incident_id']}|{n + 1}")
+    if not still_open:
+        return
+    since, step = datetime.fromisoformat(payload["since"]), n + 1
+    while since + timedelta(minutes=step * t.escalate_min) <= ctx.now:
+        step += 1  # steps that passed while the worker was down get no reminder of their own
+    if step <= t.escalate_times:
+        ctx.queue.enqueue(inc_.ESCALATE, {**payload, "n": step},
+                          run_after=since + timedelta(minutes=step * t.escalate_min),
+                          key=f"escalate|{payload['incident_id']}|{step}")
 
 
 @on_start

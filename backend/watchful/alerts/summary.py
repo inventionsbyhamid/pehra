@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 
 from watchful.alerts import incidents as inc_
-from watchful.alerts.telegram import TelegramError, _call, _limiter
+from watchful.alerts.telegram import _limiter, deliver
 from watchful.db import models as m
 from watchful.jobs import Defer, JobContext, handler, periodic
 
@@ -119,17 +119,12 @@ def _send(ctx: JobContext, payload: dict) -> None:
     for chat in chats:
         if chat in sent:
             continue
-        try:
-            _, wait = _call(_limiter(ctx), chat, ctx.now, lambda: ctx.worker.channel.send(chat, text))
-        except TelegramError as e:
-            if not e.gone:
-                raise
-            log.warning("could not post the summary to chat %s: %s", chat, e.description)
-            continue
+        _, wait, chat = deliver(repo, _limiter(ctx), chat, ctx.now, ctx.tuning.alerts, f"summary {payload['day']}",
+                                  lambda c: ctx.worker.channel.send(c, text))
         if wait:
             waits.append(wait)
         else:
-            sent.append(chat)
+            sent.append(chat)  # posted, or given up
     if waits:
         with ctx.queue.tx() as s:  # a deferred run skips the groups that already have it
             s.get(m.Job, ctx.job.id).payload = {**payload, "sent": sent}

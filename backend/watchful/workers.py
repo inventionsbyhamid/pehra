@@ -527,10 +527,7 @@ class WorkerManager:
         if c.severity != "critical":
             return False, None
         key, box = self._picture(repo, pack)
-        inc = incidents_.open_or_touch_incident(
-            repo, c.camera_id, c.watch_id, "critical", incidents_.checking_text(c.watch_name),
-            c.keyframe_keys[0] if c.keyframe_keys else None, c.ts, tuning=t, picture_key=key, picture_box=box)
-        return False, inc.id
+        return False, incidents_.open_before_check(repo, c, key, box, tuning=t).id
 
     # alerts
     def _on_candidate(self, pack: EvidencePack) -> None:

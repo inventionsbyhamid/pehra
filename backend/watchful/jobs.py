@@ -35,7 +35,7 @@ from watchful.tuning import Tuning
 
 log = logging.getLogger("watchful.jobs")
 
-HANDLER_MODULES = ("watchful.alerts.telegram", "watchful.alerts.summary")
+HANDLER_MODULES = ("watchful.alerts.incidents", "watchful.alerts.telegram", "watchful.alerts.summary")
 
 _HANDLERS: dict[str, Callable] = {}
 _DAILY: list[str] = []
@@ -286,8 +286,9 @@ class Worker:
             self.queue.job_deferred(job.id, now + timedelta(seconds=d.seconds), job.attempts)
         except Exception as e:
             log.exception("job %s (%s) failed", job.id, job.kind)
-            self.queue.job_failed(job.id, f"{type(e).__name__}: {e}", self.retry_in_s, self.max_attempts,
-                                  attempts=job.attempts)
+            # an urgent job is an alert someone waits for; it may run twice if Telegram took it but the answer was lost
+            retry = self.tuning.jobs.urgent_retry_s if job.kind in _URGENT else self.retry_in_s
+            self.queue.job_failed(job.id, f"{type(e).__name__}: {e}", retry, self.max_attempts, attempts=job.attempts)
         else:
             self.queue.job_done(job.id, attempts=job.attempts)
         return job

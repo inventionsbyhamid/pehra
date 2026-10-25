@@ -75,7 +75,9 @@ def make_router(ctx) -> APIRouter:
     def webhook(secret: str, request: Request, update: dict = Body(...)):
         expected = ctx.settings.telegram_webhook_secret or ""
         header = request.headers.get("x-telegram-bot-api-secret-token", "")
-        if not expected or not (hmac.compare_digest(secret, expected) and hmac.compare_digest(header, expected)):
+        want = expected.encode()  # bytes: compare_digest refuses str that is not ASCII
+        if not expected or not (hmac.compare_digest(secret.encode(), want)
+                                and hmac.compare_digest(header.encode(), want)):
             raise HTTPException(404, "Not found.")
         return handle_update(ctx.db, ctx.repo_for, update) or {}
 

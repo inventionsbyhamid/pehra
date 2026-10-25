@@ -125,13 +125,32 @@ def test_keyed_jobs_and_deferral(queue, settings):
     assert worker.run_once(now=t0 + timedelta(seconds=30)).id == first.id and len(ran) == 1
     assert get(queue, first.id).status == "done"
 
-    assert worker.schedule_daily(t0) == ["jobs.cleanup"] and worker.schedule_daily(t0) == []
+    assert worker.schedule_daily(t0) == ["jobs.cleanup", "incidents.retention"] and worker.schedule_daily(t0) == []
     worker.run_due(t0)
     old = queue.enqueue("test.record", {}, t0 - timedelta(days=10))
     with queue.tx() as s:
         row = s.get(Job, old.id)
         row.created_at, row.status = t0 - timedelta(days=10), "done"
     assert queue.delete_finished_before(t0 - timedelta(days=7)) == 1
+
+
+@handler("test.urgent_boom", urgent=True)
+def _urgent_boom(ctx, payload):
+    raise RuntimeError("Telegram took it but the answer was lost")
+
+
+def test_a_failed_urgent_job_is_tried_again_in_seconds(queue, settings):
+    """M-d: an urgent job (an alert being sent) is not left for a minute after a failure."""
+    tuning = load_tuning()
+    urgent = queue.enqueue("test.urgent_boom", {})
+    plain = queue.enqueue("test.plain_boom", {})
+    worker = Worker(queue, settings, tuning)
+    worker.run_once(kinds=["test.urgent_boom"])
+    worker.run_once(kinds=["test.plain_boom"])
+    soon = (get(queue, urgent.id).run_after - utcnow()).total_seconds()
+    late = (get(queue, plain.id).run_after - utcnow()).total_seconds()
+    assert get(queue, urgent.id).status == "queued" and soon <= tuning.jobs.urgent_retry_s
+    assert late > tuning.jobs.urgent_retry_s * 2  # an unknown kind fails like any job: a minute
 
 
 def test_worker_keeps_running_after_a_database_error(queue, settings):
@@ -233,4 +252,5 @@ def test_worker_command_runs_due_jobs(queue, settings, tmp_path):
                          capture_output=True, text=True, timeout=120)
     assert out.returncode == 0, out.stderr[-2000:]
     assert get(queue, job.id).status == "done"
-    assert jobs_module.HANDLER_MODULES == ("watchful.alerts.telegram", "watchful.alerts.summary")
+    assert jobs_module.HANDLER_MODULES == ("watchful.alerts.incidents", "watchful.alerts.telegram",
+                                           "watchful.alerts.summary")

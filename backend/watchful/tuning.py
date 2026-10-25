@@ -195,11 +195,16 @@ class ClipTuning(_Section):
 
 class AlertTuning(_Section):
     group_s: float = 600.0  # a trigger this soon after the last one on the same camera and watch joins its incident
+    # after a false alarm tap, that very trigger stays quiet this long from the tap (never longer); a new one is checked
+    false_alarm_quiet_s: float = 300.0
+    fingerprints_kept: int = 50  # triggers an incident remembers, for false_alarm_quiet_s
     escalate_min: float = 2.0  # an unacknowledged critical incident is posted again after this many minutes
     escalate_times: int = 3  # and at most this many times
     edit_every_s: float = 10.0  # a count change edits a Telegram message at most this often; a status change at once
     chat_per_min: int = 18  # Telegram allows about 20 messages a minute in a group
     chat_gap_s: float = 1.0  # and about one a second in one chat
+    chat_retry_s: float = 15.0  # a group whose message failed is tried again this soon; the other groups go on
+    chat_tries: int = 5  # then it is given up for that message
     code_minutes: float = 30.0  # a Telegram connect code works this long, once
     code_length: int = 8
     summary_hour: int = 9  # the daily summary, in the society's time zone
@@ -225,6 +230,7 @@ class JobTuning(_Section):
     urgent_lease_s: float = 30.0  # an urgent job (a Telegram send) left by a stopped worker runs again this soon
     max_attempts: int = 5
     retry_in_s: float = 60.0
+    urgent_retry_s: float = 5.0  # a failed urgent job (a Telegram send) is tried again this soon
     idle_s: float = 1.0
     urgent_idle_s: float = 0.2
     error_wait_s: float = 5.0

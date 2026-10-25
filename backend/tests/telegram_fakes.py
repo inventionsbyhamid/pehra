@@ -44,7 +44,7 @@ class FakeTelegram:
         self.calls: list[tuple[datetime | None, str, dict]] = []
         self.clock: datetime | None = None
         self.next_id = 100
-        self.replies: dict[str, list[httpx.Response]] = {}
+        self.replies: dict = {}  # method, or (method, chat id), to the answers to give first
         self.urls: list[str] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -56,8 +56,9 @@ class FakeTelegram:
         else:
             data = json.loads(request.content or b"{}")
         self.calls.append((self.clock, method, data))
-        if self.replies.get(method):
-            return self.replies[method].pop(0)
+        for key in ((method, str(data.get("chat_id"))), method):
+            if self.replies.get(key):
+                return self.replies[key].pop(0)
         if method.startswith("send"):
             self.next_id += 1
             return httpx.Response(200, json={"ok": True, "result": {"message_id": self.next_id}})

@@ -1,7 +1,7 @@
 """Telegram: linking a group with a one time code, taps that count only from the incident's own society, a false
 alarm that closes for everyone, stills with faces of people who are not enrolled blurred, and the bot's limits."""
 import logging
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import cv2
 import httpx
@@ -19,6 +19,7 @@ from watchful.alerts.telegram import (TelegramBot, TelegramChannel, TelegramErro
 from watchful.config import Settings
 from watchful.db import models as m
 from watchful.notify import LogChannel
+from watchful.rules.engine import Candidate
 from watchful.store.db import Camera
 from watchful.tuning import CropTuning
 from watchful.vision.faces import FaceIndex
@@ -77,7 +78,8 @@ def test_connect_with_code(env):
 
 
 def posted(env, chat_id: int, now=T0) -> tuple[m.Incident, str]:
-    inc = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None, now)
+    inc = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None, now,
+                                 fingerprint="fp_pool")
     env.run(now)
     with env.a.tx() as s:
         msg = s.scalar(select(m.TelegramMessage).where(m.TelegramMessage.incident_id == inc.id,
@@ -133,12 +135,25 @@ def test_false_alarm_closes_for_everyone_and_is_labelled(env):
     with env.a.tx() as s:
         committee = s.scalar(select(m.TelegramMessage.message_id).where(m.TelegramMessage.chat_id == "-1002"))
     assert env.tap(-1002, committee, f"ack:{inc.id}", user=(44, "Meera"))["text"] == "This alert is already closed."
+    # the very trigger the guard closed stays quiet for a while, and the closed incident takes nothing more
     again = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None,
-                                   at(60))
+                                   at(60), fingerprint="fp_pool")
     for minute in range(1, 6):
         env.run(at(60 * minute))
-    assert again.id == inc.id and inc_.get_incident(env.a, inc.id).status == "false_alarm"
-    assert len(env.fake.of("sendMessage", "sendPhoto")) == 2  # the same situation stays quiet, and no reminders
+    closed = inc_.get_incident(env.a, inc.id)
+    assert again.id == inc.id and (closed.status, closed.count) == ("false_alarm", 1)
+    assert len(env.fake.of("sendMessage", "sendPhoto")) == 2  # no reminders for a closed incident
+
+    # but the AI check of a new trigger finding it real is never silenced by the earlier tap
+    from watchful.agent.verifier import Verdict
+    c = Candidate("wat_pool", env.cams["pool"], at(330).timestamp(), 9, "critical", {}, [], "fp_new", "Pool",
+                  cls="person")
+    real = inc_.after_check(env.a, c, Verdict("alert", "A child is face down in the deep end."), "alt_2", now=at(330))
+    env.run(at(330))
+    assert real.id != inc.id and inc_.get_incident(env.a, inc.id).reason == "Someone is in the pool."
+    posts = env.fake.of("sendMessage")[2:]
+    assert sorted(c[2]["chat_id"] for c in posts) == ["-1001", "-1002"]
+    assert all("Possible: A child is face down in the deep end." in c[2]["text"] for c in posts)
 
 
 def test_buttons_and_caption_link_to_the_clip_behind_sign_in(env):
@@ -233,7 +248,7 @@ def test_the_token_is_never_printed(env, caplog):
     env.worker.run_once(now=T0)
     with env.a.tx() as s:
         job = s.scalar(select(m.Job).where(m.Job.kind == "telegram.sync"))
-    assert job.status == "queued" and "wrong chat" in job.error and TOKEN not in job.error
+    assert job.status == "queued" and "wrong chat" in caplog.text  # that group is tried again on its own
 
     def refuse(request):
         raise httpx.ConnectError(f"cannot reach {request.url}")
@@ -340,3 +355,156 @@ def test_api_without_a_token_says_telegram_is_not_connected(tmp_path):
     assert status["message"] == "Telegram is not connected. Alerts show here in the app."
     refused = admin.post("/api/telegram/connect")
     assert refused.status_code == 409 and "bot token" in refused.json()["detail"]
+
+
+# fix round 1
+
+
+def noisy(h=400, w=300) -> np.ndarray:
+    return np.random.default_rng(2).integers(0, 255, (h, w, 3), np.uint8)
+
+
+def test_still_blurs_the_head_of_a_person_whose_face_is_not_found(env):
+    """I3: a person from above or in profile has no face YuNet finds; their head is blurred anyway, because the
+    track's class reaches the incident."""
+    from test_rules import engine, tick, track
+    from watchful.rules.presets import preset
+    t0 = 1_800_000_000.0
+    fell = engine(preset("fall"))
+    fell.on_tick("cam", tick(t0, [track(1, posture="falling")]), t0)
+    assert [c.cls for c in fell.on_tick("cam", tick(t0 + 1, [track(1, posture="fallen")]), t0 + 1)] == ["person"]
+
+    from watchful.alerts.telegram import still_for
+    from watchful.jobs import JobContext
+    frame = noisy()
+    env.blobs.put("pool/person.jpg", cv2.imencode(".png", frame)[1].tobytes(), "image/png")
+    env.blobs.put("pool/kf.jpg", cv2.imencode(".png", frame)[1].tobytes(), "image/png")
+    def person(camera: str) -> Candidate:
+        return Candidate("wat_fall", env.cams[camera], T0.timestamp(), 1, "critical", {}, ["pool/kf.jpg"], "fp1",
+                         "Fall", cls="person")
+    # the frame around a person box (the box grown by its margin is the whole 300 by 400 frame here)
+    framed = inc_.open_before_check(env.a, person("pool"), "pool/person.jpg", [50.0, 20.0, 200.0, 360.0])
+    keyframe_only = inc_.open_before_check(env.a, person("gate"))  # the keyframe is the person's own box
+    assert framed.agent_json["cls"] == keyframe_only.agent_json["cls"] == "person"
+    ctx = JobContext(None, env.worker, 30, T0)
+    for inc, head, body in ((framed, (60, 30, 180, 90), (60, 250, 180, 100)),
+                            (keyframe_only, (20, 10, 260, 100), (20, 250, 260, 120))):
+        out = cv2.imdecode(np.frombuffer(still_for(ctx, env.a, inc), np.uint8), cv2.IMREAD_COLOR)
+        assert out.shape == frame.shape
+        assert sharpness(out, head) < 0.1 * sharpness(frame, head)
+        assert sharpness(out, body) > 0.5 * sharpness(frame, body)
+
+
+def test_one_failing_group_never_holds_up_the_others(env):
+    """I4: group 1 answers 400; group 2 still gets the critical alert, its reminder and the summary, and group 1 is
+    tried again on its own."""
+    env.link(env.a, -1001, "Guards")
+    env.link(env.a, -1002, "Committee")
+    bad = lambda: httpx.Response(400, json={"ok": False, "error_code": 400, "description": "Bad Request: oops"})
+    env.fake.replies[("sendMessage", "-1001")] = [bad(), bad()]
+    inc = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None, T0)
+    env.run(T0)
+    assert [c[2]["chat_id"] for c in env.fake.of("sendMessage")] == ["-1001", "-1002"]
+    env.run(at(15))
+    sent = [c for c in env.fake.of("sendMessage") if c[0] == at(15)]
+    assert [c[2]["chat_id"] for c in sent] == ["-1001"]  # only the failing group, tried again; it fails again
+    env.run(at(30))
+    with env.a.tx() as s:
+        chats = sorted(s.scalars(select(m.TelegramMessage.chat_id).where(m.TelegramMessage.incident_id == inc.id)))
+    assert chats == ["-1001", "-1002"]
+
+    env.fake.replies[("sendMessage", "-1001")] = [bad()]
+    env.run(at(120))
+    reminders = [c for c in env.fake.of("sendMessage") if "Still not" in c[2]["text"]]
+    assert [c[2]["chat_id"] for c in reminders] == ["-1001", "-1002"] and reminders[1][0] == at(120)
+    env.run(at(135))
+    reminders = [c for c in env.fake.of("sendMessage") if "Still not" in c[2]["text"]]
+    assert sorted(c[2]["chat_id"] for c in reminders) == ["-1001", "-1001", "-1002"]
+    inc_.acknowledge(env.a, inc.id, inc_.Actor("u", "Ravi"), at(140))
+    for second in range(140, 150):
+        env.run(at(second))
+
+    from watchful.alerts.summary import queue_summaries
+    nine = datetime(2026, 10, 26, 3, 30, tzinfo=UTC)
+    env.fake.replies[("sendMessage", "-1001")] = [bad()]
+    queue_summaries(env.worker, nine)
+    env.run(nine)
+    summaries = [c for c in env.fake.of("sendMessage") if c[2]["text"].startswith("Daily summary")]
+    assert [c[2]["chat_id"] for c in summaries] == ["-1001", "-1002"]
+
+
+def test_a_group_that_became_a_supergroup_is_followed(env):
+    env.link(env.a, -1001)
+    env.fake.replies[("sendMessage", "-1001")] = [httpx.Response(400, json={
+        "ok": False, "error_code": 400, "description": "Bad Request: group chat was upgraded to a supergroup chat",
+        "parameters": {"migrate_to_chat_id": -100777}})]
+    inc = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None, T0)
+    env.run(T0)
+    assert [c[2]["chat_id"] for c in env.fake.of("sendMessage")] == ["-1001", "-100777"]
+    assert [g.chat_id for g in linked_groups(env.a, env.a.workspace_id)] == ["-100777"]
+    with env.a.tx() as s:
+        assert s.scalar(select(m.TelegramMessage.chat_id).where(m.TelegramMessage.incident_id == inc.id)) == "-100777"
+
+
+def test_a_refused_still_goes_as_text(env):
+    env.link(env.a, -1001)
+    env.fake.replies["sendPhoto"] = [httpx.Response(400, json={"ok": False, "error_code": 400,
+                                                               "description": "Bad Request: IMAGE_PROCESS_FAILED"})]
+    inc = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.",
+                                 env.picture(), T0)
+    env.run(T0)
+    assert [c[1] for c in env.fake.calls] == ["sendPhoto", "sendMessage"]
+    inc_.acknowledge(env.a, inc.id, inc_.Actor("u", "Ravi"), at(5))
+    env.run(at(5))
+    assert env.fake.calls[-1][1] == "editMessageText"  # edited as the text it is
+
+
+def test_webhook_secret_rules(tmp_path):
+    """M-b and M-c: a secret Telegram would refuse is refused at start; a path that is not ASCII is a 404."""
+    from fastapi.testclient import TestClient
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, session_secret="s" * 32, telegram_webhook_secret="has spaces and é")
+    assert Settings(_env_file=None, session_secret="s" * 32, telegram_webhook_secret="").telegram_webhook_secret is None
+    app, *_ = api_app(tmp_path)
+    hook = TestClient(app, raise_server_exceptions=False)
+    res = hook.post("/telegram/webhook/caf%C3%A9", json={}, headers={"x-telegram-bot-api-secret-token": HOOK})
+    assert res.status_code == 404
+
+
+def test_one_face_model_for_every_society(env, monkeypatch):
+    """M-e: the worker loads YuNet and SFace once, not once per society."""
+    from watchful import components
+    from watchful.alerts.telegram import still_for
+    from watchful.jobs import JobContext
+    made = []
+    real = components.make_faces
+    monkeypatch.setattr(components, "make_faces", lambda *a, **k: made.append(1) or real(*a, **k))
+    ctx = JobContext(None, env.worker, 30, T0)
+    for repo, cam in ((env.a, env.cams["pool"]), (env.b, env.cams["b_gate"])):
+        inc = open_or_touch_incident(repo, cam, "w", "critical", "x", env.picture(f"{cam}/kf.jpg"), T0)
+        assert still_for(ctx, repo, inc)
+    assert len(made) == 1
+
+
+def test_a_slow_group_does_not_hold_up_another(env):
+    """M-f: calls are one at a time per group, not across groups."""
+    import threading
+    from watchful.alerts.telegram import ChatLimiter, _call
+    limiter = ChatLimiter(env.worker.tuning.alerts)
+    inside, release = threading.Event(), threading.Event()
+
+    def slow():
+        inside.set()
+        release.wait(5)
+        return "a"
+    t = threading.Thread(target=lambda: _call(limiter, "-1", T0, slow))
+    t.start()
+    assert inside.wait(5)
+    done = []
+    other = threading.Thread(target=lambda: done.append(_call(limiter, "-2", T0, lambda: "b")))
+    other.start()
+    other.join(2)
+    finished = list(done)  # while group -1 is still in its slow call
+    release.set()
+    t.join(5)
+    assert finished == [("b", None)]

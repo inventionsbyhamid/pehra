@@ -1,6 +1,8 @@
 """Stills for alerts that leave the app (Telegram): the moment around the flagged box, with the face of everyone who
 is not an enrolled, consenting staff member blurred. YuNet finds the faces and SFace says whether a face is enrolled
 (the society's FaceIndex); in doubt a face is blurred. A person box whose face cannot be found has its head blurred."""
+import threading
+
 import cv2
 import numpy as np
 
@@ -98,3 +100,18 @@ def frame_still(jpeg: bytes, box: Box | None, cfg: CropTuning = CropTuning()) ->
         raise ValueError("the still could not be encoded")
     inner = None if box is None else [round(box[0] - x0, 1), round(box[1] - y0, 1), round(box[2], 1), round(box[3], 1)]
     return jpg.tobytes(), inner
+
+
+class StillMaker:
+    """One face detector and recognizer for the whole process (memory must not grow with the number of societies),
+    used by one still at a time, since a still changes the detector's input size and threshold; each society brings
+    its own enrolled faces."""
+
+    def __init__(self, index):
+        self.index, self._lock = index, threading.Lock()
+
+    def make(self, frame: np.ndarray, box: Box | None, people: list, heads: list[Box] = (),
+             cfg: CropTuning = CropTuning()) -> bytes:
+        with self._lock:
+            self.index.load(people)
+            return blurred_crop(frame, box, self.index, heads, cfg)

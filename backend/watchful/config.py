@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -71,7 +72,7 @@ class Settings(BaseSettings):
     # alerts: the channel incidents go to (alerts/telegram.py); without TELEGRAM_BOT_TOKEN the log channel stands in
     alert_channel: str = "telegram"
     telegram_bot_token: str | None = None  # from BotFather; never logged
-    telegram_webhook_secret: str | None = None  # Telegram sends it back with every update
+    telegram_webhook_secret: str | None = None  # Telegram sends it back with every update; A-Z a-z 0-9 _ -, up to 256
     telegram_api_url: str = "https://api.telegram.org"
     run_jobs_in_app: bool = True  # false where systemd runs the job worker on its own (AWS)
 
@@ -130,6 +131,17 @@ class Settings(BaseSettings):
     @classmethod
     def _data_keys_old(cls, value: list[str]) -> list[str]:
         return [check_data_key(k, "DATA_KEY_OLD") for k in value]
+
+    @field_validator("telegram_webhook_secret")
+    @classmethod
+    def _webhook_secret(cls, value: str | None) -> str | None:
+        """Telegram's secret_token takes 1 to 256 of A to Z, a to z, 0 to 9, _ and -; setWebhook refuses others."""
+        if not value:
+            return None  # blank: no webhook
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value):
+            raise ValueError("TELEGRAM_WEBHOOK_SECRET may hold only letters, digits, _ and - (at most 256); make one "
+                             f"with {MAKE_SECRET}")
+        return value
 
     @property
     def database(self) -> str:

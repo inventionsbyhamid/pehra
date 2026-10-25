@@ -266,3 +266,150 @@ def test_the_camera_manager_files_live_candidates_as_incidents(tmp_path):
         assert sorted(set(jobs)) == ["incident.escalate", "telegram.sync"]
     finally:
         manager.shutdown()
+
+
+# fix round 1
+
+
+def live(env, fp: str, ts: float, cls: str | None = "person", camera: str = "pool") -> Candidate:
+    return Candidate("wat_pool", env.cams[camera], at(ts).timestamp(), 1, "critical", {"reasons": ["still in water"]},
+                     [], fp, "Someone still in the water", cls=cls)
+
+
+def test_a_false_alarm_never_silences_a_later_real_alert(env):
+    """C1: a guard closes the first one as a false alarm; for two hours new tracks keep triggering and the AI check
+    finds each real. The closed incident takes none of them and the real ones are posted."""
+    env.link(env.a, -1001)
+    first = inc_.open_before_check(env.a, live(env, "fp0", 0))
+    env.run(at(0))
+    inc_.false_alarm(env.a, first.id, RAVI, at(10))
+    env.run(at(10))
+    real = Verdict("alert", "A child is face down in the deep end.", [], "critical", "not moving")
+    for i in range(1, 25):
+        ts = 300 * i
+        c = live(env, f"fp{i}", ts)
+        early = inc_.open_before_check(env.a, c)
+        env.run(at(ts))
+        inc_.after_check(env.a, c, real, f"alt_{i}", incident_id=early.id, now=at(ts + 5))
+        env.run(at(ts + 5))
+    closed = inc_.get_incident(env.a, first.id)
+    assert (closed.status, closed.count, closed.reason) == ("false_alarm", 1, "Possible: Someone still in the water. "
+                                                                              "Checking now.")
+    open_now = inc_.list_incidents(env.a, ("open",))
+    assert len(open_now) == 1 and open_now[0].reason == "A child is face down in the deep end."
+    posts = env.fake.of("sendMessage")[1:]
+    assert posts and "Possible: A child is face down in the deep end." in posts[0][2]["text"]
+    assert posts[0][0] == at(305)  # held for the check after the tap, then posted at once when it was real
+
+
+def test_a_false_alarm_quiets_only_its_own_trigger_for_a_fixed_window(env):
+    env.link(env.a, -1001)
+    inc = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "warning", "Pool in use late.", None, at(0),
+                                 fingerprint="fpA")
+    inc_.false_alarm(env.a, inc.id, RAVI, at(5))
+    for ts in range(10, 300, 10):  # the same trigger keeps coming: it stays quiet, and the window does not move
+        quiet = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "warning", "Pool in use late.", None,
+                                       at(ts), fingerprint="fpA")
+        assert quiet.id == inc.id
+    after = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "warning", "Pool in use late.", None,
+                                   at(5 + 301), fingerprint="fpA")
+    assert after.id != inc.id and after.status == "open"
+    other = open_or_touch_incident(env.b, env.cams["b_gate"], "wat_pool", "warning", "x", None, at(20),
+                                   fingerprint="fpA")
+    assert other.workspace_id == env.b.workspace_id
+    closed = inc_.get_incident(env.a, inc.id)
+    assert (closed.count, closed.last_at) == (1, at(0))
+    assert inc_.false_alarm(env.a, inc.id, RAVI, at(400))[1] is False  # closed already
+    gone = open_or_touch_incident(env.a, env.cams["gate"], "camera_offline", "warning", "Offline.", None, at(500))
+    inc_.resolve(env.a, gone.id, at(510))
+    assert inc_.false_alarm(env.a, gone.id, RAVI, at(520))[1] is False  # only open or acknowledged ones
+
+
+def test_an_ai_dismissal_holds_later_triggers_until_checked(env):
+    """I2: a guard sits by the pool after hours; each new track is dismissed by the AI check. Only the first one is
+    posted (and cleared); later ones wait for the check, and a real one goes at once."""
+    env.link(env.a, -1001)
+    calm = Verdict("dismissed", "A guard is sitting on a chair by the pool.")
+    for i in range(10):
+        ts = 30 * i
+        c = live(env, f"fp{i}", ts)
+        early = inc_.open_before_check(env.a, c)
+        env.run(at(ts))
+        inc_.after_check(env.a, c, calm, incident_id=early.id, now=at(ts + 5))
+        env.run(at(ts + 5))
+    assert len(env.fake.of("sendMessage", "sendPhoto")) == 1
+    assert len(env.fake.of("editMessageText", "editMessageCaption")) == 1
+    assert "Cleared by the AI check" in env.fake.of("editMessageText")[0][2]["text"]
+    assert len(inc_.list_incidents(env.a, ("resolved",))) == 10
+
+    c = live(env, "fp_real", 400)
+    early = inc_.open_before_check(env.a, c)
+    env.run(at(400))
+    assert len(env.fake.of("sendMessage", "sendPhoto")) == 1  # held
+    inc_.after_check(env.a, c, Verdict("alert", "Someone slipped into the water.", [], "critical", "went under"),
+                     incident_id=early.id, now=at(406))
+    env.run(at(406))
+    assert "Possible: Someone slipped into the water." in env.fake.of("sendMessage")[-1][2]["text"]
+    env.run(at(400 + 120))
+    assert "Still not acknowledged after 2 minutes" in env.fake.of("sendMessage")[-1][2]["text"]
+
+
+def test_escalation_after_downtime_sends_one_reminder_with_the_real_minutes(env):
+    """M-a: the worker was down for 30 minutes: one reminder saying so, not three at once."""
+    env.link(env.a, -1001)
+    open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", POOL_TEXT, None, at(0))
+    for second in range(1800, 1806):
+        env.run(at(second))
+    for minute in range(31, 40):
+        env.run(at(60 * minute))
+    reminders = [c for c in env.fake.of("sendMessage") if "Still not" in c[2]["text"]]
+    assert len(reminders) == 1 and "after 30 minutes" in reminders[0][2]["text"]
+
+
+def test_the_edited_caption_still_says_possible(env):
+    """M-h: the AI's words are a possibility; people decide."""
+    env.link(env.a, -1001)
+    c = live(env, "fp1", 0)
+    early = inc_.open_before_check(env.a, c)
+    env.run(at(0))
+    inc_.after_check(env.a, c, Verdict("alert", "A person is floating face down."), incident_id=early.id, now=at(5))
+    env.run(at(5))
+    assert env.fake.of("editMessageText")[-1][2]["text"].splitlines()[1] == "Possible: A person is floating face down."
+
+
+def test_incidents_are_deleted_after_each_societys_retention(env, monkeypatch):
+    """M-g: a daily job in the job worker deletes incidents, their Telegram records and pictures after retention."""
+    env.link(env.a, -1001)
+    env.blobs.put("pool/frame.jpg", b"jpeg", "image/jpeg")
+    old = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", POOL_TEXT, None, at(0),
+                                 picture_key="pool/frame.jpg", picture_box=[1, 2, 3, 4])
+    env.run(at(0))
+    theirs = open_or_touch_incident(env.b, env.cams["b_gate"], "wat_b", "critical", "x", None, at(0))
+    later = at(8 * 86400)
+    recent = open_or_touch_incident(env.a, env.cams["gate"], "wat_gate", "critical", "y", None, later)
+    monkeypatch.setattr(inc_, "retention_days", lambda settings, ws: 30 if ws.id == env.b.workspace_id else 7)
+    assert env.worker.schedule_daily(later) and env.run(later)
+    assert inc_.get_incident(env.a, old.id) is None and inc_.get_incident(env.a, recent.id) is not None
+    assert inc_.get_incident(env.b, theirs.id) is not None  # Lake View keeps 30 days
+    with env.a.tx() as s:
+        assert s.scalar(select(m.TelegramMessage.id).where(m.TelegramMessage.incident_id == old.id)) is None
+    with pytest.raises((OSError, KeyError)):
+        env.blobs.get("pool/frame.jpg")
+
+
+def test_after_a_false_alarm_the_next_real_alert_opens_and_is_posted(env):
+    """C1 with the original calls only: the false alarm incident takes no more triggers, and the next moment the AI
+    check finds real is its own incident, posted."""
+    env.link(env.a, -1001)
+    inc_.set_warnings(env.a, True)
+    first = open_or_touch_incident(env.a, env.cams["gate"], "wat_gate", "warning", "The gate is open late.", None,
+                                   at(0))
+    env.run(at(0))
+    inc_.false_alarm(env.a, first.id, RAVI, at(10))
+    env.run(at(10))
+    c = Candidate("wat_gate", env.cams["gate"], at(60).timestamp(), 2, "warning", {}, [], "fp2", "Gate open late")
+    real = inc_.after_check(env.a, c, Verdict("alert", "The gate is wide open and a car is waiting."), "alt_2",
+                            now=at(60))
+    env.run(at(60))
+    assert real.id != first.id and inc_.get_incident(env.a, first.id).count == 1
+    assert "a car is waiting" in env.fake.of("sendMessage")[-1][2]["text"]

@@ -4,26 +4,28 @@ into one record with a severity, a count, a status (open, acknowledged, false_al
 Opening, touching or closing an incident queues its Telegram message in the same transaction; the job worker sends
 and edits it (alerts/telegram.py). Critical goes at once, before the AI check finishes; a warning only when the
 society turned warnings on; info never. An unacknowledged critical incident is posted again after Tuning
-alerts.escalate_min, at most alerts.escalate_times times. A false alarm closes the incident for everyone and keeps
-repeats of the same situation quiet for Tuning alerts.group_s; its who and when are the label behind each watch's
-precision. Every function takes the society's repository, so an id from another society is not found."""
+alerts.escalate_min, at most alerts.escalate_times times. A false alarm closes the incident for everyone; its who
+and when are the label behind each watch's precision. A closed incident never takes new triggers, and an AI check
+that finds a real moment is never silenced by an earlier false alarm. Every function takes the society's repository,
+so an id from another society is not found."""
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 
 from watchful.db import models as m
-from watchful.jobs import JobQueue
+from watchful.jobs import JobQueue, handler
 from watchful.tuning import AlertTuning
 
 SEVERITIES = ("info", "warning", "critical")
 OPEN, ACKNOWLEDGED, FALSE_ALARM, RESOLVED = "open", "acknowledged", "false_alarm", "resolved"
 ACTIVE = (OPEN, ACKNOWLEDGED)
-SYNC, ESCALATE = "telegram.sync", "incident.escalate"
+SYNC, ESCALATE, RETENTION = "telegram.sync", "incident.escalate", "incidents.retention"
 WARNINGS_KEY = "telegram_warnings"  # Meta: "on" when the society wants warnings on Telegram too
+AI_CHECK = "the AI check"  # agent_json closed_by of an incident the AI check cleared
 
-_lock = threading.Lock()  # grouping is check then write; one writer at a time in this process
+_lock = threading.RLock()  # grouping is check then write; one writer at a time in this process
 
 
 @dataclass(frozen=True)
@@ -105,10 +107,29 @@ def active_incident(repo, camera_id: str | None, watch_id: str | None, now=None,
 
 
 def _latest(s, workspace_id, camera_id, watch_id, now, t: AlertTuning) -> m.Incident | None:
+    """The open or acknowledged incident a trigger joins; a closed one never takes new triggers."""
     return s.scalar(select(m.Incident).where(
         m.Incident.workspace_id == workspace_id, _same(m.Incident.camera_id, camera_id),
-        _same(m.Incident.watch_id, watch_id), m.Incident.status != RESOLVED,
+        _same(m.Incident.watch_id, watch_id), m.Incident.status.in_(ACTIVE),
         m.Incident.last_at >= now - timedelta(seconds=t.group_s)).order_by(m.Incident.last_at.desc()).limit(1))
+
+
+def _closed_since(s, workspace_id, camera_id, watch_id, since: datetime, false_alarm_only: bool = False):
+    """The incidents on this camera and watch closed at or after `since`: by a person as a false alarm, or cleared
+    by the AI check. Counted from when they closed, so later triggers never move the window."""
+    closed = [m.Incident.status == FALSE_ALARM] if false_alarm_only else \
+        [or_(m.Incident.status == FALSE_ALARM, m.Incident.agent_json["closed_by"].as_string() == AI_CHECK)]
+    return list(s.scalars(select(m.Incident).where(
+        m.Incident.workspace_id == workspace_id, _same(m.Incident.camera_id, camera_id),
+        _same(m.Incident.watch_id, watch_id), m.Incident.closed_at >= since, *closed)
+        .order_by(m.Incident.closed_at.desc())))
+
+
+def _quiet(s, workspace_id, camera_id, watch_id, fingerprint: str, now: datetime, t: AlertTuning):
+    """A false alarm closed within Tuning alerts.false_alarm_quiet_s that already took this very trigger."""
+    since = now - timedelta(seconds=t.false_alarm_quiet_s)
+    return next((inc for inc in _closed_since(s, workspace_id, camera_id, watch_id, since, True)
+                 if fingerprint in (inc.agent_json or {}).get("fingerprints", [])), None)
 
 
 def _queue_sync(s, workspace_id: str, incident_id: str, now: datetime, urgent: bool) -> None:
@@ -133,7 +154,7 @@ def _queue_escalation(s, inc: m.Incident, t: AlertTuning) -> None:
 
 
 def _notify(s, inc: m.Incident, now: datetime, t: AlertTuning, urgent: bool, escalate: bool) -> None:
-    if inc.status not in ACTIVE:
+    if inc.status not in ACTIVE or (inc.agent_json or {}).get("held"):
         return
     meta = s.get(m.Meta, (inc.workspace_id, WARNINGS_KEY))
     if not pushable(inc.severity, meta is not None and meta.value == "on"):
@@ -143,45 +164,82 @@ def _notify(s, inc: m.Incident, now: datetime, t: AlertTuning, urgent: bool, esc
         _queue_escalation(s, inc, t)
 
 
+def _remember(inc: m.Incident, fingerprint: str | None, t: AlertTuning) -> None:
+    if fingerprint:
+        seen = [f for f in (inc.agent_json or {}).get("fingerprints", []) if f != fingerprint]
+        inc.agent_json = {**(inc.agent_json or {}), "fingerprints": (seen + [fingerprint])[-t.fingerprints_kept:]}
+
+
+def _open_or_touch(s, workspace_id: str, camera_id, watch_id, severity: str, reason: str, keyframe_key, now, t,
+                   notify: bool, picture_key=None, picture_box=None, extra: dict | None = None,
+                   fingerprint: str | None = None, check_first: bool = False) -> m.Incident:
+    if severity not in SEVERITIES:
+        raise ValueError(f"severity is one of {', '.join(SEVERITIES)}")
+    if fingerprint and (quiet := _quiet(s, workspace_id, camera_id, watch_id, fingerprint, now, t)) is not None:
+        return quiet
+    inc = _latest(s, workspace_id, camera_id, watch_id, now, t)
+    if inc is None:
+        held = check_first and bool(_closed_since(s, workspace_id, camera_id, watch_id,
+                                                  now - timedelta(seconds=t.group_s)))
+        inc = m.Incident(workspace_id=workspace_id, camera_id=camera_id, watch_id=watch_id, severity=severity,
+                         status=OPEN, opened_at=now, last_at=now, count=1, reason=reason or "",
+                         keyframe_key=keyframe_key, picture_key=picture_key, picture_box=picture_box,
+                         agent_json={**(extra or {}), **({"held": True} if held else {})})
+        _remember(inc, fingerprint, t)
+        s.add(inc)
+        s.flush()
+        if notify:
+            _notify(s, inc, now, t, urgent=True, escalate=True)
+        return inc
+    inc.count += 1
+    inc.last_at = max(inc.last_at, now)
+    rose = SEVERITIES.index(severity) > SEVERITIES.index(inc.severity)
+    if rose:
+        inc.severity = severity
+    if reason and not inc.reason:
+        inc.reason = reason
+    if keyframe_key and not inc.keyframe_key:
+        inc.keyframe_key = keyframe_key
+    if picture_key and not inc.picture_key:
+        inc.picture_key, inc.picture_box = picture_key, picture_box
+    if extra:
+        inc.agent_json = {**extra, **(inc.agent_json or {})}
+    _remember(inc, fingerprint, t)
+    if notify:
+        _notify(s, inc, now, t, urgent=rose, escalate=rose)
+    return inc
+
+
 def open_or_touch_incident(repo, camera_id: str | None, watch_id: str | None, severity: str, reason: str,
                            keyframe_key: str | None = None, now=None, *, tuning: AlertTuning | None = None,
                            notify: bool = True, picture_key: str | None = None, picture_box: list | None = None,
-                           extra: dict | None = None) -> m.Incident:
-    """Opens an incident, or adds this trigger to the one it repeats: the same camera and watch (a health problem
-    passes its own watch_id, such as "camera_offline") with a trigger in the last Tuning alerts.group_s. A repeat
-    raises the count and never lowers the severity; a false alarm stays closed and quiet. `notify` False (a recorded
-    upload, not a live camera) keeps it off Telegram. `extra` is kept in agent_json."""
+                           extra: dict | None = None, fingerprint: str | None = None,
+                           check_first: bool = False) -> m.Incident:
+    """Opens an incident, or adds this trigger to the open or acknowledged one it repeats: the same camera and watch
+    (a health problem passes its own watch_id, such as "camera_offline") with a trigger in the last Tuning
+    alerts.group_s. A repeat raises the count and never lowers the severity. A closed incident never takes new
+    triggers: only the very trigger (`fingerprint`) a false alarm closed stays quiet, for Tuning
+    alerts.false_alarm_quiet_s from the tap (the closed incident is returned unchanged). `check_first` (a candidate
+    before its AI check) holds a new incident off Telegram until the check says it is real, when this camera and watch
+    was cleared by the AI or closed as a false alarm in the last alerts.group_s. `notify` False (a recorded upload,
+    not a live camera) keeps it off Telegram. `extra` is kept in agent_json."""
     t, now = tuning or AlertTuning(), when(now)
-    if severity not in SEVERITIES:
-        raise ValueError(f"severity is one of {', '.join(SEVERITIES)}")
     with _lock, repo.tx() as s:
-        inc = _latest(s, repo.workspace_id, camera_id, watch_id, now, t)
-        if inc is None:
-            inc = m.Incident(workspace_id=repo.workspace_id, camera_id=camera_id, watch_id=watch_id, severity=severity,
-                             status=OPEN, opened_at=now, last_at=now, count=1, reason=reason or "",
-                             keyframe_key=keyframe_key, picture_key=picture_key, picture_box=picture_box,
-                             agent_json=dict(extra or {}))
-            s.add(inc)
-            s.flush()
-            if notify:
-                _notify(s, inc, now, t, urgent=True, escalate=True)
-            return inc
-        inc.count += 1
-        inc.last_at = max(inc.last_at, now)
-        rose = SEVERITIES.index(severity) > SEVERITIES.index(inc.severity)
-        if rose:
-            inc.severity = severity
-        if reason and not inc.reason:
-            inc.reason = reason
-        if keyframe_key and not inc.keyframe_key:
-            inc.keyframe_key = keyframe_key
-        if picture_key and not inc.picture_key:
-            inc.picture_key, inc.picture_box = picture_key, picture_box
-        if extra:
-            inc.agent_json = {**extra, **(inc.agent_json or {})}
-        if notify:
-            _notify(s, inc, now, t, urgent=rose, escalate=rose)
-        return inc
+        return _open_or_touch(s, repo.workspace_id, camera_id, watch_id, severity, reason, keyframe_key, now, t,
+                              notify, picture_key, picture_box, extra, fingerprint, check_first)
+
+
+def open_before_check(repo, candidate, picture_key: str | None = None, picture_box: list | None = None, *,
+                      tuning: AlertTuning | None = None) -> m.Incident:
+    """A critical candidate's incident, opened before its AI check so Telegram hears at once ("Possible: ...
+    Checking now."), unless this camera and watch was just cleared or closed as a false alarm: then it waits for the
+    check and goes only if the check says it is real."""
+    c = candidate
+    return open_or_touch_incident(repo, c.camera_id, c.watch_id, "critical", checking_text(c.watch_name),
+                                  c.keyframe_keys[0] if c.keyframe_keys else None, c.ts, tuning=tuning,
+                                  picture_key=picture_key, picture_box=picture_box,
+                                  extra={"cls": getattr(c, "cls", None)}, fingerprint=c.fingerprint,
+                                  check_first=True)
 
 
 def record_verdict(repo, incident_id: str, status: str, severity: str | None, summary: str, why: str = "",
@@ -189,20 +247,37 @@ def record_verdict(repo, incident_id: str, status: str, severity: str | None, su
                    notify: bool = True) -> m.Incident | None:
     """The AI check's verdict on an incident: its summary becomes the reason and its grade the severity (a critical
     one stays critical). A dismissal clears an incident nobody has acted on yet; the verify prompt lets the agent
-    dismiss a critical moment only with visual proof that everyone is safe."""
+    dismiss a critical moment only with visual proof that everyone is safe. A real moment is never silenced: when
+    the incident was closed meanwhile (a false alarm tap, say), the verdict opens a new one and it is posted. Returns
+    the incident the verdict is on."""
     t, now = tuning or AlertTuning(), when(now)
+    verdict = {"verdict": status, "why": why, "alert_id": alert_id}
     with _lock, repo.tx() as s:
         inc = _mine(repo, s, incident_id)
         if inc is None:
             return None
-        inc.agent_json = {**(inc.agent_json or {}), "verdict": status, "why": why, "alert_id": alert_id}
+        if inc.status not in ACTIVE:
+            if status == "dismissed":
+                return inc
+            fresh = _open_or_touch(s, inc.workspace_id, inc.camera_id, inc.watch_id,
+                                   graded_severity(inc.severity, severity), summary or inc.reason, inc.keyframe_key,
+                                   now, t, False, inc.picture_key, inc.picture_box,
+                                   {"cls": (inc.agent_json or {}).get("cls")})
+            fresh.agent_json = {**(fresh.agent_json or {}), **verdict}
+            if summary:
+                fresh.reason = summary
+            if notify:
+                _notify(s, fresh, now, t, urgent=True, escalate=True)
+            return fresh
+        held = bool((inc.agent_json or {}).get("held"))
+        inc.agent_json = {**(inc.agent_json or {}), **verdict}
         if status == "dismissed":
             if inc.status == OPEN:
                 inc.status, inc.closed_at = RESOLVED, now
-                inc.agent_json = {**inc.agent_json, "closed_by": "the AI check"}
+                inc.agent_json = {**inc.agent_json, "closed_by": AI_CHECK}
                 if summary:
                     inc.reason = summary
-                if notify:
+                if notify and not held:
                     _queue_sync(s, inc.workspace_id, inc.id, now, urgent=True)
             return inc
         graded = graded_severity(inc.severity, severity)
@@ -210,16 +285,19 @@ def record_verdict(repo, incident_id: str, status: str, severity: str | None, su
         inc.severity = graded
         if summary:
             inc.reason = summary
+        if held:
+            inc.agent_json = {**inc.agent_json, "held": False}
         if notify:
-            _notify(s, inc, now, t, urgent=True, escalate=rose)
+            _notify(s, inc, now, t, urgent=True, escalate=rose or held)
         return inc
 
 
 def after_check(repo, candidate, verdict, alert_id: str | None = None, incident_id: str | None = None, now=None, *,
                 tuning: AlertTuning | None = None, notify: bool = True, picture_key: str | None = None,
                 picture_box: list | None = None, extra: dict | None = None) -> m.Incident | None:
-    """Files a checked candidate (rules.engine.Candidate and agent.verifier.Verdict): edits the incident a critical
-    candidate opened before its check, or opens or touches one for a real moment; a dismissed one opens nothing."""
+    """Files a checked candidate (rules.engine.Candidate and agent.verifier.Verdict): gives the verdict to the
+    incident a critical candidate opened before its check, or opens or touches one for a real moment; a dismissed one
+    opens nothing."""
     if incident_id is not None:
         return record_verdict(repo, incident_id, verdict.status, getattr(verdict, "severity", None), verdict.summary,
                               getattr(verdict, "reason", ""), alert_id, now, tuning=tuning, notify=notify)
@@ -230,7 +308,8 @@ def after_check(repo, candidate, verdict, alert_id: str | None = None, incident_
                                  verdict.summary or candidate.watch_name,
                                  candidate.keyframe_keys[0] if candidate.keyframe_keys else None,
                                  now if now is not None else candidate.ts, tuning=tuning, notify=notify,
-                                 picture_key=picture_key, picture_box=picture_box, extra=extra)
+                                 picture_key=picture_key, picture_box=picture_box,
+                                 extra={"cls": getattr(candidate, "cls", None), **(extra or {})})
     with repo.tx() as s:
         row = _mine(repo, s, inc.id)
         if row is not None and "verdict" not in (row.agent_json or {}):
@@ -271,8 +350,7 @@ def acknowledge(repo, incident_id: str, member, now=None, chat: str | None = Non
 def false_alarm(repo, incident_id: str, member, now=None, chat: str | None = None) -> tuple[m.Incident | None, bool]:
     """Closes the incident for everyone as a false alarm, with who and when: the label behind the watch's precision.
     Every Telegram message about it loses its buttons."""
-    return _act(repo, incident_id, member, now, "incident.false_alarm", (OPEN, ACKNOWLEDGED, RESOLVED),
-                FALSE_ALARM, chat)
+    return _act(repo, incident_id, member, now, "incident.false_alarm", ACTIVE, FALSE_ALARM, chat)
 
 
 def resolve(repo, incident_id: str, now=None, note: str = "Resolved") -> m.Incident | None:
@@ -307,8 +385,36 @@ def precision_by_watch(repo, since=None) -> dict[str, dict]:
     return out
 
 
-def delete_incidents_before(repo, before) -> int:
+def delete_incidents_before(repo, before) -> list[str]:
+    """Deletes the society's incidents last seen before `before`, with their Telegram message records; returns the
+    keys of their private pictures, for the caller to delete."""
     with repo.tx() as s:
-        return s.execute(delete(m.Incident).where(m.Incident.workspace_id == repo.workspace_id,
-                                                  m.Incident.last_at < when(before))).rowcount
+        old = [m.Incident.workspace_id == repo.workspace_id, m.Incident.last_at < when(before)]
+        keys = [k for k in s.scalars(select(m.Incident.picture_key).where(*old)) if k]
+        s.execute(delete(m.Incident).where(*old))
+        return keys
+
+
+def retention_days(settings, workspace) -> int:
+    """How long a society's records are kept: its plan's (billing), else RETENTION_DAYS."""
+    try:
+        from watchful.billing import retention_days as plan_days
+    except ImportError:
+        return settings.retention_days
+    return int(plan_days(workspace))
+
+
+@handler(RETENTION, daily=True)
+def _retention(ctx, payload: dict) -> None:
+    """Incidents (the AI's words about people, who acknowledged) and their Telegram records go after each society's
+    retention, with their pictures."""
+    with ctx.queue.tx() as s:
+        societies = list(s.scalars(select(m.Workspace)))
+    for ws in societies:
+        keys = delete_incidents_before(ctx.repo(ws.id), ctx.now - timedelta(days=retention_days(ctx.settings, ws)))
+        for key in keys:
+            try:
+                ctx.worker.blobs.delete(key)
+            except (OSError, KeyError):
+                pass
 
