@@ -45,7 +45,7 @@ export default function AddCamera() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cam, setCam] = useState<Camera | null>(null);
+  const [cam, setCam] = useState<(Camera & { notice?: string | null }) | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [kept, setKept] = useState<Kept[] | null>(null);
 
@@ -163,6 +163,7 @@ export default function AddCamera() {
       {step === 3 && cam && (
         <>
           <PageHead title="Keep the suggested watches" sub={<StepLabel n={3} />} />
+          {cam.notice && <p className="notice notice-warn" role="status">{cam.notice}</p>}
           <p className="lede" style={{ marginTop: -16 }}>
             {cam.name} is added. {ideas.length ? "These suit what it watches. Keep the ones you want; you can add your own later." : "Add watches in plain words from the camera's page."}
           </p>

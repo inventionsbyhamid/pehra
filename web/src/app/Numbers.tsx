@@ -32,7 +32,7 @@ export function Numbers() {
             </div>
             <div className="card figure">
               <Figure value={count(data.ai_calls_today)} />
-              <p>AI checks today, of {count(data.ai_daily_limit)} a day. The AI sees only moments OpenCV flags.</p>
+              <p>AI checks today. The AI sees only the moments OpenCV flags, never the stream.</p>
             </div>
             <div className="card figure">
               <Figure value={labelled.real + labelled.false ? `${Math.round((labelled.real / (labelled.real + labelled.false)) * 100)}%` : null} />

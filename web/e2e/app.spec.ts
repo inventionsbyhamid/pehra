@@ -277,7 +277,8 @@ test("settings, people and the printable notice", async ({ page }) => {
   await check(page, "18-notice");
 
   await page.goto("/app/settings/billing");
-  await expect(page.getByText("₹699")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Billing", level: 1 })).toBeVisible();
+  await expect(page.getByText(/₹699/).first()).toBeVisible();
   await check(page, "19-settings-billing");
   await page.goto("/app/settings/numbers");
   await expect(page.getByRole("heading", { name: "Numbers", level: 1 })).toBeVisible();

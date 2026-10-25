@@ -86,8 +86,9 @@ export const api = {
 
   cameras: () => get<Camera[]>("/api/cameras"),
   camera: (id: string) => get<Camera>(`/api/cameras/${id}`),
+  // notice: why the plan leaves a new camera unwatched (it is added, paused)
   addCamera: (body: { name: string; kind: "stream" | "webcam"; url?: string; purpose?: string }) =>
-    post<Camera>("/api/cameras", body),
+    post<Camera & { notice?: string | null }>("/api/cameras", body),
   patchCamera: (id: string, patch: { name?: string; purpose?: string; zones?: Zone[]; enabled?: boolean }) =>
     request<Camera & { disabled_watches?: string[] }>("PATCH", `/api/cameras/${id}`, patch),
   deleteCamera: (id: string) => del<{ ok: boolean }>(`/api/cameras/${id}`),

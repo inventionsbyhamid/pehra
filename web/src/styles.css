@@ -240,6 +240,7 @@ dialog.sheet::backdrop { background: rgb(10 20 18 / 0.45); }
 
 .table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
 .table th { text-align: left; font-weight: 700; color: var(--ink-3); padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); }
+.table thead th { white-space: nowrap; }
 .table td, .table tbody th { padding: 12px 12px 12px 0; border-bottom: 1px solid var(--line-2); vertical-align: top; text-align: left; }
 .table tbody th { color: var(--ink); }
 .table tbody tr:last-child td, .table tbody tr:last-child th { border-bottom: 0; }

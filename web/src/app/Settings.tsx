@@ -1,14 +1,16 @@
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { lazy, Suspense } from "react";
 import { api } from "../api";
 import { useLoad, useTitle } from "../hooks";
-import brand, { mailto } from "../site/brand";
-import { cameraPlan, camerasText, plans, retentionText, rupees } from "../site/plans";
+import { camerasText, plans, retentionText, rupees } from "../site/plans";
 import { Numbers } from "./Numbers";
 import { atLeast, useSession } from "./session";
 import { Team } from "./Team";
 import { Telegram } from "./Telegram";
 import { Fact, Facts } from "./ui/Card";
 import { Page } from "./ui/Page";
+
+const BillingPanel = lazy(() => import("../billing/BillingPanel"));
 
 const ROLE_WORDS = { viewer: "Viewer", supervisor: "Supervisor", admin: "Admin", owner: "Owner" } as const;
 
@@ -27,11 +29,13 @@ export function currentPlan(id: string | undefined) {
 
 function Society() {
   const { me, reload, signOut } = useSession();
+  const navigate = useNavigate();
   const others = (me.workspaces ?? []).filter((w) => w.id !== me.workspace?.id);
   const plan = currentPlan(me.workspace?.plan);
   async function switchTo(id: string) {
     await api.switchSociety(id).catch(() => {});
     reload();
+    navigate("/app");
   }
   return (
     <>
@@ -92,11 +96,18 @@ function Privacy() {
   );
 }
 
+// Admins get the billing panel (plan, cameras, checkout); everyone else sees the plan the society is on.
 function Billing() {
+  const { me } = useSession();
+  if (atLeast(me.role, "admin")) return <Suspense fallback={null}><BillingPanel heading={1} /></Suspense>;
+  return <PlanSummary />;
+}
+
+function PlanSummary() {
   const { me } = useSession();
   const cameras = useLoad(() => api.cameras(), []);
   const plan = currentPlan(me.workspace?.plan);
-  const watched = (cameras.data ?? []).filter((c) => c.kind !== "file").length;
+  const watched = (cameras.data ?? []).filter((c) => c.enabled && c.kind !== "file").length;
   const most = plan.limits.watched_cameras;
   return (
     <>
@@ -117,16 +128,7 @@ function Billing() {
           <Fact term="Footage">{plan.limits.retention_days ? `Kept ${plan.limits.retention_days} days` : retentionText(plan)}</Fact>
         </Facts>
       </section>
-      {plan.id !== cameraPlan.id && !plan.contact && (
-        <section className="card stack">
-          <h2 className="h2">Watch more cameras</h2>
-          <p>{cameraPlan.name} is {rupees(cameraPlan.price_month_inr!)} a watched camera a month, or {rupees(cameraPlan.price_year_inr!)} a year, with {cameraPlan.limits.retention_days} days of footage.</p>
-          <p className="small">
-            Paying here in the app comes soon. Until then, write to <a href={mailto(`${brand.name}: ${cameraPlan.name} plan for ${me.workspace?.name}`)}>{brand.contact_email}</a> and we set it up the same day.
-            {" "}<Link to="/pricing">See every plan</Link>.
-          </p>
-        </section>
-      )}
+      <p className="small muted">Your society's owner or admin manages the plan here.</p>
     </>
   );
 }
