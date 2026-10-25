@@ -1,9 +1,12 @@
 export type Point = [number, number];
 
+export type ZoneKind = "area" | "water" | "line";
+
 export interface Zone {
   id?: string;
   name: string;
   polygon: Point[];
+  kind?: ZoneKind;
 }
 
 export interface PipelineStats {
@@ -17,6 +20,7 @@ export interface PipelineStats {
 }
 
 export type CameraKind = "stream" | "webcam" | "file" | "demo";
+export type Health = "live" | "offline" | "covered" | "moved" | "blurred";
 
 export interface Camera {
   id: string;
@@ -26,7 +30,18 @@ export interface Camera {
   zones: Zone[];
   enabled: boolean;
   tuning: Record<string, unknown>;
-  status: { running: boolean; source: string; fps: number; loops: number; stats: PipelineStats };
+  purpose?: string;
+  last_frame_at?: number | null;
+  health?: Health | null; // the camera's health, once the server reports it under its own key
+  status: {
+    running: boolean;
+    source: string;
+    fps: number;
+    loops: number;
+    stats: PipelineStats;
+    problems?: string[];
+    health?: Health | null;
+  };
   last_scan: ScanStats | null;
 }
 
@@ -41,20 +56,17 @@ export interface LiveTrack {
 export interface Condition {
   signal: string;
   zones: string[];
-  op: ">=" | "<=" | "==" | "is";
-  value: number | boolean | string;
+  op: string;
+  value: number | boolean | string | string[];
   weight: number;
   params: Record<string, unknown>;
 }
 
+export type Severity = "info" | "warning" | "critical";
+
 export interface Watch {
   name: string;
-  subject: {
-    classes: string[];
-    who: string;
-    looks_like: string | null;
-    same_as: { event_id: string | null; expires_at: number | null } | null;
-  };
+  subject: Record<string, unknown>;
   zones: string[];
   conditions: Condition[];
   combine: "all" | "any" | "score";
@@ -65,6 +77,22 @@ export interface Watch {
   cooldown_s: number;
   repeat: boolean;
   expires_at: number | null;
+  scope: "camera" | "site";
+  excluded_cameras: string[];
+  output: "alert" | "log";
+}
+
+export interface Coverage {
+  clause: string;
+  signal: string;
+  tier: "A" | "B" | "C" | "X";
+  caveat: string;
+}
+
+export interface Cannot {
+  clause: string;
+  reason: string;
+  alternative: string;
 }
 
 export interface WatchRow {
@@ -73,21 +101,86 @@ export interface WatchRow {
   text: string;
   watch: Watch;
   enabled: boolean;
+  scope: "camera" | "site";
+  excluded_cameras: string[];
+  output: "alert" | "log";
+  severity: Severity;
+  coverage: Coverage[];
+  setup: string[];
+  cannot: Cannot[];
 }
 
-export interface AddWatchResult {
-  id?: string;
+export interface Backtest {
+  fires: number;
+  examples: string[];
+  visits: number;
+  summary: string;
+  cameras: number;
+  events: number;
+  assumed: string[];
+  approximate: string[];
+  skipped: string[];
+  capped: boolean;
+}
+
+// what /api/cameras/{id}/watches/preview answers: the watch card
+export interface WatchCard {
   watch: Watch | null;
   problem: string | null;
+  coverage: Coverage[];
+  setup: string[];
+  cannot: Cannot[];
+  backtest: Backtest | null;
 }
 
-export interface Preset {
-  preset: string;
-  description: string;
-  watch: Record<string, unknown>;
+export interface SavedWatch extends WatchCard {
+  id?: string;
+  saved: boolean;
 }
 
-export type Severity = "info" | "warning" | "critical";
+export type Purposes = Record<string, { label: string; watches: string[] }>;
+
+export interface StateExample {
+  id: string;
+  zone_id: string;
+  state: string;
+  url: string;
+}
+
+export type IncidentStatus = "open" | "acknowledged" | "false_alarm" | "resolved";
+
+export interface Incident {
+  id: string;
+  camera_id: string | null;
+  watch_id: string | null;
+  severity: Severity;
+  status: IncidentStatus;
+  opened_at: string;
+  last_at: string;
+  count: number;
+  reason: string;
+  title: string;
+  graded_why: string | null;
+  ack_by: string | null;
+  ack_at: string | null;
+  closed_at: string | null;
+  on_telegram: boolean;
+  picture_url: string | null;
+}
+
+export type IncidentStep =
+  | { kind: "opened"; at: string; text: string }
+  | { kind: "repeated"; at: string; count: number }
+  | { kind: "telegram" | "reminder"; at: string; group: string | null }
+  | { kind: "acknowledged" | "false_alarm"; at: string; by: string | null; via: string | null }
+  | { kind: "resolved"; at: string; by: string | null }
+  | { kind: "checked"; at: null; verdict: string; why: string | null };
+
+export interface IncidentDetail extends Incident {
+  timeline: IncidentStep[];
+  alert_id: string | null;
+}
+
 export type AlertStatus = "alert" | "unverified" | "dismissed" | "awaiting_human" | "approved" | "declined";
 
 export interface TraceStep {
@@ -107,13 +200,6 @@ export interface Alert {
   severity: Severity;
   status: AlertStatus;
   summary: string;
-  clip_key: string | null;
-  keyframe_key: string | null;
-  keyframe_url?: string | null;
-  trace: TraceStep[];
-  feedback: "up" | "down" | null;
-  fingerprint: string;
-  track_id: number | null;
 }
 
 export interface AnswerItem {
@@ -170,37 +256,6 @@ export interface Timeline {
   people: PeopleGroup[];
 }
 
-export interface SearchQuery {
-  looks_like: string | null;
-  not_like?: string | null;
-  classes?: string[];
-  camera_id: string | null;
-  since: number | null;
-  until: number | null;
-  zones?: string[];
-}
-
-export interface SearchResult {
-  kind: "scene" | "object";
-  camera_id: string;
-  ts: number;
-  start_ts: number | null;
-  end_ts: number | null;
-  thumbnail_url: string | null;
-  score: number;
-  confirmed: boolean;
-  method: "embedding" | "face";
-  event_id: string | null;
-  track_id: number | null;
-  cls: string | null;
-}
-
-export interface SearchResponse {
-  query: SearchQuery | null;
-  problem: string | null;
-  results: SearchResult[];
-}
-
 export interface Person {
   person_id: string;
   name: string;
@@ -218,21 +273,54 @@ export interface ScanStats {
   stages: Record<string, number>;
 }
 
-export interface Scan {
-  state: "scanning" | "checking" | "done" | "failed";
-  progress: number;
-  stats: ScanStats | null;
-  alert_ids: string[];
-  camera_id: string;
-  error: string | null;
-}
-
 export interface Metrics {
   cameras: Camera[];
   ai_calls_today: number;
   ai_daily_limit: number;
   alerts: Partial<Record<AlertStatus, number>>;
   scans: ScanStats[];
+}
+
+export type Role = "viewer" | "supervisor" | "admin" | "owner";
+
+export interface Society {
+  id: string;
+  name: string;
+  timezone: string;
+  plan?: string;
+  demo?: boolean;
+  expires_at?: string | null;
+}
+
+export interface Me {
+  user: { id: string; email: string | null; name: string | null; demo?: boolean };
+  workspace: Society | null;
+  role: Role | null;
+  workspaces?: (Society & { role: Role })[];
+  timezone: string;
+}
+
+export interface Member {
+  user_id: string;
+  email: string | null;
+  name: string | null;
+  role: Role;
+  you: boolean;
+}
+
+export interface PendingInvite {
+  id: string;
+  role: Role;
+  expires_at: string;
+}
+
+export interface TelegramStatus {
+  ready: boolean;
+  connected: boolean;
+  bot_username: string | null;
+  message: string | null;
+  groups: { id: string; title: string | null; connected_at: string | null }[];
+  warnings: boolean;
 }
 
 export type LiveMessage =

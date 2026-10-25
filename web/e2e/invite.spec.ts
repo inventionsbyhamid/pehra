@@ -25,7 +25,7 @@ test("an invite shows the society and joins only on a click", async ({ page, bro
   expect(await society()).toBe("Invitee home"); // opening the link joins nothing
 
   await guest.getByRole("button", { name: "Join Green Park" }).click();
-  await expect(guest.getByRole("heading", { name: "Cameras", level: 1 })).toBeVisible();
+  await expect(guest.getByRole("heading", { name: "Control room", level: 1 })).toBeVisible();
   const me = await (await guest.request.get("/api/me")).json();
   expect([me.workspace.name, me.role]).toEqual(["Green Park", "viewer"]);
 

@@ -1,7 +1,7 @@
 // Times show in the cameras' time zone when the server tells us, so they match the AI's answers.
 let timeZone: string | undefined;
-let clock: Intl.DateTimeFormat, clockShort: Intl.DateTimeFormat, dayName: Intl.DateTimeFormat;
-let dayMonth: Intl.DateTimeFormat, dayKey: Intl.DateTimeFormat;
+let clockLong: Intl.DateTimeFormat, clockShort: Intl.DateTimeFormat, dayName: Intl.DateTimeFormat;
+let dayMonth: Intl.DateTimeFormat, dayKey: Intl.DateTimeFormat, clock12: Intl.DateTimeFormat;
 
 export function setTimeZone(tz?: string) {
   try {
@@ -10,11 +10,12 @@ export function setTimeZone(tz?: string) {
     tz = undefined;
   }
   timeZone = tz;
-  clock = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone });
+  clockLong = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone });
   clockShort = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false, timeZone });
   dayName = new Intl.DateTimeFormat(undefined, { weekday: "short", timeZone });
-  dayMonth = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", timeZone });
+  dayMonth = new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", timeZone });
   dayKey = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone });
+  clock12 = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone });
 }
 setTimeZone();
 
@@ -28,7 +29,7 @@ export function dayLabel(ts: number): string {
 }
 
 export function timeOf(ts: number, seconds = true): string {
-  return (seconds ? clock : clockShort).format(new Date(ts * 1000));
+  return (seconds ? clockLong : clockShort).format(new Date(ts * 1000));
 }
 
 export function when(ts: number): string {
@@ -44,10 +45,26 @@ export function ago(ts: number): string {
   return dayLabel(ts);
 }
 
+// "10:42 PM" in the society's time zone
+export function clock(ts: number): string {
+  return clock12.format(new Date(ts * 1000));
+}
+
+// "10:42 PM" today, "Yesterday 10:42 PM", "Mon 10:42 PM", then "12 Oct 10:42 PM"
+export function at(ts: number): string {
+  const day = dayLabel(ts);
+  return day === "Today" ? clock(ts) : `${day} ${clock(ts)}`;
+}
+
+// epoch seconds from the server's ISO times
+export function epoch(iso: string | null | undefined): number {
+  return iso ? Date.parse(iso) / 1000 : 0;
+}
+
 export function span(start: number | null, end: number | null): string {
   if (start == null) return "";
-  if (end == null || Math.abs(end - start) < 1) return timeOf(start);
-  return `${timeOf(start)} to ${timeOf(end)}`;
+  if (end == null || clock(start) === clock(end)) return clock(start);
+  return `${clock(start)} to ${clock(end)}`;
 }
 
 export function clockDuration(seconds: number): string {

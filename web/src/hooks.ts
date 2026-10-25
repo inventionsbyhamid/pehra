@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import brand from "./site/brand";
 
 export function useLoad<T>(load: () => Promise<T>, deps: unknown[], pollMs?: number) {
   const [data, setData] = useState<T | null>(null);
@@ -35,7 +36,7 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[], pollMs?: num
 
 export function useTitle(title: string) {
   useEffect(() => {
-    document.title = title ? `${title} | Watchful` : "Watchful";
+    document.title = title ? `${title} | ${brand.name}` : brand.name;
   }, [title]);
 }
 

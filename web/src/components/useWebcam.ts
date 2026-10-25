@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { wsUrl } from "../api";
+import brand from "../site/brand";
 
 const FPS = 5;
 const WIDTH = 960;
@@ -31,7 +32,7 @@ export function useWebcam(cameraId: string) {
       setError(null);
       if (!navigator.mediaDevices?.getUserMedia) {
         setState("error");
-        setError("This browser can't share its camera here. Open Watchful over https, or in a current browser.");
+        setError(`This browser can't share its camera here. Open ${brand.name} over https, or in a current browser.`);
         setOn(false);
         return;
       }
@@ -62,10 +63,10 @@ export function useWebcam(cameraId: string) {
       ws.onclose = (ev) => {
         if (cancelled) return;
         setState("error");
-        setError(ev.code === 4401 ? "Your session ended. Sign in again to use the webcam."
+        setError(ev.code === 4401 ? "Your session ended. Sign in again to use this device as a camera."
           : ev.code === 4403 ? "Only a society admin can use this browser as a camera."
-          : ev.code === 4409 ? "Another device is now sending this camera, so the webcam here stopped."
-          : "The connection to Watchful dropped. Start the webcam again.");
+          : ev.code === 4409 ? "Another device is now sending this camera, so this one stopped."
+          : `The connection to ${brand.name} dropped. Start the camera again.`);
         setOn(false);
       };
       timer = window.setInterval(() => {

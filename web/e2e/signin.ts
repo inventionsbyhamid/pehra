@@ -11,5 +11,5 @@ export async function signIn(page: Page, cmd: string = CMD) {
   const url = execSync(cmd, { encoding: "utf8" }).trim().split("\n").pop()!;
   await page.goto(new URL(url).pathname);
   await page.getByRole("button", { name: /^Sign in to / }).click();
-  await expect(page.getByRole("heading", { name: "Cameras", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Control room", level: 1 })).toBeVisible();
 }

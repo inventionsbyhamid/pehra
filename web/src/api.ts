@@ -1,19 +1,10 @@
+import brand from "./site/brand";
 import type {
-  AddWatchResult, Alert, Answer, Camera, Metrics, Person, Preset, Scan, SearchResponse, Timeline, WatchRow, Zone,
+  Answer, Camera, Incident, IncidentDetail, Me, Member, Metrics, PendingInvite, Person, Purposes, Role, SavedWatch,
+  Society, StateExample, TelegramStatus, Timeline, Watch, WatchCard, WatchRow, Zone,
 } from "./types";
 
-export interface Society {
-  id: string;
-  name: string;
-  timezone: string;
-}
-
-export interface Me {
-  user: { id: string; email: string | null; name: string | null };
-  workspace: Society | null;
-  role: string | null;
-  timezone: string;
-}
+export type { Me, Society } from "./types";
 
 export interface Invite {
   society: string;
@@ -52,94 +43,94 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   try {
     res = await fetch(path, init);
   } catch {
-    throw new ApiError(0, "Watchful can't be reached. Check your connection and try again.");
+    throw new ApiError(0, `${brand.name} can't be reached. Check your connection and try again.`);
   }
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     if (res.status === 401) onSignedOut();
     throw new ApiError(res.status, messageFrom(res.status, data));
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
 const get = <T>(path: string) => request<T>("GET", path);
 const post = <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {});
+const del = <T>(path: string) => request<T>("DELETE", path);
+
+export interface WatchBody {
+  text: string;
+  watch?: Watch;
+  coverage?: WatchCard["coverage"];
+  setup?: string[];
+  cannot?: WatchCard["cannot"];
+  scope?: "camera" | "site";
+  excluded_cameras?: string[];
+}
 
 export const api = {
   me: () => get<Me>("/api/me"),
   providers: () => get<{ providers: { name: string; label: string }[] }>("/api/auth/providers"),
   createSociety: (name: string, timezone: string) =>
     post<{ workspace: Society; role: string }>("/api/workspaces", { name, timezone }),
+  switchSociety: (workspace_id: string) => post<{ workspace: Society; role: Role }>("/api/me/workspace", { workspace_id }),
   invite: (token: string) => get<Invite>(`/api/invites/${encodeURIComponent(token)}`),
   acceptInvite: (token: string) => post<{ workspace: Society; role: string }>("/api/invites/accept", { token }),
   logout: () => fetch("/auth/logout", { method: "POST", credentials: "same-origin" }),
 
+  members: () => get<{ members: Member[]; invites: PendingInvite[] }>("/api/members"),
+  changeRole: (userId: string, role: Role) => request<{ role: Role }>("PATCH", `/api/members/${userId}`, { role }),
+  removeMember: (userId: string) => del<void>(`/api/members/${userId}`),
+  makeInvite: (role: Role) => post<{ invite: PendingInvite; url: string }>("/api/invites", { role }),
+  revokeInvite: (id: string) => del<void>(`/api/invites/${id}`),
+
   cameras: () => get<Camera[]>("/api/cameras"),
   camera: (id: string) => get<Camera>(`/api/cameras/${id}`),
-  deleteCamera: (id: string) => request<{ ok: boolean }>("DELETE", `/api/cameras/${id}`),
-  addCamera: (name: string, kind: "stream" | "webcam", url?: string) =>
-    post<Camera>("/api/cameras", { name, kind, url }),
-  patchCamera: (id: string, patch: { name?: string; zones?: Zone[]; enabled?: boolean }) =>
-    request<Camera>("PATCH", `/api/cameras/${id}`, patch),
-  rescan: (id: string) => post<{ scan_id: string }>(`/api/cameras/${id}/scan`),
-  scan: (id: string) => get<Scan>(`/api/scans/${id}`),
+  addCamera: (body: { name: string; kind: "stream" | "webcam"; url?: string; purpose?: string }) =>
+    post<Camera>("/api/cameras", body),
+  patchCamera: (id: string, patch: { name?: string; purpose?: string; zones?: Zone[]; enabled?: boolean }) =>
+    request<Camera & { disabled_watches?: string[] }>("PATCH", `/api/cameras/${id}`, patch),
+  deleteCamera: (id: string) => del<{ ok: boolean }>(`/api/cameras/${id}`),
+  examples: (cameraId: string) => get<StateExample[]>(`/api/cameras/${cameraId}/examples`),
+  addExample: (cameraId: string, zoneId: string, state: string) => {
+    const form = new FormData();
+    form.append("state", state);
+    return post<StateExample>(`/api/cameras/${cameraId}/zones/${zoneId}/examples`, form);
+  },
 
-  presets: () => get<Preset[]>("/api/presets"),
+  purposes: () => get<Purposes>("/api/purposes"),
   watches: (cameraId: string) => get<WatchRow[]>(`/api/cameras/${cameraId}/watches`),
-  addWatch: (cameraId: string, body: { text: string } | { preset: string; fill: Record<string, unknown> }) =>
-    post<AddWatchResult>(`/api/cameras/${cameraId}/watches`, body),
+  previewWatch: (cameraId: string, body: WatchBody) =>
+    post<WatchCard>(`/api/cameras/${cameraId}/watches/preview`, body),
+  saveWatch: (cameraId: string, body: WatchBody) => post<SavedWatch>(`/api/cameras/${cameraId}/watches`, body),
   toggleWatch: (id: string, enabled: boolean) => request<WatchRow>("PATCH", `/api/watches/${id}`, { enabled }),
 
-  alerts: (cameraId?: string, includeDismissed = false) => {
-    const q = new URLSearchParams();
-    if (cameraId) q.set("camera_id", cameraId);
-    if (includeDismissed) q.set("include_dismissed", "true");
-    return get<Alert[]>(`/api/alerts?${q}`);
+  incidents: (filter: { status?: string; camera_id?: string } = {}) => {
+    const q = new URLSearchParams(Object.entries(filter).filter(([, v]) => v) as [string, string][]);
+    return get<Incident[]>(`/api/incidents?${q}`);
   },
-  feedback: (id: string, value: "up" | "down") => post<{ ok: boolean }>(`/api/alerts/${id}/feedback`, { value }),
-  approve: (id: string) => post<{ notified: boolean }>(`/api/alerts/${id}/approve`),
-  decline: (id: string) => post<{ ok: boolean }>(`/api/alerts/${id}/decline`),
+  incident: (id: string) => get<IncidentDetail>(`/api/incidents/${id}`),
+  acknowledge: (id: string) => post<Incident & { changed: boolean }>(`/api/incidents/${id}/acknowledge`),
+  falseAlarm: (id: string) => post<Incident & { changed: boolean }>(`/api/incidents/${id}/false_alarm`),
+  precision: () => get<Record<string, { acknowledged?: number; false_alarm?: number; precision?: number | null }>>(
+    "/api/incidents/precision"),
+
+  telegram: () => get<TelegramStatus>("/api/telegram"),
+  telegramConnect: () =>
+    post<{ code: string; command: string; expires_at: string; bot_username: string | null }>("/api/telegram/connect"),
+  telegramWarnings: (on: boolean) => post<{ warnings: boolean }>("/api/telegram/warnings", { on }),
+  telegramRemove: (linkId: string) => del<{ ok: boolean }>(`/api/telegram/groups/${linkId}`),
 
   ask: (question: string, cameraId?: string) =>
     post<Answer>("/api/ask", { question, camera_id: cameraId || null }),
   timeline: (cameraId: string) => get<Timeline>(`/api/cameras/${cameraId}/timeline`),
 
-  search: (body: { text: string; camera_id?: string; since?: number; until?: number } | FormData) =>
-    post<SearchResponse>("/api/search", body),
-  lookout: (body: { camera_ids: string[]; person_id?: string; description?: string; event_id?: string; alert_id?: string }) =>
-    post<{ watch_ids: string[] }>("/api/lookouts", body),
-
   people: () => get<Person[]>("/api/people"),
   enrol: (form: FormData) => post<{ person_id: string; name: string }>("/api/people", form),
-  forget: (id: string) => request<{ ok: boolean }>("DELETE", `/api/people/${id}`),
+  forget: (id: string) => del<{ ok: boolean }>(`/api/people/${id}`),
 
   metrics: () => get<Metrics>("/api/metrics"),
 };
-
-export function uploadVideo(file: File, name: string, onProgress: (fraction: number) => void,
-  signal?: AbortSignal): Promise<{ camera_id: string; scan_id: string }> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const form = new FormData();
-    form.append("file", file);
-    form.append("name", name);
-    xhr.open("POST", "/api/uploads");
-    xhr.withCredentials = true;
-    xhr.responseType = "json";
-    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response);
-      else {
-        if (xhr.status === 401) onSignedOut();
-        reject(new ApiError(xhr.status, messageFrom(xhr.status, xhr.response)));
-      }
-    };
-    xhr.onerror = () => reject(new ApiError(0, "The upload stopped. Check your connection and try again."));
-    xhr.onabort = () => reject(new ApiError(0, "Upload cancelled."));
-    signal?.addEventListener("abort", () => xhr.abort());
-    xhr.send(form);
-  });
-}
 
 export function wsUrl(path: string): string {
   const proto = location.protocol === "https:" ? "wss" : "ws";

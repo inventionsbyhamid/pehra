@@ -6,7 +6,7 @@ const NAME = "Test webcam";
 // Chromium runs with a fake camera (see playwright.config.ts), so this covers the whole loop:
 // getUserMedia, JPEG frames up over /ws/cameras/{id}/push, analysis, overlay messages back over /ws/cameras/{id}
 // drawn over the browser's own video.
-test("webcam frames go to the server and come back analysed", async ({ page }) => {
+test("this device's camera goes to the server and comes back analysed", async ({ page }) => {
   test.setTimeout(120_000);
   await signIn(page);
 
@@ -17,8 +17,8 @@ test("webcam frames go to the server and come back analysed", async ({ page }) =
   if (!cam) cam = await (await page.request.post("/api/cameras", { data: { name: NAME, kind: "webcam" }, headers: { origin } })).json();
 
   const pushed = page.waitForEvent("websocket", (ws) => ws.url().endsWith(`/ws/cameras/${cam.id}/push`));
-  await page.goto(`/cameras/${cam.id}`);
-  await page.getByRole("button", { name: "Start webcam" }).click();
+  await page.goto(`/app/cameras/${cam.id}`);
+  await page.getByRole("button", { name: "Use this device" }).click();
   await pushed;
 
   const overlay = page.getByRole("img", { name: /Live camera picture/ });
@@ -29,9 +29,9 @@ test("webcam frames go to the server and come back analysed", async ({ page }) =
     const all = await (await page.request.get("/api/cameras")).json();
     return all.find((c: { id: string }) => c.id === cam.id)?.status.stats.frames ?? 0;
   }, { timeout: 30_000 }).toBeGreaterThan(10);
-  await expect(page.getByText("The connection to Watchful dropped")).toHaveCount(0);
-  await expect(page.locator(".cam-facts")).toContainText(/Live/);
+  await expect(page.getByText(/dropped/)).toHaveCount(0);
+  await expect(page.locator(".page-sub")).toContainText(/Live/, { timeout: 30_000 });
 
-  await page.getByRole("button", { name: "Stop webcam" }).click();
-  await expect(page.getByRole("button", { name: "Start webcam" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop this device" }).click();
+  await expect(page.getByRole("button", { name: "Use this device" })).toBeVisible();
 });
