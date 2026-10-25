@@ -208,3 +208,56 @@ def test_clip_written_and_playable(tmp_path):
     assert "codec_name=h264" in out
     duration = float(out.split("duration=")[1].split()[0])
     assert 9 <= duration <= 11
+
+
+def test_a_blank_key_is_refused_not_taken_as_none(tmp_path):
+    engine = make_engine(f"sqlite:///{tmp_path / 'w.db'}")
+    migrate(engine)
+    for blank in ("", " ", [], ["k" * 32, ""]):
+        with pytest.raises(ValueError, match="DATA_KEY"):
+            SqlRepository(engine, WS, secret=blank)
+
+
+def test_rotate_keys_seals_every_address_with_the_new_key(tmp_path, capsys):
+    import secrets
+    from watchful import components
+    from watchful.config import Settings
+    from watchful.db.__main__ import main
+
+    old, new, lost = (secrets.token_hex(32) for _ in range(3))
+    settings = Settings(_env_file=None, session_secret="s", data_dir=tmp_path, data_key=old)
+    engine = components.make_engine(settings)
+    ensure_workspace(engine, WS, "Green Park")
+    ensure_workspace(engine, "ws_lake", "Lake View")
+    gate = SqlRepository(engine, WS, secret=old).add_camera(Camera(None, "Gate", "stream", "rtsp://a:pw1@10.0.0.5/1"))
+    lake = SqlRepository(engine, "ws_lake", secret=old).add_camera(Camera(None, "Lake", "stream", "rtsp://a:pw2@lake/1"))
+    bare = SqlRepository(engine, WS).add_camera(Camera(None, "Back", "stream", "rtsp://a:pw3@10.0.0.6/1"))  # plain
+    gone = SqlRepository(engine, WS, secret=lost).add_camera(Camera(None, "Lost", "stream", "rtsp://a:pw4@x/1"))
+
+    def stored() -> dict[str, str]:
+        with engine.connect() as c:
+            return dict(c.execute(select(m.Camera.id, m.Camera.url_enc)).all())
+
+    before = stored()
+    rotating = Settings(_env_file=None, session_secret="s", data_dir=tmp_path, data_key=new, data_key_old=[old])
+    with pytest.raises(SystemExit) as code:
+        main(["rotate-keys"], settings=rotating)
+    assert code.value.code == 1  # one address opens with neither key: DATA_KEY_OLD cannot go yet
+    out = capsys.readouterr()
+    assert "sealed again with DATA_KEY: 3, already sealed with it: 0, unreadable: 1" in out.out
+    assert "put the key that sealed them in DATA_KEY_OLD" in out.err
+    after = stored()
+    assert after[gone.id] == before[gone.id] and not any("rtsp://" in v for v in after.values())
+    assert all(after[c.id] != before[c.id] and after[c.id].startswith("f1:") for c in (gate, lake, bare))
+
+    only_new = {ws: SqlRepository(engine, ws, secret=new) for ws in (WS, "ws_lake")}  # DATA_KEY_OLD dropped
+    assert only_new[WS].get_camera(gate.id).url == "rtsp://a:pw1@10.0.0.5/1"
+    assert only_new["ws_lake"].get_camera(lake.id).url == "rtsp://a:pw2@lake/1"
+    assert only_new[WS].get_camera(bare.id).url == "rtsp://a:pw3@10.0.0.6/1"
+    assert only_new[WS].get_camera(gone.id).url is None and SqlRepository(engine, WS, secret=lost).get_camera(
+        gone.id).url == "rtsp://a:pw4@x/1"
+
+    SqlRepository(engine, WS, secret=new).delete_camera(gone.id)
+    main(["rotate-keys"], settings=rotating)  # nothing left to do, nothing unreadable: no exit code
+    assert "sealed again with DATA_KEY: 0, already sealed with it: 3, unreadable: 0" in capsys.readouterr().out
+    assert stored() == {c.id: after[c.id] for c in (gate, lake, bare)}

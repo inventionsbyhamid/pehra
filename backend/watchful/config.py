@@ -11,6 +11,18 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # a list setting may be written "a,b" or as JSON
 Names = Annotated[list[str], NoDecode]
 
+DATA_KEY_MIN = 32  # characters; store/sql.py derives the Fernet key from it with SHA 256
+MAKE_SECRET = 'python -c "import secrets; print(secrets.token_hex(32))"'
+
+
+def check_data_key(value: str, name: str = "DATA_KEY") -> str:
+    """A key that seals camera addresses (NVR passwords): a blank or short one is refused rather than used."""
+    if len(value.strip()) < DATA_KEY_MIN:
+        what = "blank" if not value.strip() else f"only {len(value.strip())} characters"
+        raise ValueError(f"{name} is {what}. It encrypts camera addresses and must be at least {DATA_KEY_MIN} random "
+                         f"characters; make one with {MAKE_SECRET}")
+    return value
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -31,8 +43,10 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
     database_url: str | None = None  # default sqlite:///{data_dir}/watchful.db, see `database`
-    data_key: str  # encrypts camera addresses at rest (store/sql.py UrlBox); required
-    data_key_old: Names = []  # earlier keys, still read while their addresses are rewritten (rotation)
+    data_key: str  # encrypts camera addresses at rest (store/sql.py UrlBox); required, at least DATA_KEY_MIN chars
+    # earlier keys, which still open what they sealed until `python -m watchful.db rotate-keys` seals it all again
+    # with DATA_KEY; only then can they be dropped
+    data_key_old: Names = []
     web_dist: Path | None = None  # the built web app; defaults to web/dist in the repo
     models_dir: Path = Path("models")
     analysis_fps: float = 5.0
@@ -95,6 +109,24 @@ class Settings(BaseSettings):
             value = value.strip()
             return json.loads(value) if value.startswith("[") else [v.strip() for v in value.split(",") if v.strip()]
         return value
+
+    @field_validator("data_key")
+    @classmethod
+    def _data_key(cls, value: str) -> str:
+        return check_data_key(value)
+
+    @field_validator("session_secret")
+    @classmethod
+    def _session_secret(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError(f"SESSION_SECRET is blank. It signs sign in sessions and links; make one with "
+                             f"{MAKE_SECRET}")
+        return value
+
+    @field_validator("data_key_old")
+    @classmethod
+    def _data_keys_old(cls, value: list[str]) -> list[str]:
+        return [check_data_key(k, "DATA_KEY_OLD") for k in value]
 
     @property
     def database(self) -> str:

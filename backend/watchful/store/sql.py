@@ -39,14 +39,20 @@ def _epoch(dt: datetime | None) -> float | None:
 
 class UrlBox:
     """Camera addresses carry NVR passwords, so they are stored encrypted (Fernet) with DATA_KEY; earlier keys
-    (DATA_KEY_OLD) still open what they sealed. Without keys (tests and tools on a scratch database) addresses are
-    stored as given, marked plain."""
+    (DATA_KEY_OLD) still open what they sealed until `rotate_keys` seals it again with DATA_KEY. Only a repository made
+    without keys (tests and tools on a scratch database) stores addresses as given, marked plain; a blank key is
+    refused, never taken as no key."""
 
     def __init__(self, keys: str | list[str] | None):
-        keys = [keys] if isinstance(keys, str) else [k for k in keys or [] if k]
+        self._fernet = self._current = None
+        if keys is None:
+            return
+        keys = [keys] if isinstance(keys, str) else list(keys)
+        if not keys or any(not k or not k.strip() for k in keys):
+            raise ValueError("a blank DATA_KEY would store camera addresses unencrypted; set DATA_KEY")
         fernets = [Fernet(base64.urlsafe_b64encode(hashlib.sha256(b"camera-url:" + k.encode()).digest()))
                    for k in keys]
-        self._fernet = MultiFernet(fernets) if fernets else None
+        self._current, self._fernet = fernets[0], MultiFernet(fernets)
 
     def seal(self, url: str | None) -> str | None:
         if url is None:
@@ -67,6 +73,44 @@ class UrlBox:
         except InvalidToken:
             log.warning("a camera address was sealed with a key this server does not have (see DATA_KEY_OLD)")
             return None
+
+    def reseal(self, value: str | None) -> tuple[str | None, str]:
+        """The stored value sealed with DATA_KEY, and what it was: "current", "rotated" (plain, or an earlier key's),
+        or "unreadable" (no key here opens it; the value comes back unchanged)."""
+        if value is None or self._fernet is None:
+            return value, "current"
+        scheme, _, body = value.partition(":")
+        if scheme == "plain":
+            return self.seal(body), "rotated"
+        try:
+            self._current.decrypt(body.encode())
+            return value, "current"
+        except InvalidToken:
+            pass
+        try:
+            return "f1:" + self._fernet.rotate(body.encode()).decode(), "rotated"
+        except InvalidToken:
+            return value, "unreadable"
+
+
+# every column that holds a value sealed by UrlBox, as (model, column name); rotate_keys rewrites each
+SEALED = [(m.Camera, "url_enc")]
+
+
+def rotate_keys(engine: Engine, keys: list[str]) -> dict[str, int]:
+    """Seals every stored secret of every society again with keys[0] (DATA_KEY), so the earlier keys can be dropped.
+    A value no key here opens is left as it is and counted."""
+    box = UrlBox(keys)
+    counts = dict.fromkeys(("current", "rotated", "unreadable"), 0)
+    with orm.Session(engine) as s, s.begin():
+        for model, column in SEALED:
+            col = getattr(model, column)
+            for row_id, value in s.execute(select(model.id, col).where(col.is_not(None))).all():
+                sealed, what = box.reseal(value)
+                counts[what] += 1
+                if what == "rotated":
+                    s.execute(update(model).where(model.id == row_id, col == value).values({column: sealed}))
+    return counts
 
 
 def upsert(s: orm.Session, model, values: dict, keys: list[str], update_columns: list[str] = ()) -> None:
