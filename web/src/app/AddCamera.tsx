@@ -21,7 +21,7 @@ const HOW: { id: How; title: string; text: string }[] = [
   {
     id: "address",
     title: "A camera address",
-    text: "An RTSP or HTTP address from an IP camera or a recorder that this server can reach.",
+    text: "An RTSP address (rtsp:// or rtsps://) from an IP camera or a recorder that this server can reach.",
   },
 ];
 
@@ -145,7 +145,7 @@ export default function AddCamera() {
               <label className="field"><span>Camera address</span>
                 <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} required inputMode="url"
                   placeholder="rtsp://camera.example.com:554/stream1" />
-                <span className="hint">Most IP cameras and recorders give one in their settings. Use the smaller substream if there is one.</span>
+                <span className="hint">It starts with rtsp:// or rtsps://. Most IP cameras and recorders give one in their settings; use the smaller substream if there is one. A camera on the society's own network connects through the bridge.</span>
               </label>
             )}
             {how === "device" && (

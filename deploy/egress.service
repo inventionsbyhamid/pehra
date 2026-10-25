@@ -1,0 +1,15 @@
+# deploy/remote_setup.sh fills in @APP@; runs as root to load the rules for the watchful user
+[Unit]
+Description=Watchful egress rules (the app user cannot reach private, loopback or link local addresses)
+Before=watchful-app.service watchful-worker.service watchful-litestream.service
+Wants=network-pre.target
+After=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f @APP@/current/deploy/egress.nft
+ExecStop=/usr/sbin/nft delete table inet watchful_egress
+
+[Install]
+WantedBy=multi-user.target

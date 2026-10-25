@@ -9,6 +9,7 @@ import json
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import cv2
 import numpy as np
@@ -189,6 +190,8 @@ def make_router(ctx) -> APIRouter:
                       "disabled_watches": disabled})
         if not cam.enabled:
             hub.close(cam.id, CLOSE_OFF)
+        elif disabled:
+            hub.poke(cam.id)  # its watches changed: a device checks whether its blur still matches
         if cam.kind in LIVE_KINDS:
             manager.restart(cam.id) if cam.enabled else manager.stop(cam.id)
         return {**camera_json(manager, cam), "disabled_watches": disabled}
@@ -286,7 +289,9 @@ def make_router(ctx) -> APIRouter:
         cam = pushed_camera(member, camera_id)
         token = tokens.issue(member.workspace.id, cam.id)
         hub.close(cam.id, CLOSE_GONE)
-        ctx.db.audit(member.workspace.id, member.user.id, "camera.device_link", {"camera": cam.id, "name": cam.name})
+        shown = bool(cam.url) and urlsplit(cam.url).password is not None
+        ctx.db.audit(member.workspace.id, member.user.id, "camera.device_link",
+                     {"camera": cam.id, "name": cam.name, "recorder_password_shown": shown})
         url = f"{ctx.settings.public_base_url.rstrip('/')}/cam/{token}"
         body = {"token": token, "url": url, "qr_svg": qr_svg(url), "qr_url": f"/cam/{token}/qr.svg",
                 **(tokens.info(member.workspace.id, cam.id) or {})}

@@ -11,6 +11,7 @@ from watchful.agent.compiler import Invalid, card, check_watch, compile_watch, c
 from watchful.api.blobs import owns
 from watchful.api.common import LIVE_KINDS, alert_or_404, camera_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
+from watchful.ingest.push import push_parts
 from watchful.rules.backtest import backtest
 from watchful.rules.presets import describe, preset, purposes
 from watchful.rules.watch import SameAs, Watch
@@ -45,6 +46,7 @@ def mount(app: FastAPI, ctx) -> None:
 def make_router(ctx) -> APIRouter:
     router = APIRouter()
     manager = ctx.manager
+    hub, _ = push_parts(ctx)
 
     def repo(member: CurrentMember):
         return ctx.repo_for(member.workspace.id)
@@ -96,6 +98,8 @@ def make_router(ctx) -> APIRouter:
                 runs = c.id == home_camera_id or (watch.scope == "site" and c.id not in watch.excluded_cameras)
             if c.kind in LIVE_KINDS and runs:
                 manager.restart(c.id)
+            if c.kind == "webcam" and runs:
+                hub.poke(c.id)  # a device sending this camera checks whether faces are still to be blurred
 
     def save_watch(member: CurrentMember, cam: Camera, text: str, watch: Watch, shown: dict | None = None) -> WatchRow:
         r, shown = repo(member), shown or {}

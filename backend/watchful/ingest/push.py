@@ -3,10 +3,15 @@
 
 A device token belongs to one camera of one society. It is shown once, only its hash is stored, and issuing a new one
 replaces the old. Replacing it, removing it, turning the camera off or deleting the camera closes any socket sending
-for that camera at once (PushHub.close). The hub also keeps each camera's newest frame, so a live view on another
-device sees the phone's picture."""
+for that camera at once (PushHub.close). When a camera's watches change, its senders check again at once
+(PushHub.poke): a device whose blur no longer matches is closed with CLOSE_CHANGED and shows the new notice. The hub
+also keeps each camera's newest frame, so a live view on another device sees the phone's picture.
+
+Tokens travel in paths (/cam/{token}, /ws/cam/{token}); TokenPaths keeps them out of uvicorn's logs."""
 import asyncio
 import hashlib
+import logging
+import re
 import secrets
 import threading
 from dataclasses import dataclass, field
@@ -15,6 +20,8 @@ import cv2
 from sqlalchemy import delete, select
 
 from watchful.db import models as m
+from watchful.ratelimit import RateLimiter
+from watchful.store.sql import upsert
 
 TOKEN_BYTES = 24  # 32 characters, 192 bits
 MAX_TOKEN_CHARS = 64
@@ -26,6 +33,7 @@ CLOSE_ROLE = 4403
 CLOSE_UNKNOWN = 4404
 CLOSE_TAKEN_OVER = 4409  # another device started sending for this camera
 CLOSE_GONE = 4410  # the link was replaced or removed, or the camera deleted
+CLOSE_CHANGED = 4411  # the camera's settings changed (faces blurred or not): the device reads the notice again
 CLOSE_OFF = 4412  # the camera is turned off in the control room
 CLOSE_BUSY = 4429
 
@@ -44,15 +52,14 @@ class DeviceTokens:
     def issue(self, workspace_id: str, camera_id: str) -> str:
         """A new token for this camera, replacing any earlier one."""
         token = secrets.token_urlsafe(TOKEN_BYTES)
-        with self.db.tx() as s:
-            old = s.scalar(select(m.DeviceToken).where(m.DeviceToken.workspace_id == workspace_id,
-                                                       m.DeviceToken.camera_id == camera_id)
-                           .order_by(m.DeviceToken.created_at).limit(1))
-            created = old.created_at if old else m.utcnow()
-            s.execute(delete(m.DeviceToken).where(m.DeviceToken.workspace_id == workspace_id,
-                                                  m.DeviceToken.camera_id == camera_id))
-            s.add(m.DeviceToken(workspace_id=workspace_id, camera_id=camera_id, token_hash=hash_token(token),
-                                created_at=created, rotated_at=m.utcnow() if old else None))
+        now = m.utcnow()
+        with self.db.tx() as s:  # one row per camera (a unique index): a second issue at once replaces, never adds
+            upsert(s, m.DeviceToken, {"id": m.new_id("dev"), "workspace_id": workspace_id, "camera_id": camera_id,
+                                      "token_hash": hash_token(token), "created_at": now, "rotated_at": None},
+                   ["workspace_id", "camera_id"], ["token_hash"])
+            s.execute(m.DeviceToken.__table__.update()
+                      .where(m.DeviceToken.workspace_id == workspace_id, m.DeviceToken.camera_id == camera_id,
+                             m.DeviceToken.created_at < now).values(rotated_at=now))
         return token
 
     def find(self, token: str) -> tuple[str, str] | None:
@@ -80,10 +87,18 @@ class DeviceTokens:
 
 @dataclass(eq=False)
 class Sender:
-    """One open socket sending frames for a camera; `close` may be called from any thread."""
+    """One open socket sending frames for a camera; `close` and `nudge` may be called from any thread. Both set
+    `stop`: with a code the socket closes with it, without one it checks itself now."""
     loop: asyncio.AbstractEventLoop
     stop: asyncio.Event = field(default_factory=asyncio.Event)
     code: int | None = None
+
+    def nudge(self) -> None:
+        """Asks the socket to check its token, membership and settings now."""
+        try:
+            self.loop.call_soon_threadsafe(self.stop.set)
+        except RuntimeError:
+            pass
 
     def close(self, code: int) -> None:
         def _set():
@@ -133,6 +148,14 @@ class PushHub:
             s.close(code)
         return len(senders)
 
+    def poke(self, camera_id: str) -> int:
+        """Makes every socket sending for this camera check itself now (its watches changed)."""
+        with self._lock:
+            senders = list(self._senders.get(camera_id, []))
+        for s in senders:
+            s.nudge()
+        return len(senders)
+
     def sending(self, camera_id: str) -> bool:
         with self._lock:
             return bool(self._senders.get(camera_id))
@@ -148,11 +171,40 @@ class PushHub:
 
 
 def push_parts(ctx) -> tuple[PushHub, DeviceTokens]:
-    """The app's one hub and token store, made on first use (api/cameras.py and api/live.py share them)."""
+    """The app's one hub and token store, made on first use (api/cameras.py, api/live.py, api/device.py and
+    api/watches.py share them). Unknown device tokens count against their own limit per address
+    (`ctx.device_misses`), so a bridge restarting with an old token never locks the society out of sign in links."""
     if getattr(ctx, "push_hub", None) is None:
         ctx.push_hub = PushHub()
         ctx.device_tokens = DeviceTokens(ctx.db)
+        ctx.device_misses = RateLimiter(ctx.tuning.limits.misses_per_min_ip, 60.0)
     return ctx.push_hub, ctx.device_tokens
+
+
+TOKEN_PATH = re.compile(r"(?<=\s)(/(?:ws/)?cam/)[^/?\s\"]+")
+
+
+class TokenPaths(logging.Filter):
+    """Rewrites /cam/{token} and /ws/cam/{token} in a log line to /cam/- and /ws/cam/-."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except (TypeError, ValueError):
+            return True
+        hidden = TOKEN_PATH.sub(r"\1-", message)
+        if hidden != message:
+            record.msg, record.args = hidden, ()
+        return True
+
+
+def hide_tokens_in_logs(names=("uvicorn.error", "uvicorn.access", "uvicorn")) -> None:
+    """uvicorn logs accepted sockets ("WebSocket /ws/cam/... [accepted]") at INFO even with --no-access-log, and
+    the access log names every path; both go to app.log and CloudWatch."""
+    for name in names:
+        logger = logging.getLogger(name)
+        if not any(isinstance(f, TokenPaths) for f in logger.filters):
+            logger.addFilter(TokenPaths())
 
 
 def needs_faces(repo, camera_id: str) -> bool:

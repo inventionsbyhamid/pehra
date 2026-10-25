@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DeviceCamera, type DeviceInfo, type DeviceState } from "./device";
 import "./cam.css";
 
-// The page a device link opens (/cam/{token}): this laptop or phone becomes one of the society's cameras.
+// The page a device link opens (/cam/{token}): this laptop or phone becomes one of the society's cameras. It is its
+// own small build (cam.html, main.tsx), so the policy that lets OpenCV.js run never covers the app.
 
 // "Pool" reads "the Pool camera"; a name that already says camera stays as it is
 export function cameraPhrase(name: string) {
@@ -18,11 +18,27 @@ const STATUS: Record<string, string> = {
   reconnecting: "Lost the connection. Trying again.",
   taken: "Another device is now sending this camera, so this one stopped.",
   off: "This camera is turned off in the control room. Start again once an admin turns it back on.",
+  changed: "This camera's settings changed, so it stopped. Read the notice again, then start the camera.",
   gone: GONE,
 };
 
-export default function CamPage() {
-  const { token = "" } = useParams();
+function Notice({ info }: { info: DeviceInfo }) {
+  const purpose = info.purpose && info.purpose !== "Other" ? ` Purpose: ${info.purpose.toLowerCase()} safety.` : "";
+  return (
+    <div className="notice cam-notice" role="note">
+      <p>
+        {info.society} records this camera for everyone's safety.{purpose}{" "}
+        {info.blur
+          ? "Faces are blurred on this device before any picture is sent."
+          : "Faces are not blurred here, because this camera keeps the staff register. Only staff who agreed are recognised."}{" "}
+        Recordings are kept for {info.retention_days} days, then deleted. Tell people near this camera that it records.
+        {info.contact && <> Questions or concerns: <span className="cam-contact">{info.contact}</span>.</>}
+      </p>
+    </div>
+  );
+}
+
+export default function CamPage({ token }: { token: string }) {
   const [info, setInfo] = useState<DeviceInfo | null>(null);
   const [missing, setMissing] = useState<string | null>(null);
   const [state, setState] = useState<DeviceState>({ phase: "ready", sent: 0, covered: 0, blurReady: false });
@@ -30,15 +46,24 @@ export default function CamPage() {
   const canvas = useRef<HTMLCanvasElement>(null);
   const device = useRef<DeviceCamera | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     fetch(`/cam/${encodeURIComponent(token)}/info`, { cache: "no-store" })
       .then(async (r) => {
         if (r.ok) return setInfo(await r.json());
         setMissing(r.status === 429 ? "Too many tries from this network. Wait a minute, then reload the page." : GONE);
       })
       .catch(() => setMissing("The control room can't be reached. Check the connection, then reload the page."));
-    return () => device.current?.stop();
   }, [token]);
+
+  useEffect(() => {
+    load();
+    return () => device.current?.stop();
+  }, [load]);
+
+  // the settings changed while sending: read them again, so the notice is true before the camera starts again
+  useEffect(() => {
+    if (state.phase === "changed") load();
+  }, [state.phase, load]);
 
   useEffect(() => {
     if (info) document.title = cameraPhrase(info.camera);
@@ -80,20 +105,11 @@ export default function CamPage() {
         <h1>This device is now the {cameraPhrase(info.camera)}</h1>
       </header>
 
-      <div className="notice cam-notice" role="note">
-        <p>
-          {info.society} records this camera for everyone's safety.{" "}
-          {info.blur
-            ? "Faces are blurred on this device before any picture is sent."
-            : "Faces are not blurred here, because this camera keeps the staff register. Only staff who agreed are recognised."}{" "}
-          Recordings are kept for {info.retention_days} days, then deleted. Tell people near this camera that it records.
-        </p>
-      </div>
+      <Notice info={info} />
 
       <div className="stage cam-stage" hidden={!shown}>
-        <canvas ref={canvas} role="img" data-sent={state.sent}
-          aria-label={info.blur ? "What this camera sends, with faces covered" : "What this camera sends"}
-          data-covered={state.covered} />
+        <canvas ref={canvas} role="img" data-sent={state.sent} data-covered={state.covered}
+          aria-label={info.blur ? "What this camera sends, with faces covered" : "What this camera sends"} />
       </div>
 
       {status && (

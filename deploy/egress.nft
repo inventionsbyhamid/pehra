@@ -1,0 +1,31 @@
+#!/usr/sbin/nft -f
+# Where the app may open new connections (remote_setup.sh loads this through watchful-egress.service). The app and its
+# camera processes run as the watchful user; an RTSP camera may answer with a redirect, and FFmpeg follows RTSP
+# redirects with no option to refuse them (backend/watchful/netguard.py). So the watchful user's new connections to
+# this machine, private networks, link local, CGNAT and unique local addresses are dropped, apart from DNS and the
+# metadata service (the instance role's credentials; IMDSv2 needs a PUT that RTSP cannot send). Replies to
+# connections others open (Caddy to the app) are established and pass. Other users are not affected.
+table inet watchful_egress
+delete table inet watchful_egress
+table inet watchful_egress {
+	set private4 {
+		type ipv4_addr
+		flags interval
+		elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
+			192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/3 }
+	}
+	set private6 {
+		type ipv6_addr
+		flags interval
+		elements = { ::/127, ::ffff:0:0/96, 64:ff9b::/96, 64:ff9b:1::/48, fc00::/7, fe80::/10, ff00::/8 }
+	}
+	chain output {
+		type filter hook output priority filter; policy accept;
+		meta skuid != "watchful" accept
+		ct state established,related accept
+		meta l4proto { tcp, udp } th dport 53 accept
+		ip daddr 169.254.169.254 tcp dport 80 accept
+		ip daddr @private4 counter drop
+		ip6 daddr @private6 counter drop
+	}
+}

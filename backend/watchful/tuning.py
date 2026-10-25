@@ -319,6 +319,7 @@ class PushTuning(_Section):
     face_grow: float = 0.3  # the blurred box reaches this share of the face's size beyond it on each side
     face_hold_ms: int = 1200  # a face stays blurred this long after it was last found
     face_blocks: int = 6  # the mosaic over a face is this many blocks across
+    face_failures: int = 3  # the page stops, saying why, after this many frames in a row it could not blur
 
 
 class Tuning(_Section):

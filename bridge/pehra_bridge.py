@@ -8,11 +8,14 @@ listens here, so no port is opened on the society's router.
     python pehra_bridge.py --server https://control.example.com --token TOKEN --rtsp rtsp://... [--fps N]
 
 The server says how many frames a second to send and how wide (--fps can only lower the rate). RTSP is read over
-TCP. A lost camera or a lost connection is retried with growing waits. Passwords never reach the log: addresses
-are shown without user and password, and tokens by their first four characters."""
+TCP. A lost camera or a lost connection is retried with growing waits. A camera whose link the control room no
+longer knows stops; when every camera has stopped the bridge stays running and idle, saying what to do, rather than
+exiting (a service manager restarting it would retry the old links over and over). Passwords never reach the log:
+cameras are shown by scheme, host and port, and tokens by their first four characters."""
 import argparse
 import json
 import logging
+import logging.handlers
 import os
 import random
 import re
@@ -45,6 +48,8 @@ STOP_CODES = {4400: "this camera is not set up to be sent by the bridge",
 WAIT_CODES = {4409: "another device is sending this camera", 4412: "the camera is turned off in the control room",
               4429: "too many tries from this address"}
 WAIT_S = 60
+IDLE_REMIND_S = 3600  # how often an idle bridge repeats what to do
+LOG_BYTES, LOG_FILES = 5_000_000, 3
 TOKEN = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 CREDENTIALS = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]*@")
 
@@ -55,15 +60,16 @@ def redact(text: str) -> str:
 
 
 def where(url: str) -> str:
-    """How the log names a camera: host and path, never the user or password."""
+    """How the log names a camera: scheme, host and port only. Some recorders take the user and password in the
+    path or query (/user=admin_password=..., ?password=...), so neither is ever shown."""
     try:
         parts = urlsplit(url)
+        port = f":{parts.port}" if parts.port else ""
     except ValueError:
         return "an unreadable address"
     if not parts.scheme or not parts.hostname:
-        return os.path.basename(url) or "a file"
-    port = f":{parts.port}" if parts.port else ""
-    return f"{parts.scheme}://{parts.hostname}{port}{parts.path}"
+        return "a file on this computer"
+    return f"{parts.scheme}://{parts.hostname}{port}"
 
 
 class Backoff:
@@ -120,10 +126,10 @@ class Bridge:
     """Every camera gets a reader thread (RTSP into the newest frame) and a sender thread (the newest frame out)."""
 
     def __init__(self, server: str, cameras: list[Camera], fps: float | None = None, backoff=BACKOFF_S,
-                 wait_s: float = WAIT_S):
+                 wait_s: float = WAIT_S, stop: threading.Event | None = None):
         self.server, self.cameras, self.fps_cap = server, cameras, fps
         self.backoff, self.wait_s = backoff, wait_s
-        self.stop = threading.Event()
+        self.stop = stop or threading.Event()
         self.threads: list[threading.Thread] = []
         for cam in cameras:
             socket_url(server, cam.token)  # a bad --server fails here, before any thread starts
@@ -142,6 +148,7 @@ class Bridge:
             t.join(timeout=10)
 
     def running(self) -> bool:
+        """True while a camera is still trying (not stopped for good) and the bridge is not stopping."""
         return any(c.stopped_because is None for c in self.cameras) and not self.stop.is_set()
 
     def _read(self, cam: Camera) -> None:
@@ -244,7 +251,7 @@ class Bridge:
                 due = time.monotonic()  # fell behind: carry on from now
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, stop: threading.Event | None = None) -> int:
     p = argparse.ArgumentParser(description="Send this society's cameras to the control room.")
     p.add_argument("--server", required=True, help="the control room's address, for example https://control.example.com")
     p.add_argument("--camera", action="append", default=[], metavar="TOKEN=RTSP_ADDRESS",
@@ -254,8 +261,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--token", help="one camera's token, with --rtsp")
     p.add_argument("--rtsp", help="one camera's address, with --token")
     p.add_argument("--fps", type=float, help="send at most this many frames a second (the server sets the rate)")
+    p.add_argument("--log-file", help="write messages to this file as well as the screen (for Task Scheduler)")
     args = p.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    if args.log_file:
+        handlers.append(logging.handlers.RotatingFileHandler(args.log_file, maxBytes=LOG_BYTES, backupCount=LOG_FILES,
+                                                             encoding="utf-8"))
+    for h in handlers:
+        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        log.addHandler(h)
+    log.setLevel(logging.INFO)
+    try:
+        return run(p, args, stop)
+    finally:
+        for h in handlers:
+            log.removeHandler(h)
+            h.close()
+
+
+def run(p: argparse.ArgumentParser, args: argparse.Namespace, stop: threading.Event | None) -> int:
     try:
         cameras = [parse_camera(v) for v in args.camera]
         if args.cameras_file:
@@ -266,20 +290,31 @@ def main(argv: list[str] | None = None) -> int:
             cameras.append(parse_camera(f"{args.token}={args.rtsp}"))
         if not cameras:
             raise ValueError("name at least one camera with --camera, --cameras-file or --token and --rtsp")
-        bridge = Bridge(args.server, cameras, fps=args.fps)
+        bridge = Bridge(args.server, cameras, fps=args.fps, stop=stop)
     except (OSError, ValueError) as e:
         p.error(redact(str(e)))
     log.info("starting %d %s", len(cameras), "camera" if len(cameras) == 1 else "cameras")
-    signal.signal(signal.SIGTERM, lambda *_: bridge.stop.set())
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, lambda *_: bridge.stop.set())
     bridge.start()
     try:
-        while bridge.running():
-            bridge.stop.wait(1.0)
+        idle(bridge)
     except KeyboardInterrupt:
         pass
     bridge.close()
-    stopped = [c for c in cameras if c.stopped_because]
-    return 1 if stopped and len(stopped) == len(cameras) else 0
+    return 0
+
+
+def idle(bridge: "Bridge", remind_s: float = IDLE_REMIND_S) -> None:
+    """Runs until stopped. Once every camera has stopped (its link replaced or removed), says so now and then and
+    waits: exiting would let systemd or Docker restart the bridge, which would try the old links again."""
+    said = None
+    while not bridge.stop.is_set():
+        if not bridge.running() and (said is None or time.monotonic() - said >= remind_s):
+            said = time.monotonic()
+            log.error("every camera has stopped. Put the new lines from the control room in the cameras file, then "
+                      "restart the bridge.")
+        bridge.stop.wait(1.0)
 
 
 if __name__ == "__main__":

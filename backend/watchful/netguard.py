@@ -1,12 +1,24 @@
-"""Which camera addresses the server may pull from (SSRF). Hosts in a private network (10.x, 172.16.x, 192.168.x and
-other non public ranges), this machine, link local addresses (the cloud's metadata service among them) and IPv6
-unique local addresses are refused, and so are names that resolve to any of them. Cameras behind a society's router
-reach the server through the bridge or a device link, which push frames, so they never need an exception.
+"""Which camera addresses the server may pull from (SSRF). Only RTSP (rtsp, rtsps): FFmpeg follows HTTP redirects
+and loads HLS segments from wherever a playlist points, so HTTP, HLS and MJPEG over HTTP are refused (a phone's
+MJPEG address is on its own network anyway; phones use the device link). Hosts in a private network (10.x,
+172.16.x, 192.168.x and other non public ranges), this machine, link local addresses (the cloud's metadata service
+among them), IPv6 unique local addresses and IPv6 forms that carry such an IPv4 address (NAT64 64:ff9b::/96, IPv4
+compatible ::/96, 6to4, Teredo) are refused, and so are names that resolve to any of them. Cameras behind a society's
+router reach the server through the bridge or a device link, which push frames, so they never need an exception.
 ALLOW_PRIVATE_STREAMS turns the check off for a server that itself runs inside the society's network.
 
 A name is checked when the camera is added and again before each connection (ingest/sources.py), so a name that
-later resolves to a private address is refused too. Local files are a separate question: `inside` keeps the server's
-own clips (uploads, the demo samples) to their folders."""
+later resolves to a private address is refused too.
+
+What remains: an RTSP server may answer 3xx, and FFmpeg follows RTSP redirects with no option to refuse them, so a
+public camera address can still send FFmpeg's RTSP requests (OPTIONS, DESCRIBE) to a private or loopback address.
+They are blind (the server never shows what came back) and RTSP cannot send an HTTP PUT, so IMDSv2 tokens cannot be
+fetched. On AWS the instance drops the app user's new connections to private, loopback, link local, CGNAT and ULA
+addresses (deploy/egress.nft), apart from DNS and the metadata service; on ioflood there is no such rule, so a
+camera address there can still make the dev container send blind RTSP requests to its own network.
+
+Local files are a separate question: `inside` keeps the server's own clips (uploads, the demo samples) to their
+folders."""
 import ipaddress
 import socket
 from collections.abc import Callable
@@ -14,13 +26,13 @@ from functools import partial
 from pathlib import Path
 from urllib.parse import urlsplit
 
-SCHEMES = ("rtsp", "rtsps", "http", "https")
-DEFAULT_PORTS = {"rtsp": 554, "rtsps": 322, "http": 80, "https": 443}
+SCHEMES = ("rtsp", "rtsps")
+DEFAULT_PORTS = {"rtsp": 554, "rtsps": 322}
 ODD = set(" \\\t\r\n\x00")  # characters other URL parsers read differently
 
 Resolver = Callable[[str, int], list[str]]
 
-NOT_A_STREAM = "Paste an RTSP or HTTP stream address."
+NOT_A_STREAM = "Paste the camera's RTSP address. It starts with rtsp://"
 PRIVATE = ("That address is inside a private network, so the server can't reach it. Cameras behind the society's "
            "router connect through the bridge instead.")
 
@@ -35,9 +47,30 @@ def public(addr: str) -> bool:
         ip = ipaddress.ip_address(addr.split("%", 1)[0])
     except ValueError:
         return False
-    if ip.version == 6 and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    if ip.version == 6:
+        inner = embedded_ipv4(ip)
+        if inner is not None and not public(str(inner)):
+            return False
+        if ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
     return ip.is_global and not ip.is_multicast
+
+
+NAT64 = ipaddress.ip_network("64:ff9b::/96")
+COMPAT = ipaddress.ip_network("::/96")
+
+
+def embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 address an IPv6 address leads to, where it carries one."""
+    if ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    if ip in NAT64 or (ip in COMPAT and int(ip) > 1):
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    if ip.sixtofour is not None:
+        return ip.sixtofour
+    if ip.teredo is not None:
+        return ip.teredo[1]
+    return None
 
 
 def check_url(url: str, resolve: Resolver | None = None, allow_private: bool = False) -> str | None:

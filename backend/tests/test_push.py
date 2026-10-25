@@ -67,10 +67,12 @@ class RecordingManager(StubManager):
 class Server:
     """The app under uvicorn on a fixed port, which can be stopped and started again (the bridge test)."""
 
-    def __init__(self, tmp_path, recheck_s=15.0):
+    def __init__(self, tmp_path, recheck_s=15.0, log_level="warning"):
         dist = tmp_path / "dist"
         dist.mkdir(exist_ok=True)
         (dist / "app.html").write_text("<html>the app shell</html>")
+        (dist / "cam.html").write_text("<html>the camera page</html>")
+        self.log_level = log_level
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             self.port = sock.getsockname()[1]
@@ -85,9 +87,10 @@ class Server:
         self.start()
 
     def start(self):
-        self.srv = uvicorn.Server(uvicorn.Config(self.app, host="127.0.0.1", port=self.port, log_level="warning",
+        self.srv = uvicorn.Server(uvicorn.Config(self.app, host="127.0.0.1", port=self.port, log_level=self.log_level,
                                                  lifespan="off"))
-        threading.Thread(target=self.srv.run, daemon=True).start()
+        self.thread = threading.Thread(target=self.srv.run, daemon=True)
+        self.thread.start()
         deadline = time.time() + 10
         while not self.srv.started and time.time() < deadline:
             time.sleep(0.05)
@@ -95,12 +98,8 @@ class Server:
 
     def stop(self):
         self.srv.should_exit = True
-        deadline = time.time() + 10
-        while self.srv.started and time.time() < deadline and not getattr(self.srv, "_stopped", False):
-            if not any(t.is_alive() for t in threading.enumerate() if t.name.startswith("uvicorn")):
-                break
-            time.sleep(0.05)
-        time.sleep(0.5)
+        self.thread.join(timeout=15)
+        assert not self.thread.is_alive(), "the server did not stop"
 
     def client(self, email="asha@example.com", workspace_id=A, role="owner"):
         name, value = session_cookie(self.app, join(self.app, email, workspace_id, role), workspace_id)
@@ -289,7 +288,7 @@ def test_the_device_page_and_its_qr_code(server):
     a, _ = server.client()
     _, issued = device_camera(a)
     page = httpx.get(f"http://{server.host}/cam/{issued['token']}")
-    assert page.status_code == 200 and "the app shell" in page.text
+    assert page.status_code == 200 and "the camera page" in page.text and "the app shell" not in page.text
     csp = page.headers["content-security-policy"]
     assert "'wasm-unsafe-eval'" in csp and "frame-ancestors 'none'" in csp
     assert page.headers["referrer-policy"] == "no-referrer" and page.headers["cache-control"] == "no-store"
@@ -308,7 +307,8 @@ def decode_svg(svg: str) -> str:
     for x, y, w in re.findall(r"M(\d+) (\d+)h(\d+)", svg):
         grid[int(y), int(x):int(x) + int(w)] = 0
     big = cv2.resize(grid, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
-    return cv2.QRCodeDetector().detectAndDecode(big)[0]
+    # the classic detector misses about 3 in 100 valid codes; the ArUco based one read all of 300 random links
+    return cv2.QRCodeDetectorAruco().detectAndDecode(big)[0] or cv2.QRCodeDetector().detectAndDecode(big)[0]
 
 
 def test_qr_codes_read_back():
@@ -518,3 +518,208 @@ def test_a_removed_member_loses_open_sockets(tmp_path):
             assert closed_with(push, 3) == 4401
     finally:
         srv.srv.should_exit = True
+
+
+# ---- fix round 1 ----
+
+class Lines(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.lines: list[str] = []
+
+    def emit(self, record):
+        self.lines.append(self.format(record))
+
+
+def test_device_tokens_never_reach_the_server_log(tmp_path):
+    """uvicorn logs 'WebSocket /ws/cam/<token>" [accepted]' at INFO even with --no-access-log, and the access log
+    names every path; the app rewrites both before any handler sees them."""
+    lines = Lines()
+    srv = Server(tmp_path, log_level="info")
+    for name in ("uvicorn", "uvicorn.access"):
+        logging.getLogger(name).addHandler(lines)
+    try:
+        a, _ = srv.client()
+        _, issued = device_camera(a)
+        token = issued["token"]
+        with connect(f"ws://{srv.host}/ws/cam/{token}") as ws:
+            ws.recv(timeout=5)
+        for path in (f"/cam/{token}", f"/cam/{token}/info", f"/cam/{token}/qr.svg", "/cam/unknown-token-xyz/info"):
+            httpx.get(f"http://{srv.host}{path}")
+        assert wait_for(lambda: any("/ws/cam/-" in x for x in lines.lines))
+        assert any("/cam/-/info" in x for x in lines.lines) and any("/cam/-/qr.svg" in x for x in lines.lines)
+        assert not [x for x in lines.lines if token in x or "unknown-token-xyz" in x]
+        assert any("/api/cameras" in x for x in lines.lines)  # other paths stay as they are
+    finally:
+        for name in ("uvicorn", "uvicorn.access"):
+            logging.getLogger(name).removeHandler(lines)
+        srv.srv.should_exit = True
+
+
+STAFF_WATCH = {"name": "Staff arrive", "subject": {"classes": ["person"], "who": "enrolled"},
+               "conditions": [{"signal": "entered", "zones": []}]}
+
+
+def test_a_device_stops_when_its_blur_changes(server):
+    """A watch that names staff turns blur off for the camera: a device sending with blur is closed at once with
+    4411 (the page then shows the new notice), and the reverse too."""
+    a, _ = server.client()
+    pool, issued = device_camera(a, "Service gate")
+    repo = server.ctx.repo_for(A)
+    staff = repo.add_watch(WatchRow(None, pool["id"], "log staff arriving", STAFF_WATCH, False))
+    url = f"ws://{server.host}/ws/cam/{issued['token']}"
+    with connect(url) as ws:
+        assert json.loads(ws.recv(timeout=5))["blur"] is True
+        ws.send(JPEG)
+        assert a.patch(f"/api/watches/{staff.id}", json={"enabled": True}).status_code == 200
+        started = time.time()
+        assert closed_with(ws) == 4411 and time.time() - started < 2  # at once, not at the next recheck
+    with connect(url) as ws:
+        assert json.loads(ws.recv(timeout=5))["blur"] is False
+        assert a.patch(f"/api/watches/{staff.id}", json={"enabled": False}).status_code == 200
+        assert closed_with(ws) == 4411
+    assert httpx.get(f"http://{server.host}/cam/{issued['token']}/info").json()["blur"] is True
+
+
+def test_a_blur_change_made_elsewhere_is_caught_at_the_recheck(tmp_path):
+    srv = Server(tmp_path, recheck_s=0.3)
+    try:
+        a, _ = srv.client()
+        pool, issued = device_camera(a)
+        with connect(f"ws://{srv.host}/ws/cam/{issued['token']}") as ws:
+            assert json.loads(ws.recv(timeout=5))["blur"] is True
+            srv.ctx.repo_for(A).add_watch(WatchRow(None, pool["id"], "staff", STAFF_WATCH, True))  # no route, no poke
+            assert closed_with(ws, 3) == 4411
+    finally:
+        srv.srv.should_exit = True
+
+
+def test_a_link_replaced_while_joining_is_caught(server, monkeypatch):
+    """The link is replaced between the socket's token lookup and its joining the hub: the replace found nobody
+    to close, so the socket checks itself as it joins."""
+    a, _ = server.client()
+    pool, issued = device_camera(a)
+    hub, tokens = server.ctx.push_hub, server.ctx.device_tokens
+    join = hub.join
+
+    def replaced_meanwhile(camera_id, sender):
+        tokens.issue(A, camera_id)
+        hub.close(camera_id, 4410)  # what the route does, a moment too early
+        join(camera_id, sender)
+    monkeypatch.setattr(hub, "join", replaced_meanwhile)
+    with connect(f"ws://{server.host}/ws/cam/{issued['token']}") as ws:
+        json.loads(ws.recv(timeout=5))
+        started = time.time()
+        assert closed_with(ws) == 4410 and time.time() - started < 2
+    assert server.manager.count(pool["id"]) == 0
+
+
+def test_one_device_token_per_camera(server):
+    from sqlalchemy.exc import IntegrityError
+    a, _ = server.client()
+    pool, issued = device_camera(a)
+    tokens = server.ctx.device_tokens
+    second = tokens.issue(A, pool["id"])
+    with server.ctx.db.tx() as s:
+        rows = s.scalars(select(m.DeviceToken)).all()
+    assert len(rows) == 1 and rows[0].token_hash == hash_token(second) and rows[0].rotated_at is not None
+    assert tokens.find(issued["token"]) is None and tokens.find(second) == (A, pool["id"])
+    with pytest.raises(IntegrityError), server.ctx.db.tx() as s:
+        s.add(m.DeviceToken(workspace_id=A, camera_id=pool["id"], token_hash=hash_token("another")))
+
+
+def test_old_device_links_never_lock_out_sign_in(server):
+    """A bridge restarting with replaced links keeps knocking with unknown tokens; that counts against the device
+    links' own limit, not the one sign in links share."""
+    for i in range(12):
+        with connect(f"ws://{server.host}/ws/cam/stale{i:04d}xxxxxxxx") as ws:
+            closed_with(ws)
+    assert httpx.get(f"http://{server.host}/auth/link/not-a-real-link-token").status_code == 410
+
+
+def test_the_bridge_waits_instead_of_exiting_when_every_camera_stopped(server, caplog):
+    """Exiting would let systemd or Docker start it again, which would try the old links over and over."""
+    bridge = load_bridge()
+    caplog.set_level(logging.INFO, logger="bridge")
+    done, stop = [], threading.Event()
+    args = ["--server", f"http://{server.host}", "--camera", "Ab3dEf6hIj9kLmNoPqRsTuVwXyZ01234=rtsp://127.0.0.1:1/x"]
+    t = threading.Thread(target=lambda: done.append(bridge.main(args, stop)), daemon=True)
+    t.start()
+    assert wait_for(lambda: "every camera has stopped" in caplog.text, timeout=15)
+    time.sleep(1.5)
+    assert t.is_alive() and not done
+    stop.set()
+    t.join(10)
+    assert done == [0]
+
+
+def test_the_bridge_names_a_camera_by_host_and_port_only(tmp_path):
+    bridge = load_bridge()
+    for url in ("rtsp://admin:pw@10.0.0.2:554/user=admin_password=s3cr3t_channel=1_stream=0.sdp",
+                "rtsp://10.0.0.2:554/live?user=admin&password=s3cr3t"):
+        name = bridge.parse_camera(f"Ab3dEf6hIj9kLmNoPqRsTuVwXyZ01234={url}").name
+        assert "s3cr3t" not in name and "admin" not in name and name.endswith("rtsp://10.0.0.2:554")
+    assert bridge.where("/home/pi/clips/lobby.avi") == "a file on this computer"
+
+
+def test_the_bridge_readme_is_true():
+    readme = (ROOT / "bridge" / "README.md").read_text()
+    docker = (ROOT / "bridge" / "Dockerfile").read_text()
+    assert "--uid 10001" in docker and "USER bridge" in docker and "chown 10001" in readme
+    assert "--log-file" in readme and "--log-file" in (ROOT / "bridge" / "pehra_bridge.py").read_text()
+    assert "about 8 cameras" not in readme and "not been measured" in readme
+    assert "On a Mac use Docker" in readme
+
+
+def test_the_bridge_log_file(tmp_path):
+    bridge = load_bridge()
+    log, stop = tmp_path / "bridge.log", threading.Event()
+    args = ["--server", "http://127.0.0.1:1", "--log-file", str(log),
+            "--camera", "Ab3dEf6hIj9kLmNoPqRsTuVwXyZ01234=rtsp://a:b@127.0.0.1:1/x"]
+    t = threading.Thread(target=bridge.main, args=(args, stop), daemon=True)
+    t.start()
+    assert wait_for(lambda: log.exists() and "can't reach the server" in log.read_text(), timeout=15)
+    stop.set()
+    t.join(10)
+    assert ":b@" not in log.read_text() and not t.is_alive()
+
+
+def test_showing_a_recorder_password_is_audited(server):
+    a, _ = server.client()
+    lan = {"brand": "hikvision", "host": "192.168.1.64", "user": "admin", "password": "pw"}
+    bridged = a.post("/api/cameras", json={"name": "Gate", "kind": "webcam", "nvr": lan}).json()
+    phone = a.post("/api/cameras", json={"name": "Pool", "kind": "webcam"}).json()
+    for cam in (bridged, phone):
+        assert a.post(f"/api/cameras/{cam['id']}/device-token").status_code == 200
+    with server.ctx.db.tx() as s:
+        rows = {r.data["camera"]: r.data for r in s.scalars(select(m.Audit).where(m.Audit.action == "camera.device_link"))}
+    assert rows[bridged["id"]]["recorder_password_shown"] is True
+    assert rows[phone["id"]]["recorder_password_shown"] is False
+
+
+def test_the_notice_names_the_purpose_and_a_contact(server):
+    a, _ = server.client()
+    _, issued = device_camera(a, "Pool")
+    info = httpx.get(f"http://{server.host}/cam/{issued['token']}/info").json()
+    assert info["purpose"] == "Pool" and info["contact"] == "asha@example.com" and info["faces"]["failures"] == 3
+    server.ctx.repo_for(A).set_meta("notice_contact", "Society office, 98100 00000")
+    assert httpx.get(f"http://{server.host}/cam/{issued['token']}/info").json()["contact"] == \
+        "Society office, 98100 00000"
+
+
+def test_the_device_page_has_its_own_module(server):
+    from fastapi.routing import APIRoute
+    owners = {r.path: r.endpoint.__module__ for r in server.app.routes if isinstance(r, APIRoute)}
+    for path in ("/cam/{token}", "/cam/{token}/info", "/cam/{token}/qr.svg", "/api/cam/face-model"):
+        assert owners[path] == "watchful.api.device", path
+
+
+def test_task2_rereview_data_key_and_ipv6_addresses():
+    from cryptography.fernet import Fernet
+    from watchful.api.common import redact_url
+    from watchful.ingest import nvr
+    key = Fernet.generate_key().decode()
+    assert Settings(session_secret="s" * 32, data_key=f"  {key}\n", _env_file=None).data_key == key
+    url = nvr.build_url("dahua", "fd00::5", 1, "admin", "pw")
+    assert redact_url(url) == "rtsp://admin:***@[fd00::5]:554/cam/realmonitor?channel=1&subtype=1"
+    assert redact_url("rtsp://admin:pw@10.0.0.2:554/x") == "rtsp://admin:***@10.0.0.2:554/x"

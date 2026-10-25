@@ -32,6 +32,7 @@ def redact_url(url: str | None) -> str | None:
     if parts.password is None:
         return url
     host = parts.hostname or ""
+    host = f"[{host}]" if ":" in host else host  # an IPv6 address keeps its brackets
     netloc = f"{parts.username}:***@{host}" + (f":{parts.port}" if parts.port else "")
     return urlunsplit(parts._replace(netloc=netloc))
 

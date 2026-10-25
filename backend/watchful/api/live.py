@@ -1,49 +1,42 @@
-"""WebSockets, and the device page that turns a laptop or phone into a camera.
+"""WebSockets:
 
 * /ws/cameras/{id}: a camera's live view, for any member of its society. A camera that sends its own pictures shows
   the newest one it sent (add ?frames=0 when this browser is the camera and shows its own video).
 * /ws/cameras/{id}/push: this browser's webcam sending frames, for an admin of the camera's society.
 * /ws/cam/{token}: a laptop, phone or the bridge sending one camera's frames with its device token (ingest/push.py).
-* /cam/{token}: the device page (web/src/cam); /cam/{token}/info names its camera, /cam/{token}/qr.svg is a QR code
-  that opens it on a phone.
+  The device page and its other routes are in api/device.py, mounted from here.
 
 Session sockets need the session cookie of a member and an Origin of this site (a socket is not covered by SameSite).
 A device socket has no cookie: its token is the credential, and unknown tokens count as guesses per address. Every
-open socket checks its membership or token again every Tuning push.recheck_s, so a removed member or a replaced link
-is out within that time; replacing a link, turning a camera off or deleting it closes its sockets at once."""
+sending socket checks itself as it joins (a link replaced a moment before is caught), again every Tuning
+push.recheck_s, and at once when its camera's watches change (PushHub.poke): a removed member, a replaced link, or a
+device whose blur no longer matches the camera (CLOSE_CHANGED) is out. Replacing a link, turning a camera off or
+deleting it closes its sockets at once."""
 import asyncio
 import base64
 import time
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi import FastAPI, WebSocket
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.websockets import WebSocketDisconnect
 
-from watchful.api.headers import policy
+from watchful.api import device as device_page
 from watchful.auth.deps import CurrentMember, session_member
 from watchful.auth.sessions import origin_of
-from watchful.db import models as m
-from watchful.ingest.push import (CLOSE_BAD_KIND, CLOSE_BUSY, CLOSE_GONE, CLOSE_OFF, CLOSE_ROLE, CLOSE_SIGN_IN,
-                                  CLOSE_UNKNOWN, Sender, needs_faces, push_parts, qr_svg, retention_days)
-from watchful.ratelimit import TooManyTries, client_key
-from watchful.vision.models import model_path
+from watchful.ingest.push import (CLOSE_BAD_KIND, CLOSE_BUSY, CLOSE_CHANGED, CLOSE_GONE, CLOSE_OFF, CLOSE_ROLE,
+                                  CLOSE_SIGN_IN, CLOSE_UNKNOWN, Sender, needs_faces, push_parts)
 
 CLOSE_NOT_FOUND = CLOSE_UNKNOWN
-BUSY = "busy"
+BUSY = device_page.BUSY
 JPEG = b"\xff\xd8"
-DEVICE_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex"}
 
 
 def mount(app: FastAPI, ctx) -> None:
-    from watchful.api.app import SHELL, WEB_DIST
-
     manager = ctx.manager
     hub, tokens = push_parts(ctx)
     tune = ctx.tuning.push
-    # the device page runs OpenCV.js (WebAssembly; its bindings build functions at run time) to blur faces
-    device_policy = policy(ctx.settings).replace("script-src 'self'", "script-src 'self' 'unsafe-eval' "
-                                                                      "'wasm-unsafe-eval'", 1)
+    lookup = device_page.lookup_for(ctx)
+    device_page.mount(app, ctx)
 
     async def member_of(ws: WebSocket) -> CurrentMember | None:
         sent = ws.headers.get("origin")
@@ -68,22 +61,12 @@ def mount(app: FastAPI, ctx) -> None:
         return member, cam
 
     def still(ws: WebSocket, member: CurrentMember, role: str):
-        async def check() -> bool:
+        """A check: None while the member still belongs to the society with this role, else the close code."""
+        async def check() -> int | None:
             again = await run_in_threadpool(session_member, ws)
-            return again is not None and again.workspace.id == member.workspace.id and again.can(role)
+            ok = again is not None and again.workspace.id == member.workspace.id and again.can(role)
+            return None if ok else CLOSE_SIGN_IN
         return check
-
-    def lookup(conn, token: str):
-        """(workspace_id, camera_id) of a device token, None when unknown, BUSY after too many unknown ones."""
-        key = client_key(conn, ctx.settings.trust_cloudflare)
-        try:
-            guess = ctx.limits.misses.reserve(key)
-        except TooManyTries:
-            return BUSY
-        found = tokens.find(token)
-        if found is not None:
-            ctx.limits.misses.release(guess)
-        return found
 
     @app.websocket("/ws/cameras/{camera_id}")
     async def live(ws: WebSocket, camera_id: str):
@@ -106,8 +89,8 @@ def mount(app: FastAPI, ctx) -> None:
                     incoming = asyncio.create_task(ws.receive())  # ignore anything the browser sends
                 if loop.time() >= next_check:
                     next_check = loop.time() + tune.recheck_s
-                    if not await check():
-                        await ws.close(code=CLOSE_SIGN_IN)
+                    if (code := await check()) is not None:
+                        await ws.close(code=code)
                         break
                 msg = sub.get(0)
                 if msg is None and relay and (latest := hub.latest(camera_id)) and latest[0] != sent:
@@ -133,8 +116,9 @@ def mount(app: FastAPI, ctx) -> None:
             incoming.cancel()
             manager.unsubscribe(camera_id, sub)
 
-    async def pump(ws: WebSocket, cam, check, fail_code: int) -> None:
-        """Takes JPEG frames for a camera until the device leaves, the hub closes it or `check` fails."""
+    async def pump(ws: WebSocket, cam, check) -> None:
+        """Takes JPEG frames for a camera until the device leaves, the hub closes it or `check` gives a close code.
+        The sender's stop event also wakes it to check at once (PushHub.poke) when no close code was set."""
         loop = asyncio.get_running_loop()
         sender = Sender(loop)
         hub.join(cam.id, sender)
@@ -145,12 +129,19 @@ def mount(app: FastAPI, ctx) -> None:
                 await run_in_threadpool(manager.start, cam.id, cam.workspace_id)
             limit, gap, last = tune.max_frame_kb * 1024, 1.0 / tune.max_fps, 0.0
             next_check = loop.time() + tune.recheck_s
+            if (code := await check()) is not None:  # a link replaced between the lookup and joining the hub
+                await ws.close(code=code)
+                return
             while True:
                 done, _ = await asyncio.wait({incoming, stopping}, timeout=max(0.0, next_check - loop.time()),
                                              return_when=asyncio.FIRST_COMPLETED)
-                if stopping in done:
-                    await ws.close(code=sender.code or CLOSE_GONE)
+                if stopping in done and sender.code is not None:
+                    await ws.close(code=sender.code)
                     break
+                if stopping in done:  # poked: check now
+                    sender.stop.clear()
+                    stopping = asyncio.create_task(sender.stop.wait())
+                    next_check = loop.time()
                 if incoming in done:
                     msg = incoming.result()
                     if msg.get("type") == "websocket.disconnect":
@@ -164,8 +155,8 @@ def mount(app: FastAPI, ctx) -> None:
                     incoming = asyncio.create_task(ws.receive())
                 if loop.time() >= next_check:
                     next_check = loop.time() + tune.recheck_s
-                    if not await check():
-                        await ws.close(code=fail_code)
+                    if (code := await check()) is not None:
+                        await ws.close(code=code)
                         break
         except (WebSocketDisconnect, RuntimeError):
             pass
@@ -187,7 +178,7 @@ def mount(app: FastAPI, ctx) -> None:
         if not cam.enabled:
             await ws.close(code=CLOSE_OFF)
             return
-        await pump(ws, cam, still(ws, member, "admin"), CLOSE_SIGN_IN)
+        await pump(ws, cam, still(ws, member, "admin"))
 
     @app.websocket("/ws/cam/{token}")
     async def device(ws: WebSocket, token: str):
@@ -208,59 +199,10 @@ def mount(app: FastAPI, ctx) -> None:
         await ws.send_json({"type": "hello", "camera": cam.name, "fps": tune.fps, "width": tune.width,
                             "quality": tune.quality, "blur": blur})
 
-        async def check() -> bool:
-            return await run_in_threadpool(tokens.find, token) == found
-        await pump(ws, cam, check, CLOSE_GONE)
-
-    # the device page
-
-    def device_camera(request: Request, token: str):
-        found = lookup(request, token)
-        if found == BUSY:
-            raise HTTPException(429, "Too many tries from this address. Wait a minute.")
-        try:
-            if found is not None:
-                ctx.limits.public.reserve(client_key(request, ctx.settings.trust_cloudflare))
-        except TooManyTries:
-            raise HTTPException(429, "Too many tries from this address. Wait a minute.") from None
-        repo = ctx.repo_for(found[0]) if found else None
-        cam = repo.get_camera(found[1]) if repo else None
-        if cam is None or cam.kind != "webcam":
-            raise HTTPException(404, "This camera link no longer works. Ask your society admin for a new one.")
-        return found[0], repo, cam
-
-    @app.get("/cam/{token}", include_in_schema=False)
-    def device_page(token: str):
-        dist = ctx.settings.web_dist or WEB_DIST
-        shell = next((p for p in (dist / SHELL, dist / "index.html") if p.is_file()), None)
-        html = shell.read_text() if shell else '<!doctype html><meta charset="utf-8"><div id="root"></div>'
-        return HTMLResponse(html, headers={**DEVICE_HEADERS, "Content-Security-Policy": device_policy})
-
-    @app.get("/cam/{token}/info", include_in_schema=False)
-    def device_info(token: str, request: Request):
-        workspace_id, repo, cam = device_camera(request, token)
-        with ctx.db.tx() as s:
-            society = s.get(m.Workspace, workspace_id)
-        return JSONResponse({
-            "camera": cam.name, "society": society.name, "enabled": cam.enabled,
-            "blur": not needs_faces(repo, cam.id),
-            "retention_days": retention_days(society, ctx.settings.retention_days),
-            "send": {"fps": tune.fps, "width": tune.width, "quality": tune.quality},
-            "faces": {"width": tune.face_width, "score": tune.face_score, "grow": tune.face_grow,
-                      "hold_ms": tune.face_hold_ms, "blocks": tune.face_blocks},
-        }, headers=DEVICE_HEADERS)
-
-    @app.get("/cam/{token}/qr.svg", include_in_schema=False)
-    def device_qr(token: str, request: Request):
-        device_camera(request, token)
-        url = f"{ctx.settings.public_base_url.rstrip('/')}/cam/{token}"
-        return Response(qr_svg(url), media_type="image/svg+xml", headers=DEVICE_HEADERS)
-
-    @app.get("/api/cam/face-model", include_in_schema=False)
-    def face_model():
-        """YuNet (MIT, OpenCV Model Zoo) for the device page's face blur."""
-        path = model_path("yunet", ctx.settings)
-        if not path.is_file():
-            raise HTTPException(404, "The face model is not on this server.")
-        return FileResponse(path, media_type="application/octet-stream",
-                            headers={"Cache-Control": "public, max-age=86400"})
+        async def check() -> int | None:
+            if await run_in_threadpool(tokens.find, token) != found:
+                return CLOSE_GONE
+            if (not await run_in_threadpool(needs_faces, repo, cam.id)) != blur:
+                return CLOSE_CHANGED  # the notice the device shows is no longer true
+            return None
+        await pump(ws, cam, check)

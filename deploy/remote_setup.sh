@@ -33,7 +33,7 @@ export DEBIAN_FRONTEND=noninteractive PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_ROOT_U
 
 say "packages"
 apt-get update -q
-apt-get install -y -q ffmpeg curl ca-certificates xz-utils logrotate python3-venv python3-dev build-essential \
+apt-get install -y -q ffmpeg curl ca-certificates xz-utils logrotate python3-venv python3-dev build-essential nftables \
   gnupg debian-keyring debian-archive-keyring apt-transport-https
 if ! command -v caddy > /dev/null; then
   curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
@@ -124,6 +124,7 @@ say "services"
 for unit in watchful-app watchful-worker watchful-litestream; do
   sed -e "s|@PYTHON@|$PY|g" -e "s|@APP@|$APP|g" "$SRC/deploy/systemd/$unit.service" > "/etc/systemd/system/$unit.service"
 done
+sed -e "s|@APP@|$APP|g" "$SRC/deploy/egress.service" > /etc/systemd/system/watchful-egress.service
 sed -e "s|@DOMAIN@|$DOMAIN|g" -e "s|@ACME_EMAIL@|$ACME_EMAIL|g" "$SRC/deploy/Caddyfile" > /etc/caddy/Caddyfile
 install -d -o caddy -g caddy /var/log/caddy
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -143,7 +144,11 @@ ln -sfn "$SRC" "$APP/current"
 systemctl daemon-reload
 # one app process (sessions, live views and the camera pool live in its memory) with RUN_JOBS_IN_APP=false, and
 # one job worker beside it
-systemctl enable caddy watchful-app watchful-worker watchful-litestream
+systemctl enable caddy watchful-egress watchful-app watchful-worker watchful-litestream
+# the app user's new connections to private, loopback and link local addresses are dropped before the app starts:
+# FFmpeg follows RTSP redirects (deploy/egress.nft, backend/watchful/netguard.py)
+systemctl restart watchful-egress
+nft list table inet watchful_egress > /dev/null
 systemctl restart watchful-app watchful-worker watchful-litestream
 systemctl reload-or-restart caddy
 

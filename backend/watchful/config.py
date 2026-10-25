@@ -22,7 +22,7 @@ def check_data_key(value: str, name: str = "DATA_KEY") -> str:
         what = "blank" if not value.strip() else f"only {len(value.strip())} characters"
         raise ValueError(f"{name} is {what}. It encrypts camera addresses and must be at least {DATA_KEY_MIN} random "
                          f"characters; make one with {MAKE_SECRET}")
-    return value
+    return value.strip()
 
 
 class Settings(BaseSettings):

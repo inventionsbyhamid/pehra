@@ -32,5 +32,6 @@ export default defineConfig({
       "/ws": { target: api, ws: true },
     },
   },
-  build: { outDir: "dist", sourcemap: false },
+  // cam.html: the device page, its own small build (served with its own policy, see backend api/device.py)
+  build: { outDir: "dist", sourcemap: false, rollupOptions: { input: { index: "index.html", cam: "cam.html" } } },
 });

@@ -10,7 +10,10 @@ router.
 ## What you need
 
 * A computer at the society that stays on, with a wired connection if you can. One bridge handles many cameras.
-  A Raspberry Pi 4 or 5 is enough for about 8 cameras.
+  How many a small computer such as a Raspberry Pi can carry has not been measured yet, so add cameras a few at a
+  time and check the messages.
+* Windows, Linux, a Raspberry Pi with 64 bit Raspberry Pi OS, or any computer with Docker. On a Mac use Docker:
+  OpenCV installed with pip on a Mac cannot read RTSP.
 * The recorder's address on the network (for example `192.168.1.64`), a user and its password. A user that can
   only view is best.
 * For each camera, a line from the control room. When an admin adds a camera and picks "Through the bridge", the
@@ -31,6 +34,16 @@ Build the image once, in this folder:
 
 ```
 docker build -t camera-bridge .
+```
+
+Put the cameras file where the container can read it. Inside the container the bridge runs as user number 10001,
+so give that user the file and nobody else:
+
+```
+sudo mkdir -p /etc/camera-bridge
+sudo cp cameras.txt /etc/camera-bridge/cameras.txt
+sudo chown 10001 /etc/camera-bridge/cameras.txt
+sudo chmod 600 /etc/camera-bridge/cameras.txt
 ```
 
 Start it, so it also starts again after a power cut:
@@ -65,8 +78,10 @@ docker logs -f camera-bridge
    ```
 
 To start it when the computer starts, add a task in Task Scheduler: trigger "At startup", action "Start a program",
-program `py`, arguments `pehra_bridge.py --server https://YOUR-CONTROL-ROOM --cameras-file cameras.txt`, and
-"Start in" set to this folder. Tick "Run whether user is logged on or not".
+program `py`, arguments `pehra_bridge.py --server https://YOUR-CONTROL-ROOM --cameras-file cameras.txt --log-file
+bridge.log`, and "Start in" set to this folder. Tick "Run whether user is logged on or not". A task has no window,
+so its messages go to `bridge.log` in this folder (it keeps the last few megabytes). Keep `cameras.txt` readable
+only by the account the task runs as: right click it, Properties, Security.
 
 ### Linux or Raspberry Pi (64 bit Raspberry Pi OS)
 
@@ -76,8 +91,14 @@ python3 -m venv ~/camera-bridge
 ~/camera-bridge/bin/python pehra_bridge.py --server https://YOUR-CONTROL-ROOM --cameras-file cameras.txt
 ```
 
+Make the cameras file readable only by the user the bridge runs as (here `pi`):
+
+```
+chmod 600 /home/pi/bridge/cameras.txt
+```
+
 To start it with the computer, save this as `/etc/systemd/system/camera-bridge.service` (change the paths and the
-user), then run `sudo systemctl enable --now camera-bridge`:
+user), then run `sudo systemctl enable --now camera-bridge`. Its messages are in `journalctl -u camera-bridge`.
 
 ```
 [Unit]
@@ -138,6 +159,7 @@ for the control room and light on the society's upload.
 | `the server does not know this camera's token` or `this camera's link was replaced or removed` | The admin made a new link for this camera, or deleted it. Ask for the new line and put it in `cameras.txt`. |
 | `another device is sending this camera` | A phone or another bridge took this camera over. Only one device sends each camera. |
 | `the camera is turned off in the control room` | An admin turned it off. The bridge checks again every minute. |
+| `every camera has stopped` | Every camera's link was replaced or removed. The bridge waits instead of trying the old links again. Put the new lines in `cameras.txt`, then restart it. |
 
-The bridge never writes passwords to its messages: addresses appear without the user and password, and tokens by
-their first four characters.
+The bridge never writes passwords to its messages: a camera appears as its recorder's address and port only, and a
+token by its first four characters.

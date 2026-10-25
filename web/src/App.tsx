@@ -7,9 +7,9 @@ import Privacy from "./site/Privacy";
 import Refunds from "./site/Refunds";
 import SiteLogin from "./site/Login";
 
-// The public pages load at once (they are prerendered); the signed in app and the device page load when opened.
+// The public pages load at once (they are prerendered); the signed in app loads when opened. The device page
+// (/cam/{token}) is its own build, cam.html, served by the backend.
 const Workspace = lazy(() => import("./app/Workspace"));
-const CamPage = lazy(() => import("./cam/CamPage"));
 
 export default function App() {
   return (
@@ -20,8 +20,6 @@ export default function App() {
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/refunds" element={<Refunds />} />
       <Route path="/login" element={<SiteLogin />} />
-      {/* a device link: no sign in, the token in the address is the camera's credential */}
-      <Route path="/cam/:token" element={<Suspense fallback={null}><CamPage /></Suspense>} />
       <Route path="*" element={<Suspense fallback={null}><Workspace /></Suspense>} />
     </Routes>
   );

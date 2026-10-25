@@ -1,7 +1,12 @@
 """Camera addresses the server pulls are refused when they point inside a private network, at this machine or at
 link local addresses, names that resolve there included (SSRF, Watchful m3); NVR addresses come from templates."""
+import ipaddress
+import re
+import shutil
 import socket
+import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -25,18 +30,18 @@ NAMES = resolver({"nvr.example.com": ["93.184.215.14"], "inside.example.com": ["
 
 def test_private_hosts_are_refused():
     refused = ["rtsp://10.1.2.3/stream", "rtsp://192.168.1.64:554/Streaming/Channels/102", "rtsp://127.0.0.1/x",
-               "rtsp://169.254.169.254/latest/meta-data", "http://[::1]:8000/", "rtsp://[fc00::1]/x",
+               "rtsp://169.254.169.254/latest/meta-data", "rtsp://[::1]:8000/", "rtsp://[fc00::1]/x",
                "rtsp://[fd12:3456::1]/x", "rtsp://[fe80::1]/x", "rtsp://172.16.0.9/x", "rtsp://100.64.0.1/x",
                "rtsp://0.0.0.0/x", "rtsp://[::ffff:10.0.0.1]/x", "rtsp://admin:pw@inside.example.com/x",
                "rtsp://meta.example.com/x", "rtsp://v6.example.com/x", "rtsp://mixed.example.com/x",
-               "rtsp://2130706433/x", "https://inside.example.com/video.mjpg"]
+               "rtsp://2130706433/x", "rtsps://inside.example.com/video"]
     for url in refused:
         assert check_url(url, resolve=NAMES) == PRIVATE, url
 
 
 def test_public_hosts_and_unknown_names_pass():
     for url in ("rtsp://93.184.215.14/x", "rtsp://admin:pw@nvr.example.com:554/cam/realmonitor?channel=1&subtype=1",
-                "https://nvr.example.com/live.mjpg"):
+                "rtsps://nvr.example.com/live"):
         assert check_url(url, resolve=NAMES) is None, url
     # a name that does not resolve now cannot be reached either; it is checked again before every connection
     assert check_url("rtsp://nowhere.example.com/x", resolve=NAMES) is None
@@ -94,3 +99,81 @@ def test_nvr_templates_build_substream_addresses():
         with pytest.raises(ValueError):
             nvr.build_url(**args)
     assert {b["id"] for b in nvr.brands()} == {"hikvision", "cp_plus", "dahua"}
+
+
+DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
+
+
+def test_only_rtsp_is_pulled():
+    """FFmpeg follows HTTP redirects and loads HLS segments from wherever a playlist points (probed: a 302 and a
+    playlist both reached 127.0.0.1), so a pulled camera is RTSP only."""
+    for url in ("http://93.184.215.14/live.mjpg", "https://nvr.example.com/live.m3u8", "http://nvr.example.com/x",
+                "hls+http://nvr.example.com/x.m3u8", "rtmp://93.184.215.14/live", "srt://93.184.215.14:9000",
+                "tcp://93.184.215.14:554", "udp://93.184.215.14:5000", "concat:rtsp://93.184.215.14/x"):
+        assert check_url(url, resolve=NAMES) == NOT_A_STREAM, url
+        assert check_url(url, resolve=NAMES, allow_private=True) == NOT_A_STREAM, url
+    assert check_url("rtsp://93.184.215.14/x", resolve=NAMES) is None
+    assert check_url("RTSPS://93.184.215.14/x", resolve=NAMES) is None
+
+
+def test_ipv6_forms_of_a_private_ipv4_are_refused():
+    for host in ("64:ff9b::a9fe:a9fe", "64:ff9b::a00:1", "64:ff9b::7f00:1", "::127.0.0.1", "::a00:1",
+                 "2002:a00:1::1", "2002:7f00:1::1", "::ffff:169.254.169.254"):
+        assert check_url(f"rtsp://[{host}]/x", resolve=NAMES) == PRIVATE, host
+    assert check_url("rtsp://[64:ff9b::808:808]/x", resolve=NAMES) is None  # NAT64 of a public address
+    assert check_url("rtsp://nat64.example.com/x", resolve=resolver({"nat64.example.com": ["64:ff9b::a00:5"]})) \
+        == PRIVATE
+
+
+def egress_sets() -> tuple[str, dict[str, list]]:
+    text = (DEPLOY / "egress.nft").read_text()
+    sets = {}
+    for name, body in re.findall(r"set (\w+) \{.*?elements = \{(.*?)\}", text, re.S):
+        sets[name] = [ipaddress.ip_network(x.strip()) for x in body.replace("\n", " ").split(",") if x.strip()]
+    return text, sets
+
+
+def test_the_app_user_cannot_reach_private_addresses_on_aws():
+    """FFmpeg follows RTSP redirects and has no option to refuse them, so on AWS the app user's new connections to
+    this machine and private, link local, CGNAT and ULA addresses are dropped, apart from DNS and the metadata
+    service (instance role credentials)."""
+    text, sets = egress_sets()
+    chain = text[text.index("chain output"):]
+    rules = [line.strip() for line in chain.splitlines() if line.strip()]
+    assert 'meta skuid != "watchful" accept' in rules and "ct state established,related accept" in rules
+    drops = [i for i, r in enumerate(rules) if r.endswith("drop")]
+    for allowed in ("meta l4proto { tcp, udp } th dport 53 accept", "ip daddr 169.254.169.254 tcp dport 80 accept"):
+        assert allowed in rules and rules.index(allowed) < min(drops), allowed
+    assert {r for r in rules if r.endswith("drop")} == {"ip daddr @private4 counter drop",
+                                                         "ip6 daddr @private6 counter drop"}
+    for addr in ("127.0.0.1", "127.0.0.53", "10.1.2.3", "172.16.0.9", "172.31.0.2", "192.168.1.64", "169.254.169.254",
+                 "169.254.170.2", "100.64.0.1", "0.0.0.0"):
+        assert any(ipaddress.ip_address(addr) in n for n in sets["private4"]), addr
+    for addr in ("::1", "fd00:ec2::254", "fc00::1", "fe80::1", "::ffff:10.0.0.1", "64:ff9b::a9fe:a9fe"):
+        assert any(ipaddress.ip_address(addr) in n for n in sets["private6"]), addr
+    for addr in ("93.184.215.14", "8.8.8.8", "52.95.110.1"):
+        assert not any(ipaddress.ip_address(addr) in n for n in sets["private4"]), addr
+    # every address the guard refuses at add time is also dropped at connect time
+    for addr in ("10.0.0.1", "127.0.0.1", "169.254.169.254", "100.64.0.1", "fd12:3456::1", "fe80::1", "::1"):
+        assert not check_url(f"rtsp://{'[' + addr + ']' if ':' in addr else addr}/x") is None
+
+    setup = (DEPLOY / "remote_setup.sh").read_text()
+    unit = (DEPLOY / "egress.service").read_text()
+    assert "ExecStart=/usr/sbin/nft -f @APP@/current/deploy/egress.nft" in unit
+    assert "Before=watchful-app.service" in unit and "User=" not in unit
+    assert re.search(r"apt-get install .*nftables", setup)
+    assert "deploy/egress.service\" > /etc/systemd/system/watchful-egress.service" in setup
+    order = [setup.index(x) for x in ("systemctl enable caddy watchful-egress", "systemctl restart watchful-egress",
+                                      "nft list table inet watchful_egress",
+                                      "systemctl restart watchful-app watchful-worker watchful-litestream")]
+    assert order == sorted(order)
+    user = re.search(r"useradd --system .* (\w+)$", setup, re.M).group(1)
+    assert user == "watchful" and "User=watchful" in (DEPLOY / "systemd" / "watchful-app.service").read_text()
+    stack = (DEPLOY / "cloudformation.yaml").read_text()
+    assert "VPCEndpoint" not in stack  # AWS APIs are reached on public endpoints, which the rules leave open
+
+
+@pytest.mark.skipif(shutil.which("nft") is None, reason="nft is not installed here (the instance checks the rules)")
+def test_the_egress_rules_parse():
+    result = subprocess.run(["nft", "-c", "-f", str(DEPLOY / "egress.nft")], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

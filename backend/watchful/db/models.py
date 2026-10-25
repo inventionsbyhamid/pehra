@@ -433,10 +433,10 @@ class Attendance(Base):
 
 
 class DeviceToken(Base):
-    """Lets a browser, phone or bridge push frames for one camera; only the token's hash is kept."""
+    """Lets a browser, phone or bridge push frames for one camera; only the token's hash is kept, one per camera."""
     __tablename__ = "device_tokens"
     __table_args__ = (same_society("device_tokens", "camera_id", "cameras"),
-                      Index("ix_device_tokens_ws_camera", "workspace_id", "camera_id"))
+                      Index("ix_device_tokens_ws_camera", "workspace_id", "camera_id", unique=True))
     id: Mapped[str] = id_column("dev")
     workspace_id: Mapped[str] = workspace_fk()
     camera_id: Mapped[str]
