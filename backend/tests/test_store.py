@@ -146,12 +146,19 @@ def test_rows_must_point_into_their_own_society(tmp_path):
     bad = [m.DeviceToken(workspace_id="ws_a", camera_id=theirs.id, token_hash="h1"),
            m.Zone(workspace_id="ws_a", camera_id=theirs.id, id="z1", name="gate"),
            m.StaffFace(workspace_id="ws_a", staff_id="per_b", embedding=b"\0" * 16),
-           m.Attendance(workspace_id="ws_a", staff_id="per_b", day="2026-10-25")]
+           m.Attendance(workspace_id="ws_a", staff_id="per_b", day="2026-10-25"),
+           m.Incident(workspace_id="ws_a", camera_id=theirs.id, severity="critical")]
     for row in bad:
         with pytest.raises(IntegrityError), orm.Session(engine) as s, s.begin():
             s.add(row)
     with orm.Session(engine) as s, s.begin():
         s.add(m.DeviceToken(workspace_id="ws_b", camera_id=theirs.id, token_hash="h2"))
+        s.add(m.Incident(workspace_id="ws_a", camera_id=None, severity="warning"))  # a site wide incident
+        own = m.Incident(workspace_id="ws_b", camera_id=theirs.id, severity="critical")
+        own_id = own.id
+        s.add(own)
+    with pytest.raises(IntegrityError), orm.Session(engine) as s, s.begin():
+        s.add(m.TelegramMessage(workspace_id="ws_a", incident_id=own_id, chat_id="-1", message_id="1"))
 
 
 def test_make_repo_needs_a_society(tmp_path):

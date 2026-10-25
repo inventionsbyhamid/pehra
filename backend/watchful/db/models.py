@@ -339,7 +339,9 @@ class Incident(Base):
     """Repeats of one situation on one camera, grouped: one Telegram message, edited as it changes."""
     __tablename__ = "incidents"
     __table_args__ = (Index("ix_incidents_ws_status_last", "workspace_id", "status", "last_at"),
-                      Index("ix_incidents_ws_camera_watch", "workspace_id", "camera_id", "watch_id"))
+                      Index("ix_incidents_ws_camera_watch", "workspace_id", "camera_id", "watch_id"),
+                      same_society("incidents", "camera_id", "cameras"),  # None for a site wide incident
+                      UniqueConstraint("workspace_id", "id", name="uq_incidents_ws_id"))
     id: Mapped[str] = id_column("inc")
     workspace_id: Mapped[str] = workspace_fk()
     camera_id: Mapped[str | None]
@@ -452,10 +454,11 @@ class TelegramMessage(Base):
     the incident changes) or a reminder posted when a critical one stays unacknowledged."""
     __tablename__ = "telegram_messages"
     __table_args__ = (UniqueConstraint("chat_id", "message_id", name="uq_telegram_messages_chat_message"),
+                      same_society("telegram_messages", "incident_id", "incidents"),
                       Index("ix_telegram_messages_ws_incident", "workspace_id", "incident_id"))
     id: Mapped[str] = id_column("tgm")
     workspace_id: Mapped[str] = workspace_fk()
-    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"))
+    incident_id: Mapped[str]
     chat_id: Mapped[str]
     message_id: Mapped[str]
     kind: Mapped[str] = mapped_column(default="incident")  # incident or reminder

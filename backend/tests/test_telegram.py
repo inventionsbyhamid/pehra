@@ -19,6 +19,7 @@ from watchful.alerts.telegram import (TelegramBot, TelegramChannel, TelegramErro
 from watchful.config import Settings
 from watchful.db import models as m
 from watchful.notify import LogChannel
+from watchful.store.db import Camera
 from watchful.tuning import CropTuning
 from watchful.vision.faces import FaceIndex
 from watchful.vision.models import sample_path
@@ -316,7 +317,8 @@ def test_api_connects_a_group_through_the_webhook_and_acts_on_incidents(tmp_path
     assert viewer.get("/api/telegram").json()["warnings"] is True
 
     repo = app.state.ctx.repo_for("ws_green_park")
-    inc = open_or_touch_incident(repo, "cam_x", "wat_x", "critical", "Someone is in the pool.", None, T0)
+    cam = repo.add_camera(Camera(None, "Pool", "stream", "rtsp://pool")).id
+    inc = open_or_touch_incident(repo, cam, "wat_x", "critical", "Someone is in the pool.", None, T0)
     listed = viewer.get("/api/incidents?status=open").json()
     assert [i["id"] for i in listed] == [inc.id] and listed[0]["reason"] == "Someone is in the pool."
     assert viewer.post(f"/api/incidents/{inc.id}/acknowledge").status_code == 403

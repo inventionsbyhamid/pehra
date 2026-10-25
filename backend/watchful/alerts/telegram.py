@@ -146,6 +146,7 @@ class ChatLimiter:
         self._sent: dict[str, deque] = defaultdict(deque)
         self._blocked: dict[str, float] = {}
         self._lock = threading.Lock()
+        self.sending = threading.Lock()
 
     def hold(self, chat_id: str, now: datetime) -> float:
         """Seconds until this chat may get the next message; 0 when it may now."""
@@ -382,19 +383,21 @@ def _camera_name(repo, camera_id: str | None) -> str:
 
 
 def _call(limiter: ChatLimiter, chat: str, now: datetime, fn):
-    """Runs one Bot API call to a chat within its limits: (result, None), or (None, seconds to wait)."""
-    hold = limiter.hold(chat, now)
-    if hold > 0:
-        return None, hold
-    try:
-        result = fn()
-    except TelegramError as e:
-        if e.retry_after:
-            limiter.block(chat, now, e.retry_after)
-            return None, e.retry_after
-        raise
-    limiter.note(chat, now)
-    return result, None
+    """Runs one Bot API call to a chat within its limits: (result, None), or (None, seconds to wait). Calls go one
+    at a time, so the worker's two lanes never both take a chat's last free slot."""
+    with limiter.sending:
+        hold = limiter.hold(chat, now)
+        if hold > 0:
+            return None, hold
+        try:
+            result = fn()
+        except TelegramError as e:
+            if e.retry_after:
+                limiter.block(chat, now, e.retry_after)
+                return None, e.retry_after
+            raise
+        limiter.note(chat, now)
+        return result, None
 
 
 def sync_incident(repo, channel, limiter: ChatLimiter, incident_id: str, now: datetime, tuning: AlertTuning,
@@ -512,6 +515,13 @@ def repost(repo, channel, limiter: ChatLimiter, incident_id: str, n: int, now: d
 
 
 _limiter_lock, _faces_lock = threading.Lock(), threading.Lock()
+_INCIDENT_LOCKS = [threading.Lock() for _ in range(64)]
+
+
+def _incident_lock(incident_id: str) -> threading.Lock:
+    """One incident's messages are synced by one job at a time: a sync on the urgent lane and another on the main
+    lane must not both post its first message."""
+    return _INCIDENT_LOCKS[int(hashlib.sha256(incident_id.encode()).hexdigest()[:8], 16) % len(_INCIDENT_LOCKS)]
 
 
 def _limiter(ctx: JobContext) -> ChatLimiter:
@@ -567,8 +577,9 @@ def _base_url(ctx: JobContext) -> str:
 @handler(inc_.SYNC, urgent=True)
 def _sync(ctx: JobContext, payload: dict) -> None:
     repo = ctx.repo(payload["workspace_id"])
-    wait = sync_incident(repo, ctx.worker.channel, _limiter(ctx), payload["incident_id"], ctx.now, ctx.tuning.alerts,
-                         _base_url(ctx), picture=lambda inc: still_for(ctx, repo, inc))
+    with _incident_lock(payload["incident_id"]):
+        wait = sync_incident(repo, ctx.worker.channel, _limiter(ctx), payload["incident_id"], ctx.now,
+                             ctx.tuning.alerts, _base_url(ctx), picture=lambda inc: still_for(ctx, repo, inc))
     if wait:
         raise Defer(wait)
 
@@ -577,7 +588,8 @@ def _sync(ctx: JobContext, payload: dict) -> None:
 def _escalate(ctx: JobContext, payload: dict) -> None:
     t = ctx.tuning.alerts
     repo, n = ctx.repo(payload["workspace_id"]), int(payload["n"])
-    still_open, wait = repost(repo, ctx.worker.channel, _limiter(ctx), payload["incident_id"], n, ctx.now, t)
+    with _incident_lock(payload["incident_id"]):
+        still_open, wait = repost(repo, ctx.worker.channel, _limiter(ctx), payload["incident_id"], n, ctx.now, t)
     if wait:
         raise Defer(wait)
     if still_open and n < t.escalate_times:

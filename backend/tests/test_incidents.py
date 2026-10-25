@@ -139,8 +139,8 @@ def test_warnings_go_to_telegram_only_when_turned_on_and_info_never(env):
 
 def test_the_agent_grades_severity_with_a_reason(tmp_path, env):
     from test_agent import ctx, step
-    c = Candidate("wat_gate", "cam", 100.0, 1, "warning", {"reasons": ["gate open"]}, ["cam/kf/1.jpg"], "fp",
-                  "Gate open late")
+    c = Candidate("wat_gate", env.cams["gate"], 100.0, 1, "warning", {"reasons": ["gate open"]}, ["cam/kf/1.jpg"],
+                  "fp", "Gate open late")
     v = verify(c, ctx(tmp_path), FakeLLM([step("raise_alert", summary="The gate is wide open with nobody near.",
                                               severity="Critical", reason="a child is walking towards the road")]))
     assert (v.status, v.severity, v.reason) == ("alert", "critical", "a child is walking towards the road")
@@ -226,12 +226,14 @@ def test_the_camera_manager_files_live_candidates_as_incidents(tmp_path):
     from watchful.components import make_blobs
     from watchful.config import Settings
     from watchful.evidence import EvidencePack
+    from watchful.store.db import Camera
     from watchful.tuning import Tuning
     from watchful.workers import WorkerManager
 
     s = Settings(session_secret="y", data_dir=tmp_path, index_embeddings=False, scan_pool_at_start=False,
                  _env_file=None)
     repo = society_repo(s, "Green Park")
+    pool = repo.add_camera(Camera(None, "Pool", "stream", "rtsp://pool")).id
     alert = json.dumps({"tool": "raise_alert", "args": {"summary": "A person is lying still at the deep end.",
                                                          "severity": "critical", "reason": "no movement"}, "why": "."})
     llm = FakeLLM([alert] * 5)
@@ -241,7 +243,7 @@ def test_the_camera_manager_files_live_candidates_as_incidents(tmp_path):
         now = time.time()
 
         def pack(fp: str, ts: float) -> EvidencePack:
-            c = Candidate("wat_pool", "cam_pool", ts, 4, "critical", {"reasons": ["still in water"]}, [], fp,
+            c = Candidate("wat_pool", pool, ts, 4, "critical", {"reasons": ["still in water"]}, [], fp,
                           "Someone still in the water")
             return EvidencePack(c, [(ts, frame)], [(ts, (300.0, 100.0, 60.0, 150.0))])
 
