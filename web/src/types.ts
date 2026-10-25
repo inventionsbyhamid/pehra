@@ -33,6 +33,7 @@ export interface Camera {
   purpose?: string;
   last_frame_at?: number | null;
   health?: Health | null; // the camera's health, once the server reports it under its own key
+  off_reason?: string | null; // "plan" when the society's plan switched it off
   status: {
     running: boolean;
     source: string;

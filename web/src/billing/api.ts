@@ -7,7 +7,8 @@ export interface BillingSummary {
   source: "free" | "paid" | "comp" | "agreed";
   status: string | null;
   period: Period | null;
-  cameras: { watched: number; allowed: number | null; paid: number | null; next: number | null };
+  cameras: { watched: number; allowed: number | null; paid: number | null; next: number | null; most: number | null };
+  switched_off: { id: string; name: string }[];
   renews_at: string | null;
   ends_at: string | null;
   grace_until: string | null;
@@ -15,13 +16,16 @@ export interface BillingSummary {
   refund_until: string | null;
   retention_days: number;
   ai_checks: { today: number; day: number };
+  ai_help: { today: number; day: number };
   staff: { enrolled: number; allowed: number | null };
   can_checkout: boolean;
   can_change_cameras: boolean;
   can_manage: boolean;
+  payer: boolean;
   payments: boolean;
   test_mode: boolean;
   provider: string;
+  poll: { every_ms: number; tries: number };
 }
 
 export class BillingError extends Error {

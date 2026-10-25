@@ -28,7 +28,7 @@ const HEALTH: Record<string, [string, Tone]> = {
 // A camera's health in one word. The server's health judgement wins; until it sends one, the worker's state says.
 export function healthOf(cam: Camera): { word: string; tone: Tone } {
   if (cam.kind === "file") return { word: "Recording", tone: "off" };
-  if (!cam.enabled) return { word: "Paused", tone: "off" };
+  if (!cam.enabled) return { word: cam.off_reason === "plan" ? "Switched off by the plan" : "Paused", tone: "off" };
   const judged = cam.health ?? cam.status.health;
   if (judged && HEALTH[judged]) {
     const [word, tone] = HEALTH[judged];

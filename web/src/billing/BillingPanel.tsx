@@ -7,9 +7,6 @@ import { cameraPlan, freePlan, largePlan, merchant, refundDays } from "../site/p
 import { billingApi, BillingError, type BillingSummary, type Period } from "./api";
 import "./billing.css";
 
-const POLL_MS = 2000;
-const POLL_TRIES = 15;
-const most = cameraPlan.limits.watched_cameras ?? 49;
 
 function day(iso: string | null) {
   if (!iso) return "";
@@ -81,6 +78,7 @@ export default function BillingPanel({ heading = 2 }: { heading?: 1 | 2 | 3 }) {
   const [b, setB] = useState<BillingSummary | null>(null);
   const [owner, setOwner] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notAdmin, setNotAdmin] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [waiting, setWaiting] = useState(() => new URLSearchParams(window.location.search).has("checkout"));
@@ -95,7 +93,8 @@ export default function BillingPanel({ heading = 2 }: { heading?: 1 | 2 | 3 }) {
       setB(next);
       return next;
     } catch (e) {
-      setError(e instanceof BillingError ? e.message : "Billing could not be loaded. Reload the page to try again.");
+      if (e instanceof BillingError && e.status === 403) setNotAdmin(true);
+      else setError(e instanceof BillingError ? e.message : "Billing could not be loaded. Reload the page to try again.");
       return null;
     }
   }, []);
@@ -108,22 +107,23 @@ export default function BillingPanel({ heading = 2 }: { heading?: 1 | 2 | 3 }) {
   }, [load]);
 
   // back from checkout: the plan changes once the payment is confirmed, usually within seconds
+  const poll = b?.poll;
   useEffect(() => {
-    if (!waiting) return;
+    if (!waiting || !poll) return;
     let tries = 0;
     const timer = window.setInterval(async () => {
       tries += 1;
       const next = await load();
-      if ((next && next.source === "paid") || tries >= POLL_TRIES) {
+      if ((next && next.source === "paid") || tries >= poll.tries) {
         window.clearInterval(timer);
         setWaiting(false);
         const url = new URL(window.location.href);
         url.searchParams.delete("checkout");
         window.history.replaceState(window.history.state, "", url);
       }
-    }, POLL_MS);
+    }, poll.every_ms);
     return () => window.clearInterval(timer);
-  }, [waiting, load]);
+  }, [waiting, poll, load]);
 
   async function leave(get: () => Promise<{ url: string }>) {
     setBusy(true);
@@ -142,16 +142,20 @@ export default function BillingPanel({ heading = 2 }: { heading?: 1 | 2 | 3 }) {
     setError(null);
     try {
       const done = await billingApi.changeCameras(want);
+      const undo = want === b.cameras.paid;
       setChanging(false);
       setNote(
-        done.from
-          ? `From ${day(done.from)} your plan watches ${cameras(want)}.`
-          : `Your plan now pays for ${cameras(want)}. It shows here once ${merchant} confirms, usually within seconds.`,
+        undo
+          ? `Your plan keeps ${cameras(want)}.`
+          : done.from
+            ? `From ${day(done.from)} your plan watches ${cameras(want)}.`
+            : `Your plan now pays for ${cameras(want)}. It shows here once ${merchant} confirms, usually within seconds.`,
       );
-      for (let i = 0; i < 5; i += 1) {
+      for (let i = 0; i < b.poll.tries; i += 1) {
         const next = await load();
-        if (!next || next.cameras.paid === want || next.cameras.next === want) break;
-        await new Promise((r) => window.setTimeout(r, POLL_MS));
+        if (!next || (undo ? next.cameras.next === null : next.cameras.paid === want || next.cameras.next === want))
+          break;
+        await new Promise((r) => window.setTimeout(r, b.poll.every_ms));
       }
     } catch (e) {
       setError(e instanceof BillingError ? e.message : "That change could not be made. Try again in a minute.");
@@ -164,7 +168,13 @@ export default function BillingPanel({ heading = 2 }: { heading?: 1 | 2 | 3 }) {
     return (
       <section className="bp" aria-labelledby="bp-title">
         <H id="bp-title" className="bp-title">Billing</H>
-        {error ? <p className="bp-error" role="alert">{error}</p> : <p role="status">Loading</p>}
+        {notAdmin ? (
+          <p className="bp-meta">Billing is looked after by the society's admins. Ask one of them about the plan.</p>
+        ) : error ? (
+          <p className="bp-error" role="alert">{error}</p>
+        ) : (
+          <p role="status">Loading</p>
+        )}
       </section>
     );
   }
@@ -172,6 +182,8 @@ export default function BillingPanel({ heading = 2 }: { heading?: 1 | 2 | 3 }) {
   const line = standing(b);
   const allowed = b.cameras.allowed;
   const minBuy = Math.max(1, b.cameras.watched);
+  const most = b.cameras.most ?? Math.max(minBuy, b.cameras.paid ?? minBuy);
+  const off = b.switched_off.map((c) => c.name);
 
   return (
     <section className="bp" aria-labelledby="bp-title">
@@ -205,13 +217,21 @@ export default function BillingPanel({ heading = 2 }: { heading?: 1 | 2 | 3 }) {
             </dd>
           </div>
           <div>
+            <dt>Writing watches and questions today</dt>
+            <dd>
+              {b.ai_help.today} of {b.ai_help.day}
+              <Meter used={b.ai_help.today} of={b.ai_help.day} />
+            </dd>
+          </div>
+          <div>
             <dt>Staff named</dt>
             <dd>{b.staff.allowed === null ? b.staff.enrolled : `${b.staff.enrolled} of ${b.staff.allowed}`}</dd>
           </div>
         </dl>
         {b.cameras.next !== null && b.cameras.next !== b.cameras.paid && (
           <p className="bp-meta">
-            From {day(b.renews_at)} your plan watches {cameras(b.cameras.next)}.
+            {b.renews_at ? `From ${day(b.renews_at)}` : "From your next renewal"} your plan watches{" "}
+            {cameras(b.cameras.next)}.
           </p>
         )}
         {b.ai_checks.today >= b.ai_checks.day && (
@@ -219,6 +239,15 @@ export default function BillingPanel({ heading = 2 }: { heading?: 1 | 2 | 3 }) {
             Today's AI checks are used up. Until midnight, critical moments still alert you, marked not checked by the
             AI.
           </p>
+        )}
+        {off.length > 0 && (
+          <p className="bp-meta">
+            Switched off by the plan: {off.join(", ")}. Add cameras to your plan, or switch another camera off, then
+            switch {off.length === 1 ? "it" : "them"} on again.
+          </p>
+        )}
+        {owner && b.source === "paid" && !b.payer && (
+          <p className="bp-hint">Billing is managed by the person who paid. Ask them, or email us.</p>
         )}
         {allowed !== null && b.cameras.watched >= allowed && (
           <p className="bp-meta">
@@ -236,8 +265,11 @@ export default function BillingPanel({ heading = 2 }: { heading?: 1 | 2 | 3 }) {
               More cameras are charged now for the rest of this period. Fewer apply from your next renewal; switch off
               the cameras you no longer want watched first.
             </p>
+            {b.cameras.next !== null && b.cameras.paid !== null && (
+              <p className="bp-hint">Save {b.cameras.paid} to keep your cameras and cancel the lowering.</p>
+            )}
             <div className="bp-actions">
-              <button type="button" className="bp-btn" disabled={busy || want === b.cameras.paid} onClick={() => void saveCameras()}>
+              <button type="button" className="bp-btn" disabled={busy || (want === b.cameras.paid && b.cameras.next === null)} onClick={() => void saveCameras()}>
                 Save
               </button>
               <button type="button" className="bp-btn bp-btn-line" disabled={busy} onClick={() => setChanging(false)}>
