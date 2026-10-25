@@ -108,15 +108,36 @@ class FakeLLM:
 
 
 class LimitedLLM:
-    """Counts every call against its society's daily cap (the repository's society), recorded with its task. The
-    cap is a number, or a function read at each call (the society's plan, billing/limits.py)."""
+    """Counts calls against its society's daily cap (the repository's society), recorded with its task. The cap is a
+    number, or a function read at each call (the society's plan, billing/limits.py); `used` says how many of its kind
+    were made today (every AI request of the society when not given). `check()` is one AI check of a flagged moment:
+    it is counted once, at its first request, however many steps the check takes."""
 
-    def __init__(self, inner: LLM, repo, limit, task: str = "ai"):
-        self.inner, self.repo, self.limit, self.task = inner, repo, limit, task
+    def __init__(self, inner: LLM, repo, limit, task: str = "ai", used=None):
+        self.inner, self.repo, self.limit, self.task, self.used = inner, repo, limit, task, used
 
-    def complete(self, system, messages, images=(), json_schema=None, timeout_s=20) -> str:
-        if self.repo.count_ai_calls_today() >= (self.limit() if callable(self.limit) else self.limit):
+    def admit(self) -> None:
+        made = self.used() if self.used is not None else self.repo.count_ai_calls_today()
+        if made >= (self.limit() if callable(self.limit) else self.limit):
             raise AILimitReached("daily AI limit reached")
         self.repo.record_ai_call(self.task)
+
+    def complete(self, system, messages, images=(), json_schema=None, timeout_s=20) -> str:
+        self.admit()
         return self.inner.complete(system, messages, images, json_schema, timeout_s)
 
+    def check(self) -> "OneCheck":
+        return OneCheck(self)
+
+
+class OneCheck:
+    """One AI check (agent/verifier.py): admitted and counted at its first request; its later steps ride on it."""
+
+    def __init__(self, limited: LimitedLLM):
+        self.limited, self.admitted = limited, False
+
+    def complete(self, system, messages, images=(), json_schema=None, timeout_s=20) -> str:
+        if not self.admitted:
+            self.limited.admit()
+            self.admitted = True
+        return self.limited.inner.complete(system, messages, images, json_schema, timeout_s)

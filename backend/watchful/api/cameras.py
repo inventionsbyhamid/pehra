@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from watchful.agent.compiler import age_in_name
 from watchful.api.common import LIVE_KINDS, camera_json, camera_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
-from watchful.billing.limits import daily_ai_cap, start_watching
+from watchful.billing.limits import CHECKS, ai_used, daily_ai_cap, start_watching, stop_watching
 from watchful.ingest import nvr
 from watchful.ingest.push import CLOSE_GONE, CLOSE_OFF, push_parts, qr_svg
 from watchful.netguard import check_url, clip_roots, inside
@@ -154,27 +154,37 @@ def make_router(ctx) -> APIRouter:
     def patch_camera(camera_id: str, body: CameraPatch, member: CurrentMember = Depends(require_role("admin"))):
         r = repo(member)
         cam = camera_or_404(r, camera_id)
-        if body.enabled and not cam.enabled and (refused := start_watching(ctx.db, member.workspace.id, cam.id)):
-            raise HTTPException(403, refused)
-        if body.name is not None:
-            cam.name = body.name
-        if body.purpose is not None:
-            cam.purpose = _purpose(body.purpose)
+        purpose = _purpose(body.purpose)  # every check before anything is written
         if body.zones is not None:
             bare = next((z["name"] for z in body.zones if age_in_name(str(z.get("name") or ""))), None)
             if bare:
                 raise HTTPException(400, f"Name the place, not who uses it: {bare} could be read as an age. "
                                          "For example, kids play area.")
-            cam.zones = [Zone(z.get("id") or new_id("zone"), z["name"], [tuple(p) for p in z["polygon"]],
-                              z.get("kind") or "area") for z in body.zones]
+            zones = [Zone(z.get("id") or new_id("zone"), z["name"], [tuple(p) for p in z["polygon"]],
+                          z.get("kind") or "area") for z in body.zones]
+        if body.tuning is not None:
+            load_tuning(None, body.tuning)
+        switching_on = bool(body.enabled) and not cam.enabled
+        if switching_on and (refused := start_watching(ctx.db, member.workspace.id, cam.id)):
+            raise HTTPException(403, refused)
+        if body.name is not None:
+            cam.name = body.name
+        if purpose is not None:
+            cam.purpose = purpose
+        if body.zones is not None:
+            cam.zones = zones
             if cam.kind == "demo":
                 r.delete_camera_events(cam.id)  # the next loop records the timeline with the new zones
         if body.enabled is not None:
             cam.enabled = body.enabled
         if body.tuning is not None:
-            load_tuning(None, body.tuning)
             cam.tuning = body.tuning
-        r.update_camera(cam)
+        try:
+            r.update_camera(cam)
+        except Exception:
+            if switching_on:
+                stop_watching(ctx.db, member.workspace.id, cam.id)  # the plan's place is given back
+            raise
         disabled = []
         if body.zones is not None:
             kinds = {z.name: z.kind for z in cam.zones}
@@ -370,7 +380,7 @@ def make_router(ctx) -> APIRouter:
             by_status[a.status] = by_status.get(a.status, 0) + 1
         scans = [s for s in getattr(manager, "scans", {}).values() if s.get("stats") and own_scan(member, s)]
         return {"cameras": [camera_json(manager, c) for c in r.list_cameras()],
-                "ai_calls_today": r.count_ai_calls_today(),
+                "ai_calls_today": ai_used(r, CHECKS),
                 "ai_daily_limit": daily_ai_cap(r, ctx.settings.ai_daily_call_limit),
                 "alerts": by_status, "scans": [s["stats"] for s in scans][-20:]}
 

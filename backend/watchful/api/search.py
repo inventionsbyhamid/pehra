@@ -76,7 +76,7 @@ def make_router(ctx) -> APIRouter:
         faces = await run_in_threadpool(ctx.faces_for, ws) if q.photo is not None or q.person_id else None
         try:
             r = await run_in_threadpool(search, q, ctx.repo_for(ws), ctx.blobs, ctx.embedder,
-                                        ctx.llm_for(ws, "verify"), faces, ctx.tuning.signals, None,
+                                        ctx.llm_for(ws, "search"), faces, ctx.tuning.signals, None,
                                         member.workspace.timezone,
                                         ctx.person_detector if q.photo is not None else None)
         except ConsentRequired:

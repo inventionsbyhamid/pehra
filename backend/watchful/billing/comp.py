@@ -6,10 +6,14 @@
     python -m watchful.billing show <workspace_id>              what the plan allows now
     python -m watchful.billing refund <workspace_id> [--yes]    refunds a yearly plan within the refund window in
                                                                  full and ends it; without --yes it only says what
-                                                                 it would do"""
+                                                                 it would do
+    python -m watchful.billing unmatched [--days N]             payments and events that reached no society (a
+                                                                 purchase outside our checkout carries none)"""
 import argparse
 import logging
 from datetime import UTC, date, datetime, time, timedelta
+
+from sqlalchemy import select
 
 from watchful.billing.limits import entitlement, hold_retention, retention_days, watched_cameras
 from watchful.billing.plans import catalog
@@ -96,8 +100,25 @@ def refund_window(ws: m.Workspace, now: datetime) -> tuple[bool, str]:
     return True, ""
 
 
-def refund(db, provider, workspace_id: str, grace_days: int, *, confirm: bool, now: datetime | None = None) -> str:
-    """Refunds the society's yearly payment in full and ends its plan now, within the refund window."""
+UNMATCHED = ("billing.unmatched", "billing.ambiguous_customer", "billing.unknown_product", "billing.no_units")
+
+
+def unmatched(db, days: float, now: datetime | None = None) -> list[str]:
+    """Billing events of the last `days` that need the operator: for no society we know, for a customer several
+    societies share, for a product not in POLAR_PRODUCTS, or without a camera count. One line each, newest first."""
+    since = (now or m.utcnow()) - timedelta(days=days)
+    with db.tx() as s:
+        rows = s.scalars(select(m.Audit).where(m.Audit.action.in_(UNMATCHED), m.Audit.ts >= since)
+                         .order_by(m.Audit.ts.desc())).all()
+        return [f"{r.ts.isoformat()} {r.action} society={r.workspace_id or '-'} " +
+                " ".join(f"{k}={v}" for k, v in sorted(r.data.items()) if v not in (None, "", []))
+                for r in rows]
+
+
+def refund(db, provider, workspace_id: str, grace_days: int, *, confirm: bool, now: datetime | None = None,
+           margin_s: float = 0.0) -> str:
+    """Refunds the society's yearly payment in full and ends its plan now, within the refund window. Payments from
+    `margin_s` before the year started count too (the first order is made just before the subscription)."""
     from watchful.billing.state import apply_event
     now = now or m.utcnow()
     with db.tx() as s:
@@ -108,7 +129,7 @@ def refund(db, provider, workspace_id: str, grace_days: int, *, confirm: bool, n
     if not confirm:
         return (f"{workspace_id}: would refund every payment for subscription {ws.subscription_id} since "
                 f"{ws.subscription_period_start.isoformat()} and end it now. Run again with --yes to do it.")
-    done = provider.refund(ws, ws.subscription_period_start - timedelta(minutes=5))
+    done = provider.refund(ws, ws.subscription_period_start - timedelta(seconds=margin_s))
     ended = BillingEvent(id=f"refund_{ws.subscription_id}_{now.timestamp()}", type="subscription.revoked",
                          workspace_id=ws.id, customer_id=ws.polar_customer_id, subscription_id=ws.subscription_id,
                          plan=None, period=ws.subscription_period, status="canceled", changed_at=now)
@@ -145,6 +166,8 @@ def main(argv: list[str] | None = None, settings=None, provider=None) -> None:
     back = sub.add_parser("refund", help="refund a yearly plan within the refund window and end it")
     back.add_argument("workspace")
     back.add_argument("--yes", action="store_true", help="do it; without this it only says what it would do")
+    lost = sub.add_parser("unmatched", help="billing events that reached no society, for the operator")
+    lost.add_argument("--days", type=float, help="how far back (default: as long as webhook ids are kept)")
     opts = args.parse_args(argv)
     if opts.command == "comp":
         giving = opts.plan or opts.cameras is not None or opts.until or opts.days is not None
@@ -156,12 +179,16 @@ def main(argv: list[str] | None = None, settings=None, provider=None) -> None:
     settings = settings or get_settings()
     db = make_db(settings)
     try:
+        tuning = load_tuning(settings.tuning_file)
         if opts.command == "show":
             print(describe(db, opts.workspace))
+        elif opts.command == "unmatched":
+            lines = unmatched(db, opts.days if opts.days is not None else tuning.limits.webhook_ids_days)
+            print("\n".join(lines) if lines else "nothing unmatched")
         elif opts.command == "refund":
-            tuning = load_tuning(settings.tuning_file)
             provider = provider or make_billing(settings, tuning)
-            print(refund(db, provider, opts.workspace, tuning.limits.grace_days, confirm=opts.yes))
+            print(refund(db, provider, opts.workspace, tuning.limits.grace_days, confirm=opts.yes,
+                         margin_s=tuning.limits.refund_orders_margin_s))
         elif opts.end:
             plan = end(db, opts.workspace)
             print(f"{opts.workspace}: comp of {plan} ended" if plan else f"{opts.workspace} had no comp")

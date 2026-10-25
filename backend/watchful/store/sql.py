@@ -219,7 +219,7 @@ class SqlRepository:
         kind = "demo" if row.kind == "file" and st.get("loop") else ROW_TO_KIND.get(row.kind, row.kind)
         return Camera(row.id, row.name, kind, self._box.open(row.url_enc), [_zone(z) for z in zones], row.enabled,
                       dict(st.get("tuning") or {}), st.get("last_scan"), row.workspace_id, row.purpose, row.status,
-                      _epoch(row.last_frame_at))
+                      _epoch(row.last_frame_at), row.off_reason)
 
     def _write_camera(self, s: orm.Session, row: m.Camera, cam: Camera, new: bool = False) -> None:
         """Health, the last picture time and the last scan are the camera processes' to write (set_camera_health,

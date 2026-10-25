@@ -106,6 +106,10 @@ class Workspace(Base):
     plan: Mapped[str] = mapped_column(default="free")
     subscription_status: Mapped[str | None]
     polar_customer_id: Mapped[str | None]  # the billing provider's customer id
+    # who paid (the member at checkout, and the provider's customer email): only they open the billing portal, which
+    # shows every subscription of that customer, perhaps another society's
+    billing_user_id: Mapped[str | None]
+    billing_email: Mapped[str | None]
     grace_until: Mapped[datetime | None]
     subscription_id: Mapped[str | None]  # the provider's, for the subscription last applied
     subscription_period: Mapped[str | None]  # month or year
@@ -246,6 +250,7 @@ class Camera(Base):
     status: Mapped[str] = mapped_column(default="offline")  # live, offline, covered, moved or blurred
     last_frame_at: Mapped[datetime | None]
     enabled: Mapped[bool] = mapped_column(default=True)
+    off_reason: Mapped[str | None]  # "plan": switched off because the plan watches fewer (billing/limits.py)
     settings_json: Mapped[dict[str, Any]] = mapped_column(default=dict)  # tuning overrides, last scan, loop
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 

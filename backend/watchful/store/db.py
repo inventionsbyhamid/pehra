@@ -30,6 +30,7 @@ class Camera:
     purpose: str = "other"
     status: str = "offline"
     last_frame_at: float | None = None
+    off_reason: str | None = None  # "plan" when the plan switched it off; written only by billing/limits.py
 
 
 @dataclass

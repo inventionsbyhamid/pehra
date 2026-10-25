@@ -314,6 +314,9 @@ class LimitsTuning(_Section):
     billing_link_s: int = 3600  # a test billing link (the fake provider) works this long
     billing_api_timeout_s: float = 10.0  # one request to the billing provider's API
     plan_check_s: float = 300.0  # how often the app switches off cameras a plan no longer covers
+    refund_orders_margin_s: float = 300.0  # a refund takes the subscription's payments from this long before its year
+    billing_poll_s: float = 2.0  # the billing panel asks again this often while a payment or change is confirmed
+    billing_poll_tries: int = 15  # and at most this many times
 
 
 class PushTuning(_Section):

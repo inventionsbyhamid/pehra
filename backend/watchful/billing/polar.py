@@ -25,6 +25,7 @@ from watchful.registry import register
 log = logging.getLogger(__name__)
 
 BILLING_PAGE = "/app/settings/billing"
+API_VERSION = "2026-10"  # the webhook endpoint's API version in Polar's settings, and the SDK's
 MORE, FEWER = "invoice", "next_period"  # proration when cameras are added, and when they are removed
 REFUND_REASON = "customer_request"
 
@@ -88,14 +89,19 @@ class PolarBilling:
             log.warning("Polar %s failed: %s", what, e)
             raise BillingError(f"Polar {what} failed") from e
 
-    def checkout(self, workspace, plan: str, period: str, cameras: int, success_url: str, *,
-                 email: str | None = None, customer_ip: str | None = None) -> str:
+    def checkout(self, workspace, plan: str, period: str, cameras: int, success_url: str, *, payer_id: str,
+                 watched: int = 1, email: str | None = None, customer_ip: str | None = None) -> str:
         product = self.products.get(product_key(plan, period))
         if not product:
             raise BillingError(f"no Polar product for {product_key(plan, period)}; add it to POLAR_PRODUCTS")
-        body = {"products": [product], "units": cameras, "external_customer_id": workspace.id,
-                "success_url": success_url, "return_url": f"{self.base}{BILLING_PAGE}",
-                "metadata": {"workspace_id": workspace.id, "plan": plan, "period": period, "cameras": cameras}}
+        most = catalog().get(plan).limits.watched_cameras
+        body = {"products": [product], "units": cameras, "min_units": max(1, watched),
+                "external_customer_id": workspace.id, "success_url": success_url,
+                "return_url": f"{self.base}{BILLING_PAGE}",
+                "metadata": {"workspace_id": workspace.id, "user_id": payer_id, "plan": plan, "period": period,
+                             "cameras": cameras}}
+        if most is not None:
+            body["max_units"] = most
         if email and not workspace.polar_customer_id:
             body["customer_email"] = email
         if customer_ip:
@@ -105,9 +111,13 @@ class PolarBilling:
     def change_cameras(self, workspace, cameras: int) -> None:
         if not workspace.subscription_id:
             raise BillingError("no subscription to change")
+        sub = workspace.subscription_id
+        if cameras == workspace.subscription_units and workspace.subscription_units_next is not None:
+            self._call("subscription update", lambda: self.client().subscriptions.update(sub, pending_update=None))
+            return None  # the lowering waiting for the renewal is dropped
         proration = MORE if cameras > (workspace.subscription_units or 0) else FEWER
         self._call("subscription update", lambda: self.client().subscriptions.update(
-            workspace.subscription_id, units=cameras, proration_behavior=proration))
+            sub, units=cameras, proration_behavior=proration))
         return None  # subscription.updated brings the change
 
     def portal_url(self, workspace) -> str:
@@ -148,6 +158,9 @@ class PolarBilling:
         verify_standard_webhook(self.settings.polar_webhook_secret, headers, body)
         payload = json.loads(body)
         kind = payload.get("type") or ""
+        if payload.get("api_version") not in (None, API_VERSION):
+            log.warning("a Polar webhook of API version %s, not %s: set the endpoint's version in Polar",
+                        payload.get("api_version"), API_VERSION)
         delivery = {k.lower(): v for k, v in headers.items()}["webhook-id"]
         if kind == "order.refunded":
             return self._refund(delivery, kind, payload)
@@ -158,7 +171,8 @@ class PolarBilling:
         plan, period = self.plans.get(sub.get("product_id"), (None, None))
         # checkout metadata names the society paid for; the customer's external id is only the first society that
         # customer (one email) paid for, so it is the fallback
-        workspace_id = (sub.get("metadata") or {}).get("workspace_id")
+        metadata = sub.get("metadata") or {}
+        workspace_id = metadata.get("workspace_id")
         return BillingEvent(
             id=delivery, type=kind, workspace_id=workspace_id,
             customer_external_id=customer.get("external_id"), product_id=sub.get("product_id"),
@@ -168,7 +182,8 @@ class PolarBilling:
             units=sub.get("units"), units_next=(sub.get("pending_update") or {}).get("units"),
             period_start=when(sub.get("current_period_start")), period_end=when(sub.get("current_period_end")),
             ends_at=when(sub.get("ends_at")) if sub.get("cancel_at_period_end") else None,
-            past_due_at=when(sub.get("past_due_at")))
+            past_due_at=when(sub.get("past_due_at")), payer_id=metadata.get("user_id"),
+            payer_email=customer.get("email"))
 
     @staticmethod
     def _refund(delivery: str, kind: str, payload: dict) -> RefundNotice:

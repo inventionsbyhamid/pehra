@@ -56,15 +56,21 @@ def made_embedders() -> list:
     return list(_embedders.values())
 
 
+MODEL_OF = {"search": "verify"}  # a task that uses another task's model setting
+
+
 def make_llm(settings: Settings, repo, task: str = "verify"):
-    """The AI for one society, counted against its plan's AI checks a day (read at each call, so a plan change
-    applies at once)."""
+    """The AI for one society. Checks of flagged moments ("verify") count once per check against the plan's AI checks
+    a day; writing watches, questions and search count per request against its AI help a day. Both limits are read
+    at each call, so a plan change applies at once. Search uses the checking model."""
     from watchful.agent.llm import LimitedLLM
-    from watchful.billing.limits import daily_ai_cap
+    from watchful.billing.limits import ASSIST, CHECK_TASKS, CHECKS, ai_used, daily_ai_cap
     load_all()
-    model = getattr(settings, f"ai_model_{task}", None)
+    model = getattr(settings, f"ai_model_{MODEL_OF.get(task, task)}", None)
+    kind = CHECKS if task in CHECK_TASKS else ASSIST
     return LimitedLLM(build("llm", settings.ai_provider, settings=settings, model=model), repo,
-                      lambda: daily_ai_cap(repo, settings.ai_daily_call_limit), task)
+                      lambda: daily_ai_cap(repo, settings.ai_daily_call_limit, kind), task,
+                      used=lambda: ai_used(repo, kind))
 
 
 def make_billing(settings: Settings, tuning: Tuning | None = None):

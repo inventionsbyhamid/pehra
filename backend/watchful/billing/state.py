@@ -132,6 +132,7 @@ def apply_event(db, event: BillingEvent, provider: str, grace_days: int, now: da
                          skipped)
                 return Outcome(skipped, ws.id)
             before, kept = entitlement(ws, now), retention_days(ws, now)
+            same = ws.subscription_id == event.subscription_id
             ws.subscription_id = event.subscription_id
             ws.subscription_status = event.status
             ws.billing_synced_at = event.changed_at
@@ -140,9 +141,23 @@ def apply_event(db, event: BillingEvent, provider: str, grace_days: int, now: da
             ws.subscription_period_end = event.period_end
             ws.subscription_ends_at = event.ends_at
             ws.polar_customer_id = event.customer_id or ws.polar_customer_id
+            if same:  # the payer of this subscription, as far as the snapshots tell
+                ws.billing_user_id = event.payer_id or ws.billing_user_id
+                ws.billing_email = event.payer_email or ws.billing_email
+            else:  # another subscription: its own payer only
+                ws.billing_user_id, ws.billing_email = event.payer_id, event.payer_email
             if event.status in PAYING or event.status in GRACE:
                 ws.plan = event.plan
-                ws.subscription_units, ws.subscription_units_next = event.units, event.units_next
+                if event.units is not None:
+                    ws.subscription_units, ws.subscription_units_next = event.units, event.units_next
+                else:  # a paying snapshot without cameras: never read as fewer (billing.limits counts it as unknown)
+                    if not same:
+                        ws.subscription_units = ws.subscription_units_next = None
+                    s.add(m.Audit(workspace_id=ws.id, actor=provider, action="billing.no_units",
+                                  data={"event": event.type, "subscription": event.subscription_id,
+                                        "product": event.product_id, "kept": ws.subscription_units}))
+                    log.warning("billing event %s for %s has no camera count; kept %s", event.id, ws.id,
+                                ws.subscription_units)
                 if event.status in PAYING:
                     ws.grace_until = None
                 elif event.past_due_at:

@@ -43,18 +43,19 @@ class FakeBilling:
         if not self.payments:
             raise BillingError(NOT_HERE)
 
-    def checkout(self, workspace, plan: str, period: str, cameras: int, success_url: str, **_) -> str:
+    def checkout(self, workspace, plan: str, period: str, cameras: int, success_url: str, *, payer_id: str,
+                 **_) -> str:
         self._local()
         if period not in catalog().get(plan).prices or not catalog().get(plan).sold:
             raise BillingError(f"{plan} is not sold by the {period}")
         token = self.links.dumps({"do": "buy", "w": workspace.id, "plan": plan, "period": period, "n": cameras,
-                                  "next": success_url})
+                                  "u": payer_id, "next": success_url})
         return f"{self.base}/api/billing/fake/{token}"
 
     def change_cameras(self, workspace, cameras: int) -> BillingEvent:
         self._local()
         now = m.utcnow()
-        fewer = cameras < (workspace.subscription_units or 0)
+        fewer = cameras < (workspace.subscription_units or 0)  # the number already paid undoes a lowering
         return BillingEvent(id=f"fake_units_{workspace.subscription_id}_{now.timestamp()}", type="subscription.updated",
                             workspace_id=workspace.id, customer_id=workspace.polar_customer_id,
                             subscription_id=workspace.subscription_id, plan=workspace.plan,
@@ -87,7 +88,8 @@ class FakeBilling:
             event = BillingEvent(id=f"fake_{sub}", type="subscription.active", workspace_id=ws,
                                  customer_id=f"fake_cus_{ws}", subscription_id=sub, plan=data["plan"],
                                  period=data["period"], status="active", changed_at=now, units=data["n"],
-                                 period_start=now, period_end=now + timedelta(days=PERIOD_DAYS[data["period"]]))
+                                 period_start=now, period_end=now + timedelta(days=PERIOD_DAYS[data["period"]]),
+                                 payer_id=data.get("u"))
             return event, data["next"].replace("{CHECKOUT_ID}", sub)
         sub = subscription_of(ws) or f"fake_sub_{ws}"
         event = BillingEvent(id=f"fake_end_{sub}_{now.timestamp()}", type="subscription.revoked", workspace_id=ws,

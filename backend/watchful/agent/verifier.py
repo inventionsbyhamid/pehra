@@ -67,6 +67,7 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
     if c.evidence.get("method") == "camera":
         seen = "; ".join(c.evidence.get("reasons", [])) or "the camera is not seeing properly"
         return Verdict("alert", plain(f"{c.watch_name}: {seen}."))
+    llm = llm.check() if hasattr(llm, "check") else llm  # one check counts once against the plan, whatever its steps
     start = time.monotonic()
     system = render("verify", tools=describe_tools())
     text, _ = _opening(c, ctx)

@@ -14,7 +14,8 @@ PERIODS = ("month", "year")
 class Limits:
     watched_cameras: int | None  # the most a plan watches (a per camera plan: the most one can buy); None: agreed
     retention_days: int  # footage is deleted this long after it was saved; agreed: the longest any plan keeps
-    ai_checks_day: int | None  # AI requests a day; per watched camera on a per camera plan; None: agreed
+    ai_checks_day: int | None  # AI checks of flagged moments a day; per watched camera on a per camera plan
+    ai_assist_day: int | None  # AI requests a day for writing watches, questions and search; None: agreed
     enrolled_staff: int | None  # None: agreed
     min_cameras: int | None = None
 
@@ -75,7 +76,7 @@ def parse(data: dict) -> Catalog:
         prices = {period: p.get(f"price_{period}_inr") for period in PERIODS}
         plans[p["id"]] = Plan(p["id"], p["name"],
                               Limits(lim["watched_cameras"], lim["retention_days"] or longest, lim["ai_checks_day"],
-                                     lim["enrolled_staff"], lim.get("min_cameras")),
+                                     lim["ai_assist_day"], lim["enrolled_staff"], lim.get("min_cameras")),
                               {k: v for k, v in prices.items() if v}, bool(p.get("per_camera")),
                               bool(p.get("contact")))
     default = data.get("default_plan") or next(p.id for p in plans.values() if p.free)

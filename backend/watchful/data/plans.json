@@ -32,7 +32,7 @@
       "price_year_inr": null,
       "per_camera": false,
       "contact": false,
-      "limits": { "watched_cameras": 2, "min_cameras": null, "retention_days": 7, "ai_checks_day": 50, "enrolled_staff": 5 },
+      "limits": { "watched_cameras": 2, "min_cameras": null, "retention_days": 7, "ai_checks_day": 50, "ai_assist_day": 30, "enrolled_staff": 5 },
       "features": ["control_room", "any_watch", "telegram"]
     },
     {
@@ -43,7 +43,7 @@
       "price_year_inr": 6990,
       "per_camera": true,
       "contact": false,
-      "limits": { "watched_cameras": 49, "min_cameras": null, "retention_days": 30, "ai_checks_day": 40, "enrolled_staff": 300 },
+      "limits": { "watched_cameras": 49, "min_cameras": null, "retention_days": 30, "ai_checks_day": 40, "ai_assist_day": 200, "enrolled_staff": 300 },
       "features": ["control_room", "any_watch", "telegram", "gate_ledger", "staff_register", "daily_summary"]
     },
     {
@@ -54,7 +54,7 @@
       "price_year_inr": null,
       "per_camera": true,
       "contact": true,
-      "limits": { "watched_cameras": null, "min_cameras": 50, "retention_days": null, "ai_checks_day": null, "enrolled_staff": null },
+      "limits": { "watched_cameras": null, "min_cameras": 50, "retention_days": null, "ai_checks_day": null, "ai_assist_day": null, "enrolled_staff": null },
       "features": [
         "control_room",
         "any_watch",

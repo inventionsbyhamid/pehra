@@ -8,8 +8,9 @@ reads or a device that sends its own pictures. Uploaded videos and the demo's re
 cancelled for the end of a period that has passed, is the default plan already, before the daily plan sweep writes
 it. A plan the operator comps (billing/comp.py) is no subscription: it holds until its date, and the bigger of the
 paid plan and the comp wins (a higher plan, then more cameras)."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, update
 
@@ -18,6 +19,9 @@ from watchful.billing.provider import GRACE, PAYING
 from watchful.db import models as m
 
 WATCHED_KINDS = ("rtsp", "push")  # camera rows a society connected (store/sql.py KIND_TO_ROW)
+OFF_BY_PLAN = "plan"  # cameras.off_reason of a camera the plan switched off
+CHECKS, ASSIST = "checks", "assist"  # the two AI limits: checks of flagged moments, and help (watches, questions)
+CHECK_TASKS = ("verify",)  # AiCall tasks that are checks; one is recorded per check (agent/llm.py LimitedLLM.check)
 
 
 @dataclass(frozen=True)
@@ -25,6 +29,7 @@ class Entitlement:
     plan: Plan
     cameras: int | None  # watched cameras allowed; None: as many as agreed
     source: str  # free, paid, comp or agreed (set by hand)
+    exact: bool = True  # False when a paid plan's camera count is unknown: then no camera is switched off for it
 
 
 def paying(ws: m.Workspace, now: datetime) -> bool:
@@ -66,7 +71,9 @@ def paid_entitlement(ws: m.Workspace, now: datetime) -> Entitlement:
     if ws.subscription_status is None:  # set by hand: Large sites, agreed outside checkout
         return Entitlement(plan, _cameras(plan, ws.subscription_units), "agreed")
     if paying(ws, now) or in_grace(ws, now):
-        return Entitlement(plan, _cameras(plan, ws.subscription_units or 1), "paid")
+        if plan.per_camera and ws.subscription_units is None:  # never guessed: new cameras as on Free, none off
+            return Entitlement(plan, free.limits.watched_cameras, "paid", exact=False)
+        return Entitlement(plan, _cameras(plan, ws.subscription_units), "paid")
     return Entitlement(free, free.limits.watched_cameras, "free")
 
 
@@ -121,15 +128,21 @@ def hold_retention(ws: m.Workspace, before: int, now: datetime) -> None:
             ws.retention_hold_days, ws.retention_hold_until = before, until
 
 
-def ai_checks_day(ws: m.Workspace, default: int, now: datetime | None = None) -> int:
-    """AI requests this society may make today; `default` (AI_DAILY_CALL_LIMIT) for a plan agreed per customer."""
+def ai_cap(ws: m.Workspace, kind: str, default: int, now: datetime | None = None) -> int:
+    """AI requests of this kind the society may make today: CHECKS (one per flagged moment checked, per watched
+    camera on a per camera plan) or ASSIST (writing watches, questions, search); `default` (AI_DAILY_CALL_LIMIT)
+    for a plan agreed per customer."""
     ent = entitlement(ws, now)
-    per = ent.plan.limits.ai_checks_day
+    per = ent.plan.limits.ai_checks_day if kind == CHECKS else ent.plan.limits.ai_assist_day
     if per is None:
         return default
-    if ent.plan.per_camera:
+    if kind == CHECKS and ent.plan.per_camera:
         return per * ent.cameras if ent.cameras is not None else default
     return per
+
+
+def ai_checks_day(ws: m.Workspace, default: int, now: datetime | None = None) -> int:
+    return ai_cap(ws, CHECKS, default, now)
 
 
 def _workspace(s, workspace) -> m.Workspace:
@@ -153,11 +166,21 @@ def retention_days_of(repo, default: int, now: datetime | None = None) -> int:
         return default
 
 
-def daily_ai_cap(repo, default: int) -> int:
+def daily_ai_cap(repo, default: int, kind: str = CHECKS) -> int:
     try:
-        return ai_checks_day(workspace_of(repo, repo.workspace_id), default)
+        return ai_cap(workspace_of(repo, repo.workspace_id), kind, default)
     except LookupError:
         return default
+
+
+def ai_used(repo, kind: str = CHECKS) -> int:
+    """This kind's AI requests since midnight in the society's time zone."""
+    task = m.AiCall.task.in_(CHECK_TASKS) if kind == CHECKS else m.AiCall.task.not_in(CHECK_TASKS)
+    with repo.tx() as s:
+        zone = s.scalar(select(m.Workspace.timezone).where(m.Workspace.id == repo.workspace_id)) or "UTC"
+        midnight = m.utcnow().astimezone(ZoneInfo(zone)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return s.scalar(select(func.count()).select_from(m.AiCall).where(
+            m.AiCall.workspace_id == repo.workspace_id, m.AiCall.ts >= midnight, task)) or 0
 
 
 # watched cameras
@@ -182,11 +205,6 @@ def _lock(s, workspace_id: str) -> m.Workspace:
     return _workspace(s, workspace_id)
 
 
-def counts(camera) -> bool:
-    """Whether this camera counts as watched once switched on."""
-    return getattr(camera, "kind", None) in ("stream", "webcam")
-
-
 def start_watching(db, workspace_id: str, camera_id: str, now: datetime | None = None) -> str | None:
     """Switches watching on for a camera the society connected, when its plan has room: None, else the words why
     not. The count and the switch are one transaction."""
@@ -199,29 +217,69 @@ def start_watching(db, workspace_id: str, camera_id: str, now: datetime | None =
         if row.kind in WATCHED_KINDS and ent.cameras is not None and _watched(s, workspace_id, camera_id) >= \
                 ent.cameras:
             return refusal(ent)
-        row.enabled = True
+        row.enabled, row.off_reason = True, None
         return None
 
 
-def over_allowance(db, workspace_id: str, now: datetime | None = None) -> list[str]:
-    """Switches off the newest watched cameras beyond what the plan watches (after it lapsed or was lowered), with an
-    Audit row; returns their ids so the app can stop them."""
+def stop_watching(db, workspace_id: str, camera_id: str) -> None:
+    """Switches a camera off again (a change that switched it on failed after start_watching)."""
+    with db.tx() as s:
+        s.execute(update(m.Camera).where(m.Camera.id == camera_id, m.Camera.workspace_id == workspace_id)
+                  .values(enabled=False).execution_options(synchronize_session=False))
+
+
+@dataclass(frozen=True)
+class SwitchedOff:
+    cameras: list[tuple[str, str]] = field(default_factory=list)  # (id, name), newest last
+    allowed: int = 0
+
+
+def over_allowance(db, workspace_id: str, now: datetime | None = None) -> SwitchedOff:
+    """Switches off the newest watched cameras beyond what the plan watches (after it lapsed or was lowered), marked
+    as switched off by the plan, with an Audit row; the app stops them and tells the society. Counted first, so a
+    society within its plan takes no lock."""
+    with db.tx() as s:
+        ent = entitlement(_workspace(s, workspace_id), now)
+        if ent.cameras is None or not ent.exact or _watched(s, workspace_id) <= ent.cameras:
+            return SwitchedOff()
     with db.tx() as s:
         ws = _lock(s, workspace_id)
         ent = entitlement(ws, now)
-        if ent.cameras is None:
-            return []
+        if ent.cameras is None or not ent.exact:
+            return SwitchedOff()
         rows = list(s.scalars(select(m.Camera).where(m.Camera.workspace_id == workspace_id,
                                                      m.Camera.enabled.is_(True), m.Camera.kind.in_(WATCHED_KINDS))
                               .order_by(m.Camera.created_at, m.Camera.id)))
         off = rows[ent.cameras:]
         for row in off:
-            row.enabled = False
+            row.enabled, row.off_reason = False, OFF_BY_PLAN
         if off:
             s.add(m.Audit(workspace_id=workspace_id, actor="system", action="billing.cameras_off",
                           data={"cameras": [r.id for r in off], "names": [r.name for r in off],
                                 "plan": ent.plan.id, "allowed": ent.cameras}))
-        return [r.id for r in off]
+        return SwitchedOff([(r.id, r.name) for r in off], ent.cameras)
+
+
+def off_by_plan(db, workspace_id: str) -> list[tuple[str, str]]:
+    """The society's cameras the plan switched off, oldest first: (id, name)."""
+    with db.tx() as s:
+        return [(r.id, r.name) for r in s.scalars(
+            select(m.Camera).where(m.Camera.workspace_id == workspace_id, m.Camera.enabled.is_(False),
+                                   m.Camera.off_reason == OFF_BY_PLAN).order_by(m.Camera.created_at, m.Camera.id))]
+
+
+def switched_off_words(name: str, allowed: int) -> str:
+    """What the society is told about a camera the plan switched off. No dashes."""
+    return f"{name} is no longer watched: your plan watches {_cameras_words(allowed)}."
+
+
+def is_payer(ws: m.Workspace, user) -> bool:
+    """Whether this user paid for the society's plan: the member who checked out, else the provider's customer
+    email. Only they may open the billing portal, which shows every subscription that customer pays for."""
+    if ws.billing_user_id:
+        return ws.billing_user_id == user.id
+    email = (getattr(user, "email", None) or "").strip().lower()
+    return bool(email) and email == (ws.billing_email or "").strip().lower()
 
 
 def _cameras_words(n: int) -> str:

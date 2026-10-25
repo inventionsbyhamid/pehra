@@ -6,8 +6,12 @@ transaction done before answering, so the plan has changed by the time the owner
 an answer within 2 seconds and retries anything that is not 2xx; it disables an endpoint after 10 failures in a row,
 so a verified payload we cannot read is logged and acknowledged rather than refused.
 
-PlanWatch switches off the newest cameras beyond what a lowered or lapsed plan watches, and stops them: after a
-webhook, and every Tuning limits.plan_check_s for plans that end by the clock or by the operator's comp command."""
+PlanWatch switches off the newest cameras beyond what a lowered or lapsed plan watches, stops them and tells the
+society (an incident per camera, alerts/incidents.py): after a webhook, and every Tuning limits.plan_check_s for plans
+that end by the clock or by the operator's comp command.
+
+The billing portal shows every subscription of one Polar customer (one email may pay for two societies), so only the
+person who paid opens it."""
 import ipaddress
 import logging
 import threading
@@ -20,10 +24,13 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
+from watchful.alerts.incidents import open_or_touch_incident
 from watchful.auth.deps import CurrentMember, require_role
 from watchful.billing.comp import refund_window
-from watchful.billing.limits import (comped, daily_ai_cap, entitlement, over_allowance, paying, retention_days,
-                                     subscription_live, watched_cameras)
+from watchful.billing.limits import (ASSIST, CHECKS, ai_used, comped, daily_ai_cap, entitlement, is_payer,
+                                     off_by_plan, over_allowance, paying, retention_days, subscription_live,
+                                     switched_off_words, watched_cameras)
+from watchful.brand import BRAND
 from watchful.billing.plans import catalog
 from watchful.billing.provider import ENDED, GRACE, PAYING, BadSignature, BillingError, RefundNotice
 from watchful.billing.state import apply_event, apply_refund
@@ -32,6 +39,9 @@ from watchful.ingest.push import CLOSE_OFF, push_parts
 from watchful.ratelimit import client_ip
 
 log = logging.getLogger(__name__)
+
+PLAN_WATCH = "plan_cameras"  # the incidents' watch id for cameras the plan switched off
+NOT_PAYER = f"Billing is managed by the person who paid. Email us at {BRAND.contact_email}."
 
 
 class CheckoutIn(BaseModel):
@@ -54,8 +64,9 @@ def _cameras(n: int) -> str:
     return "1 camera" if n == 1 else f"{n} cameras"
 
 
-def summary(ctx, ws_id: str, provider, now: datetime | None = None) -> dict:
-    """What the billing panel shows: the plan, cameras watched against the allowance, dates, what may be done."""
+def summary(ctx, ws_id: str, provider, user=None, now: datetime | None = None) -> dict:
+    """What the billing panel shows `user`: the plan, cameras watched against the allowance, cameras the plan
+    switched off, dates, AI use, and what may be done."""
     now = now or m.utcnow()
     with ctx.db.tx() as s:
         ws = s.get(m.Workspace, ws_id)
@@ -67,6 +78,9 @@ def summary(ctx, ws_id: str, provider, now: datetime | None = None) -> dict:
     repo = ctx.repo_for(ws_id)
     refundable, _ = refund_window(ws, now)
     live = subscription_live(ws, now)
+    sold = plan if plan.per_camera and plan.sold else next((p for p in catalog().sold() if p.per_camera), plan)
+    payer = user is not None and is_payer(ws, user)
+    limits = ctx.tuning.limits
     return {
         "plan": {"id": plan.id, "name": plan.name, "per_camera": plan.per_camera},
         "source": ent.source,
@@ -74,7 +88,9 @@ def summary(ctx, ws_id: str, provider, now: datetime | None = None) -> dict:
         "period": ws.subscription_period if paid else None,
         "cameras": {"watched": watched, "allowed": ent.cameras,
                     "paid": ws.subscription_units if paid else None,
-                    "next": ws.subscription_units_next if paid else None},
+                    "next": ws.subscription_units_next if paid else None,
+                    "most": sold.limits.watched_cameras},
+        "switched_off": [{"id": i, "name": n} for i, n in off_by_plan(ctx.db, ws_id)],
         "renews_at": iso(ws.subscription_period_end) if paid and not ws.subscription_ends_at else None,
         "ends_at": iso(ws.subscription_ends_at) if paid else None,
         "grace_until": iso(ws.grace_until) if paid and status in GRACE else None,
@@ -82,16 +98,19 @@ def summary(ctx, ws_id: str, provider, now: datetime | None = None) -> dict:
         "refund_until": iso(ws.subscription_period_start + timedelta(days=catalog().refund_days_yearly))
         if refundable and paid else None,
         "retention_days": retention_days(ws, now),
-        "ai_checks": {"today": repo.count_ai_calls_today(),
-                      "day": daily_ai_cap(repo, ctx.settings.ai_daily_call_limit)},
+        "ai_checks": {"today": ai_used(repo, CHECKS), "day": daily_ai_cap(repo, ctx.settings.ai_daily_call_limit)},
+        "ai_help": {"today": ai_used(repo, ASSIST),
+                    "day": daily_ai_cap(repo, ctx.settings.ai_daily_call_limit, ASSIST)},
         "staff": {"enrolled": len(repo.list_enrollments()), "allowed": plan.limits.enrolled_staff},
         "can_checkout": not live and provider.payments and not ws.demo,
         "can_change_cameras": paid and paying(ws, now) and not ws.subscription_ends_at and plan.per_camera and
         provider.payments and not ws.demo,
-        "can_manage": bool(ws.polar_customer_id or ws.subscription_id) and provider.payments and not ws.demo,
+        "can_manage": bool(ws.polar_customer_id or ws.subscription_id) and provider.payments and not ws.demo and payer,
+        "payer": payer,
         "payments": provider.payments,
         "test_mode": provider.test_mode,
         "provider": provider.name,
+        "poll": {"every_ms": int(limits.billing_poll_s * 1000), "tries": limits.billing_poll_tries},
     }
 
 
@@ -135,14 +154,21 @@ class PlanWatch:
         self._stop = threading.Event()
 
     def enforce(self, workspace_id: str) -> list[str]:
-        off = over_allowance(self.ctx.db, workspace_id)
-        if off:
+        done = over_allowance(self.ctx.db, workspace_id)
+        if done.cameras:
             hub, _ = push_parts(self.ctx)
-            for camera_id in off:
+            repo = self.ctx.repo_for(workspace_id)
+            for camera_id, name in done.cameras:
                 self.ctx.manager.stop(camera_id)
                 hub.close(camera_id, CLOSE_OFF)
-            log.info("society %s: switched off %s beyond its plan", workspace_id, ", ".join(off))
-        return off
+                try:  # the society hears of it in the app and, with warnings on, on Telegram
+                    open_or_touch_incident(repo, camera_id, PLAN_WATCH, "warning",
+                                           switched_off_words(name, done.allowed), tuning=self.ctx.tuning.alerts)
+                except Exception:
+                    log.exception("telling society %s about camera %s failed", workspace_id, camera_id)
+            log.info("society %s: switched off %s beyond its plan", workspace_id,
+                     ", ".join(i for i, _ in done.cameras))
+        return [i for i, _ in done.cameras]
 
     def run_once(self) -> None:
         for ws in self.ctx.workspace_ids():
@@ -208,7 +234,11 @@ def make_router(ctx, provider, plans: PlanWatch) -> APIRouter:
 
     @router.get("/api/billing")
     def billing(member: CurrentMember = Depends(require_role("admin"))):
-        return summary(ctx, member.workspace.id, provider)
+        return summary(ctx, member.workspace.id, provider, member.user)
+
+    def payer_only(ws: m.Workspace, member: CurrentMember) -> None:
+        if not is_payer(ws, member.user):
+            raise HTTPException(403, NOT_PAYER)
 
     @router.post("/api/billing/checkout")
     def checkout(body: CheckoutIn, request: Request, response: Response,
@@ -225,11 +255,14 @@ def make_router(ctx, provider, plans: PlanWatch) -> APIRouter:
                                      "off first.")
         ws = workspace(member)
         no_store(response)
+        if subscription_live(ws):
+            payer_only(ws, member)
         try:
             if subscription_live(ws):
                 return {"url": provider.portal_url(ws), "portal": True}
             url = provider.checkout(ws, chosen.id, body.period, body.cameras, f"{page}?checkout={{CHECKOUT_ID}}",
-                                    email=member.user.email, customer_ip=public_ip(request, trust_cloudflare))
+                                    payer_id=member.user.id, watched=watched, email=member.user.email,
+                                    customer_ip=public_ip(request, trust_cloudflare))
         except BillingError as e:
             log.warning("checkout for %s failed: %s", ws.id, e)
             raise HTTPException(502, str(e) if not provider.payments else
@@ -255,7 +288,7 @@ def make_router(ctx, provider, plans: PlanWatch) -> APIRouter:
             raise HTTPException(409, f"You watch {_cameras(watched)} now. Switch {off} off first, then lower the "
                                      "number.")
         was = ws.subscription_units or 0
-        if body.cameras == was and not ws.subscription_units_next:
+        if body.cameras == was and ws.subscription_units_next is None:
             return {"ok": True, "cameras": was, "from": None}
         try:
             event = provider.change_cameras(ws, body.cameras)
@@ -274,6 +307,7 @@ def make_router(ctx, provider, plans: PlanWatch) -> APIRouter:
         ws = workspace(member)
         if not (ws.polar_customer_id or ws.subscription_id):
             raise HTTPException(409, "You are on the Free plan, so there is no billing to manage yet.")
+        payer_only(ws, member)
         no_store(response)
         try:
             return {"url": provider.portal_url(ws)}

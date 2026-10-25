@@ -19,7 +19,8 @@ declare module "@data/plans" {
     watched_cameras: number | null; // null means agreed per customer
     min_cameras: number | null;
     retention_days: number | null; // null means agreed per customer
-    ai_checks_day: number | null; // per watched camera on a per camera plan; null means agreed per customer
+    ai_checks_day: number | null; // AI checks of flagged moments a day (per watched camera on a per camera plan)
+    ai_assist_day: number | null; // AI help a day: writing watches, questions and search (null: agreed)
     enrolled_staff: number | null; // null means agreed per customer
   }
   export interface Plan {

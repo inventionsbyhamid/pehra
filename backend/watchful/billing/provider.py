@@ -45,6 +45,8 @@ class BillingEvent:
     past_due_at: datetime | None = None
     customer_external_id: str | None = None  # our id on the provider's customer: the first society it paid for
     product_id: str | None = None  # the provider's
+    payer_id: str | None = None  # the member who checked out (the checkout's metadata)
+    payer_email: str | None = None  # the provider's customer email
 
 
 @dataclass(frozen=True)
@@ -77,13 +79,15 @@ class BillingProvider(Protocol):
     payments: bool  # checkout and plan changes work here
 
     def checkout(self, workspace: m.Workspace, plan: str, period: str, cameras: int, success_url: str, *,
-                 email: str | None = None, customer_ip: str | None = None) -> str:
-        """The URL to send the owner to, to pay for the plan for this many watched cameras."""
+                 payer_id: str, watched: int = 1, email: str | None = None, customer_ip: str | None = None) -> str:
+        """The URL to send the owner (`payer_id`) to, to pay for the plan for this many watched cameras, never fewer
+        than the `watched` ones."""
         ...
 
     def change_cameras(self, workspace: m.Workspace, cameras: int) -> BillingEvent | None:
         """Changes the cameras on the society's running subscription: more at once (charged for the rest of the
-        period), fewer from the next renewal. An event to apply now, or None when a webhook will bring it."""
+        period), fewer from the next renewal; the number already paid for undoes a lowering still waiting. An event
+        to apply now, or None when a webhook will bring it."""
         ...
 
     def portal_url(self, workspace: m.Workspace) -> str:

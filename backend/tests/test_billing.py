@@ -73,8 +73,8 @@ class StandInPolar:
 
     @staticmethod
     def _check(kinds, kw):
-        allowed = set().union(*(getattr(polar_inputs, k).__annotations__ for k in kinds))
-        assert set(kw) <= allowed, set(kw) - allowed
+        """The arguments are the fields of one of these request types."""
+        assert any(set(kw) <= set(getattr(polar_inputs, k).__annotations__) for k in kinds), (kinds, sorted(kw))
 
     def _checkout(self, **kw):
         self._check(["CheckoutCreate"], kw)
@@ -82,7 +82,7 @@ class StandInPolar:
         return SimpleNamespace(url="https://sandbox.polar.sh/checkout/c1")
 
     def _update(self, id, **kw):
-        self._check(["SubscriptionUpdateUnits"], kw)
+        self._check(["SubscriptionUpdateUnits", "SubscriptionUpdateClear"], kw)
         self.calls.append(("update", id, kw))
         return SimpleNamespace(id=id)
 
@@ -177,6 +177,11 @@ def count(env, model, *where) -> int:
         return s.scalar(select(func.count()).select_from(model).where(*where))
 
 
+def payer_id(env, email: str) -> str:
+    with env.db.tx() as s:
+        return s.scalar(select(m.User.id).where(m.User.email == email))
+
+
 def no_dashes(text: str) -> bool:
     return not any(c in text for c in "-‐‑‒–—―")
 
@@ -207,7 +212,7 @@ def test_plans_file_is_what_the_site_promises():
     assert cat.refund_days_yearly == 7 and cat.next_up("free") is society
     for plan in data["plans"]:
         assert set(plan["limits"]) == {"watched_cameras", "min_cameras", "retention_days", "ai_checks_day",
-                                       "enrolled_staff"}, plan["id"]
+                                       "ai_assist_day", "enrolled_staff"}, plan["id"]
     assert free.limits.ai_checks_day and society.limits.ai_checks_day and free.limits.enrolled_staff
     rate = data["usd_inr"]
     assert data["currency"] == "INR" and 50 < rate["rate"] < 200 and rate["source_url"].startswith("https://")
@@ -215,7 +220,8 @@ def test_plans_file_is_what_the_site_promises():
     site = ROOT / "web" / "src" / "site"
     assert "backend/watchful/data/plans.json" in (ROOT / "web" / "vite.config.ts").read_text()
     types = (site / "data.d.ts").read_text()
-    for key in ("watched_cameras", "retention_days", "ai_checks_day", "enrolled_staff", "refund_days_yearly"):
+    for key in ("watched_cameras", "retention_days", "ai_checks_day", "ai_assist_day", "enrolled_staff",
+                "refund_days_yearly"):
         assert f"{key}:" in types, key
     for page in ("Refunds.tsx", "Pricing.tsx", "pages.ts"):
         text = (site / page).read_text()
@@ -240,7 +246,7 @@ def test_free_watches_two_cameras_and_says_how_to_watch_more(env):
     assert a.patch(f"/api/cameras/{third['id']}", json={"enabled": True}).json()["enabled"] is True
     shown = a.get("/api/billing").json()
     assert shown["plan"]["id"] == "free" and shown["cameras"] == {"watched": 2, "allowed": 2, "paid": None,
-                                                                   "next": None}
+                                                                   "next": None, "most": 49}
     assert shown["retention_days"] == 7 and shown["ai_checks"]["day"] == 50 and shown["staff"]["allowed"] == 5
     assert shown["can_checkout"] and not shown["can_change_cameras"] and shown["payments"]
     assert a.get("/api/metrics").json()["ai_daily_limit"] == 50
@@ -256,7 +262,8 @@ def test_society_for_six_cameras_watches_six(env):
     assert cams[-1]["notice"] == "Your plan watches 6 cameras. Switch one off or add a camera to your plan in Billing."
     shown = a.get("/api/billing").json()
     assert shown["plan"] == {"id": "society", "name": "Society", "per_camera": True} and shown["source"] == "paid"
-    assert shown["cameras"] == {"watched": 6, "allowed": 6, "paid": 6, "next": None} and shown["period"] == "month"
+    assert shown["cameras"] == {"watched": 6, "allowed": 6, "paid": 6, "next": None, "most": 49}
+    assert shown["period"] == "month"
     assert shown["retention_days"] == 30 and shown["ai_checks"]["day"] == 6 * 40 and shown["staff"]["allowed"] == 300
     assert shown["renews_at"] and shown["can_change_cameras"] and not shown["can_checkout"]
     assert shown["refund_until"] is None  # monthly plans are not refunded
@@ -392,7 +399,7 @@ def test_more_cameras_fewer_cameras_cancel_and_revoke(env):
     assert deliver(env, polar_event("subscription.updated", GREEN, t + timedelta(minutes=2), units=8,
                                     units_next=5)).status_code == 200
     shown = a.get("/api/billing").json()
-    assert shown["cameras"] == {"watched": 5, "allowed": 8, "paid": 8, "next": 5}
+    assert shown["cameras"] == {"watched": 5, "allowed": 8, "paid": 8, "next": 5, "most": 49}
     for bad in (0, 50):
         assert a.post("/api/billing/cameras", json={"cameras": bad}).status_code == 422
     assert owner(env, email="admin@example.com", role="admin").post(
@@ -447,7 +454,9 @@ def test_checkout_and_portal_for_watched_cameras(env):
     assert res.status_code == 200 and res.json() == {"url": "https://sandbox.polar.sh/checkout/c1", "portal": False}
     kind, sent = env.client.calls[-1]
     assert kind == "checkout" and sent["products"] == [PRODUCTS["society_year"]] and sent["units"] == 6
-    assert sent["metadata"] == {"workspace_id": GREEN, "plan": "society", "period": "year", "cameras": 6}
+    assert (sent["min_units"], sent["max_units"]) == (2, 49)  # never fewer than are watched, never past 49
+    assert sent["metadata"] == {"workspace_id": GREEN, "user_id": payer_id(env, "asha@example.com"),
+                                "plan": "society", "period": "year", "cameras": 6}
     assert sent["external_customer_id"] == GREEN and sent["customer_email"] == "asha@example.com"
     assert sent["success_url"] == f"{BASE}/app/settings/billing?checkout={{CHECKOUT_ID}}"
     assert "customer_ip_address" not in sent  # TRUST_CLOUDFLARE is off, so the header is not believed
@@ -726,7 +735,8 @@ def test_enrolled_staff_follow_the_plan(env):
     repo = env.ctx.repo_for(GREEN)
     for i in range(5):
         repo.add_enrollment(Enrollment(f"per_{i}", f"Staff {i}", [0.1] * 128))
-    res = a.post("/api/people", data={"name": "Ravi", "consent": "true"}, files={"photo": ("r.jpg", b"x", "image/jpeg")})
+    res = a.post("/api/people", data={"name": "Ravi", "consent": "true"},
+                 files={"photo": ("r.jpg", b"x", "image/jpeg")})
     assert res.status_code == 403
     assert res.json()["detail"] == "Your plan names up to 5 staff members. Remove someone who has left or move to " \
                                    "Society."
@@ -767,3 +777,194 @@ def test_demo_societies_have_nothing_to_buy(env):
     res = a.post("/api/billing/checkout", json={"plan": "society", "period": "month", "cameras": 2})
     assert res.status_code == 403 and "demo society" in res.json()["detail"] and no_dashes(res.json()["detail"])
     assert not a.get("/api/billing").json()["can_checkout"]
+
+
+# fix round 1 (task-10-review.md)
+
+def test_a_paying_event_without_units_never_drops_the_cameras(env):
+    """I1: a paying or grace snapshot without a camera count keeps the stored count; an unknown count is never 1,
+    and nothing is switched off for it."""
+    a = owner(env)
+    t = datetime.now(UTC) - timedelta(hours=1)
+    assert deliver(env, polar_event("subscription.active", GREEN, t, units=6)).status_code == 200
+    cams = add_cameras(a, 6)
+    for kind, status in (("subscription.updated", "active"), ("subscription.past_due", "past_due")):
+        t += timedelta(minutes=1)
+        assert deliver(env, polar_event(kind, GREEN, t, units=None, status=status, past_due_at=t)).status_code == 200
+        assert (workspace(env, GREEN).subscription_units, entitlement(workspace(env, GREEN)).cameras) == (6, 6)
+    assert env.manager.stopped == [] and all(c.enabled for c in env.ctx.repo_for(GREEN).list_cameras())
+    assert count(env, m.Audit, m.Audit.action == "billing.no_units") == 2
+
+    # a society whose first paid snapshot has no count: new cameras as on Free, and none of its cameras go off
+    b = owner(env, LAKE, "bina@example.com")
+    lake = add_cameras(b, 2)
+    with env.db.tx() as s:
+        s.add_all([m.Camera(workspace_id=LAKE, name=f"Old {i}", kind="rtsp", enabled=True) for i in range(3)])
+    assert deliver(env, polar_event("subscription.active", LAKE, t, sub="sub-lake", units=None)).status_code == 200
+    ent = entitlement(workspace(env, LAKE))
+    assert (ent.plan.id, ent.cameras, ent.exact) == ("society", 2, False)
+    assert env.app.state.plans.enforce(LAKE) == [] and env.manager.stopped == []
+    assert add_cameras(b, 1)[0]["enabled"] is False and lake[0]["enabled"]
+
+
+def test_cameras_the_plan_switches_off_are_told_and_marked(env):
+    """I2: each camera the plan switches off gets an incident in plain words, keeps the reason the app shows, and
+    the billing panel lists it; switching it on again clears the reason."""
+    from watchful.alerts.incidents import list_incidents
+    a = owner(env)
+    t = datetime.now(UTC) - timedelta(hours=1)
+    assert deliver(env, polar_event("subscription.active", GREEN, t, units=3)).status_code == 200
+    cams = add_cameras(a, 3)
+    a.patch(f"/api/cameras/{cams[2]['id']}", json={"name": "Pool camera"})
+    assert deliver(env, polar_event("subscription.revoked", GREEN, t + timedelta(minutes=1), units=3,
+                                    status="canceled")).status_code == 200
+    (incident,) = list_incidents(env.ctx.repo_for(GREEN))
+    assert incident.camera_id == cams[2]["id"] and incident.severity == "warning"
+    assert incident.reason == "Pool camera is no longer watched: your plan watches 2 cameras."
+    assert no_dashes(incident.reason)
+    shown = {c["id"]: c for c in a.get("/api/cameras").json()}
+    assert shown[cams[2]["id"]]["off_reason"] == "plan" and shown[cams[0]["id"]]["off_reason"] is None
+    assert a.get("/api/billing").json()["switched_off"] == [{"id": cams[2]["id"], "name": "Pool camera"}]
+    assert a.patch(f"/api/cameras/{cams[0]['id']}", json={"enabled": False}).status_code == 200
+    assert a.patch(f"/api/cameras/{cams[2]['id']}", json={"enabled": True}).status_code == 200
+    assert a.get(f"/api/cameras/{cams[2]['id']}").json()["off_reason"] is None
+    assert a.get("/api/billing").json()["switched_off"] == []
+    assert env.app.state.plans.enforce(GREEN) == [] and len(list_incidents(env.ctx.repo_for(GREEN))) == 1
+
+
+def test_only_the_person_who_paid_opens_the_billing_portal(env):
+    """I3: one Polar customer pays for two societies; the portal shows both, so a second owner of one of them gets
+    plain words instead of the payer's portal."""
+    asha = owner(env, GREEN, "asha@example.com")
+    owner(env, LAKE, "asha@example.com")
+    bina = owner(env, LAKE, "bina@example.com")
+    asha_lake = browser(env.app, "asha@example.com", LAKE, "owner", base=BASE)
+    asha.post("/api/billing/checkout", json={"plan": "society", "period": "month", "cameras": 2})
+    assert env.client.calls[-1][1]["metadata"]["user_id"] == payer_id(env, "asha@example.com")
+    t = datetime.now(UTC) - timedelta(hours=1)
+    for ws, sub in ((GREEN, "sub-green"), (LAKE, "sub-lake")):
+        paid = polar_event("subscription.active", ws, t, sub=sub)
+        paid["data"]["metadata"]["user_id"] = payer_id(env, "asha@example.com")
+        assert deliver(env, paid).status_code == 200
+    assert workspace(env, LAKE).billing_user_id == payer_id(env, "asha@example.com")
+
+    words = "Billing is managed by the person who paid. Email us at"
+    for path, call in (("portal", lambda: bina.get("/api/billing/portal")),
+                       ("checkout", lambda: bina.post("/api/billing/checkout",
+                                                      json={"plan": "society", "period": "month", "cameras": 6}))):
+        res = call()
+        assert res.status_code == 403 and res.json()["detail"].startswith(words), path
+    assert all(c[0] != "portal" for c in env.client.calls)
+    shown = bina.get("/api/billing").json()
+    assert not shown["payer"] and not shown["can_manage"]
+    assert asha_lake.get("/api/billing/portal").status_code == 200 and asha_lake.get("/api/billing").json()["payer"]
+    # a subscription without our metadata: the provider's customer email decides
+    assert deliver(env, polar_event("subscription.active", GREEN, t + timedelta(minutes=1), sub="sub-other")) \
+        .status_code == 200
+    row = workspace(env, GREEN)
+    assert (row.billing_user_id, row.billing_email) == (None, "asha@example.com")
+    assert asha.get("/api/billing/portal").status_code == 200
+
+
+def test_a_refused_camera_change_never_leaves_it_switched_on(env):
+    """I4: everything in a PATCH is checked before watching is switched on."""
+    a = owner(env)
+    cam = add_cameras(a, 1)[0]
+    assert a.patch(f"/api/cameras/{cam['id']}", json={"enabled": False}).status_code == 200
+    zone = {"name": "children", "polygon": [[0, 0], [1, 0], [1, 1]]}  # a name read as an age is refused
+    for body in ({"enabled": True, "zones": [zone]}, {"enabled": True, "purpose": "nonsense"}):
+        assert a.patch(f"/api/cameras/{cam['id']}", json=body).status_code == 400
+        assert env.ctx.repo_for(GREEN).get_camera(cam["id"]).enabled is False
+    assert a.patch(f"/api/cameras/{cam['id']}", json={"enabled": True}).json()["enabled"] is True
+
+
+def test_a_lowering_waiting_for_the_renewal_can_be_undone(env):
+    """M3: asking for the cameras already paid for clears Polar's pending update."""
+    a = owner(env)
+    t = datetime.now(UTC) - timedelta(hours=1)
+    assert deliver(env, polar_event("subscription.active", GREEN, t, units=8, units_next=5)).status_code == 200
+    assert a.post("/api/billing/cameras", json={"cameras": 8}).status_code == 200
+    assert env.client.calls[-1] == ("update", "sub-1", {"pending_update": None})
+    assert deliver(env, polar_event("subscription.updated", GREEN, t + timedelta(minutes=1), units=8)).status_code \
+        == 200
+    assert a.post("/api/billing/cameras", json={"cameras": 8}).json() == {"ok": True, "cameras": 8, "from": None}
+    assert env.client.calls[-1][0] == "update" and len([c for c in env.client.calls if c[0] == "update"]) == 1
+
+
+def test_unmatched_billing_events_are_listed_for_the_operator(env, capsys):
+    """M2: a purchase outside our checkout (a public product link carries no society) is listed."""
+    stray = polar_event("subscription.active", "ws_unknown", datetime.now(UTC), sub="sub-stray")
+    stray["data"]["metadata"] = {}
+    stray["data"]["customer"].update(external_id=None, id="cus-x")
+    stray["data"]["customer_id"] = "cus-x"
+    assert deliver(env, stray).status_code == 200
+    billing_main(["unmatched"], settings=env.settings)
+    out = capsys.readouterr().out
+    assert "billing.unmatched" in out and "sub-stray" in out and "cus-x" in out
+    billing_main(["unmatched", "--days", "0"], settings=env.settings)
+    assert "nothing unmatched" in capsys.readouterr().out
+
+
+def test_one_ai_check_counts_once_and_help_has_its_own_limit(env, tmp_path):
+    """M6: the plan's AI checks count verifier checks, one each however many steps; writing watches, questions and
+    search count against the separate help limit."""
+    from test_agent import cand, ctx, step
+    from watchful.agent.verifier import verify
+    from watchful.billing.limits import ASSIST, CHECKS, ai_used
+    join(env.app, "asha@example.com", GREEN)
+    repo = env.ctx.repo_for(GREEN)
+    checks = make_llm(env.settings, repo, "verify")
+    checks.inner = FakeLLM([step("crop_zoom", at_s=0), step("crop_zoom", at_s=1),
+                            step("raise_alert", summary="A car drove in.")])
+    assert verify(cand(), ctx(tmp_path), checks).status == "alert"
+    assert (ai_used(repo, CHECKS), ai_used(repo, ASSIST)) == (1, 0)  # three steps, one check
+
+    helper = make_llm(env.settings, repo, "compile")
+    helper.inner = FakeLLM(["ok"] * 40)
+    with env.db.tx() as s:
+        s.add_all([m.AiCall(workspace_id=GREEN, task="verify") for _ in range(49)])
+    assert helper.complete("s", []) == "ok"  # Free's 50 checks are all but used: help is counted apart
+    for _ in range(29):
+        helper.complete("s", [])
+    with pytest.raises(AILimitReached):  # Free's 30 help requests a day
+        helper.complete("s", [])
+    assert (ai_used(repo, CHECKS), ai_used(repo, ASSIST)) == (50, 30)
+    checks.inner = FakeLLM([step("raise_alert", summary="x")])
+    assert verify(cand("critical"), ctx(tmp_path), checks).status == "unverified"  # the 51st check: not checked
+    assert make_llm(env.settings, repo, "search").limit() == 30
+    shown = owner(env).get("/api/billing").json()
+    assert shown["ai_checks"] == {"today": 50, "day": 50} and shown["ai_help"] == {"today": 30, "day": 30}
+
+
+def test_counts_is_gone_and_a_society_within_its_plan_takes_no_lock(env, monkeypatch):
+    """M7 and M8."""
+    from watchful.billing import limits
+    assert not hasattr(limits, "counts")
+    a = owner(env)
+    add_cameras(a, 2)
+
+    def no_lock(*_):
+        raise AssertionError("locked a society within its plan")
+    monkeypatch.setattr(limits, "_lock", no_lock)
+    assert limits.over_allowance(env.db, GREEN).cameras == []
+    env.app.state.plans.run_once()
+
+
+def test_billing_numbers_come_from_tuning_and_the_plan(env, capsys):
+    """M9: the refund's margin and the panel's polling come from Tuning, the most cameras from the plan."""
+    tuning = Tuning()
+    a = owner(env)
+    shown = a.get("/api/billing").json()
+    assert shown["poll"] == {"every_ms": int(tuning.limits.billing_poll_s * 1000),
+                             "tries": tuning.limits.billing_poll_tries}
+    assert shown["cameras"]["most"] == catalog().get("society").limits.watched_cameras
+    start = datetime.now(UTC) - timedelta(days=1)
+    assert deliver(env, polar_event("subscription.active", GREEN, start, product="society_year", days=365)) \
+        .status_code == 200
+    expected = workspace(env, GREEN).subscription_period_start - timedelta(seconds=tuning.limits.refund_orders_margin_s)
+    provider = make_billing(env.settings)
+    provider._client = stand_in()
+    billing_main(["refund", GREEN, "--yes"], settings=env.settings, provider=provider)
+    since = datetime.fromisoformat(provider._client.calls[0][1]["created_after"])
+    assert abs(since - expected) < timedelta(seconds=1)
+    assert "refunded 0 payment" in capsys.readouterr().out
