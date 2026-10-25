@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from watchful.components import make_engine, make_repo  # noqa: E402
 from watchful.config import get_settings  # noqa: E402
+from watchful.netguard import inside, sample_roots  # noqa: E402
 from watchful.rules.presets import preset  # noqa: E402
 from watchful.rules.watch import Watch  # noqa: E402
 from watchful.store.db import DEFAULT_SOCIETY_NAME, DEFAULT_WORKSPACE, Camera, WatchRow, new_id  # noqa: E402
@@ -21,6 +22,9 @@ from watchful.vision.zones import Zone  # noqa: E402
 def main(spec_path: str = "deploy/demo.json", workspace_id: str = DEFAULT_WORKSPACE) -> None:
     spec = json.loads(Path(spec_path).read_text())
     settings = get_settings()
+    outside = [c["clip"] for c in spec["cameras"] if not inside(c["clip"], sample_roots(settings.data_dir))]
+    if outside:
+        raise SystemExit(f"demo clips must be in the samples folder ({settings.data_dir}/samples): {outside}")
     ensure_workspace(make_engine(settings), workspace_id, DEFAULT_SOCIETY_NAME)
     repo = make_repo(settings, workspace_id)
     for cam in repo.list_cameras():

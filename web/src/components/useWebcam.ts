@@ -62,7 +62,10 @@ export function useWebcam(cameraId: string) {
       ws.onclose = (ev) => {
         if (cancelled) return;
         setState("error");
-        setError(ev.code === 4401 ? "Your session ended. Sign in again to use the webcam." : "The connection to Watchful dropped. Start the webcam again.");
+        setError(ev.code === 4401 ? "Your session ended. Sign in again to use the webcam."
+          : ev.code === 4403 ? "Only a society admin can use this browser as a camera."
+          : ev.code === 4409 ? "Another device is now sending this camera, so the webcam here stopped."
+          : "The connection to Watchful dropped. Start the webcam again.");
         setOn(false);
       };
       timer = window.setInterval(() => {

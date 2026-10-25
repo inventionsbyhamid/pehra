@@ -1,0 +1,27 @@
+{
+  "_note": "Stream addresses of common Indian NVR and DVR brands. {auth} is user:password@ (URL encoded), {stream} is the brand's number for the main or sub stream. The substream is the default: the engine analyses about 960 pixels wide at a few frames a second, so the main stream only costs bandwidth. Sources: Hikvision's RTSP note (tb_rtsp_and_http_urls_120915us.pdf), Dahua's realmonitor URL, which CP Plus recorders share.",
+  "default_stream": "sub",
+  "brands": {
+    "hikvision": {
+      "label": "Hikvision",
+      "port": 554,
+      "url": "rtsp://{auth}{host}:{port}/Streaming/Channels/{channel}{stream:02d}",
+      "streams": {"main": 1, "sub": 2},
+      "hint": "Camera 1's substream is channel 102, camera 17's is 1702."
+    },
+    "cp_plus": {
+      "label": "CP Plus",
+      "port": 554,
+      "url": "rtsp://{auth}{host}:{port}/cam/realmonitor?channel={channel}&subtype={stream}",
+      "streams": {"main": 0, "sub": 1},
+      "hint": "Recorders use port 554. Some CP Plus cameras on their own use port 5543."
+    },
+    "dahua": {
+      "label": "Dahua",
+      "port": 554,
+      "url": "rtsp://{auth}{host}:{port}/cam/realmonitor?channel={channel}&subtype={stream}",
+      "streams": {"main": 0, "sub": 1},
+      "hint": "Channel numbers start at 1."
+    }
+  }
+}

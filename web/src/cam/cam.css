@@ -1,0 +1,17 @@
+/* the device page: one column, calm, readable at arm's length on a phone */
+.cam {
+  max-width: 560px; margin: 0 auto; padding: 28px 16px 40px; display: flex; flex-direction: column; gap: 16px;
+  min-height: 100vh; background: var(--ground); color: var(--ink);
+}
+.cam-head h1 { font-size: var(--t-xl); line-height: 1.2; margin: 0; }
+.cam-society { color: var(--ink-3); font-size: var(--t-sm); font-weight: 600; margin: 0 0 6px; }
+.cam-notice p { margin: 0; line-height: 1.5; }
+.cam-stage[hidden] { display: none; }
+.cam-stage { aspect-ratio: 4 / 3; }
+.cam-status { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.cam-status-bad { color: var(--critical); }
+.cam-start { min-height: 56px; font-size: var(--t-lg); width: 100%; }
+.cam-stop { align-self: flex-start; }
+.cam-phone { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.cam-qr { display: flex; flex-direction: column; gap: 8px; }
+.cam-qr img { width: 200px; height: 200px; image-rendering: pixelated; background: #fff; border-radius: var(--r-sm); }

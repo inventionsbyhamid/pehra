@@ -1,5 +1,10 @@
-"""Cameras, uploaded videos and their scans, and the numbers page. Reading needs any role; changing cameras needs an
-admin."""
+"""Cameras, uploaded videos and their scans, device links and the numbers page. Reading needs any role; changing
+cameras needs an admin.
+
+A member adds a stream the server reads (an RTSP or HTTP address, or one built from an NVR template; netguard.py
+refuses private addresses) or a camera that sends its own pictures ("webcam": this browser, a phone or laptop by
+device link, or the bridge, whose address on the society's network is kept only so the bridge command can be shown).
+Demo cameras come only from scripts/seed_demo.py, and the server opens local clips only inside their own folders."""
 import json
 import subprocess
 import time
@@ -9,11 +14,16 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from watchful.api.common import LIVE_KINDS, camera_json, camera_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
+from watchful.ingest import nvr
+from watchful.ingest.push import CLOSE_GONE, CLOSE_OFF, push_parts, qr_svg
+from watchful.netguard import check_url, clip_roots, inside
 from watchful.rules.engine import validate
+from watchful.rules.presets import purposes
 from watchful.rules.watch import Watch
 from watchful.rules.zonestate import example_key, is_night
 from watchful.store.db import Camera, new_id
@@ -21,17 +31,41 @@ from watchful.tuning import load_tuning
 from watchful.vision.zones import Zone
 
 
+USER_KINDS = {"stream", "webcam"}  # what a member may add; demo cameras come only from the seed script
+
+
+class NvrIn(BaseModel):
+    brand: str
+    host: str
+    channel: int = 1
+    user: str = ""
+    password: str = ""
+    port: int | None = None
+    stream: str | None = None
+
+
 class CameraIn(BaseModel):
     name: str
     kind: str = "stream"
     url: str | None = None
+    nvr: NvrIn | None = None
+    purpose: str | None = None
 
 
 class CameraPatch(BaseModel):
     name: str | None = None
+    purpose: str | None = None
     zones: list[dict] | None = None
     enabled: bool | None = None
     tuning: dict | None = None
+
+
+def _purpose(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if value not in purposes():
+        raise HTTPException(400, "Pick one of the listed purposes.")
+    return value
 
 
 def _ffprobe(path: Path) -> dict | None:
@@ -52,6 +86,7 @@ def mount(app: FastAPI, ctx) -> None:
 def make_router(ctx) -> APIRouter:
     router = APIRouter()
     manager = ctx.manager
+    hub, tokens = push_parts(ctx)
 
     def repo(member: CurrentMember):
         return ctx.repo_for(member.workspace.id)
@@ -60,15 +95,30 @@ def make_router(ctx) -> APIRouter:
     def cameras(member: CurrentMember = Depends(current_member)):
         return [camera_json(manager, c) for c in repo(member).list_cameras()]
 
+    @router.get("/api/nvr")
+    def nvr_brands(member: CurrentMember = Depends(current_member)):
+        return {"brands": nvr.brands(), "default_stream": nvr.templates()["default_stream"]}
+
     @router.post("/api/cameras")
     def add_camera(body: CameraIn, member: CurrentMember = Depends(require_role("admin"))):
-        if body.kind not in LIVE_KINDS:
-            raise HTTPException(400, "A camera is a stream, a webcam or a demo.")
-        if body.kind == "stream" and not (body.url or "").startswith(("rtsp://", "rtsps://", "http://", "https://")):
-            raise HTTPException(400, "Paste an RTSP or HTTP stream address.")
-        cam = repo(member).add_camera(Camera(None, body.name, body.kind, body.url))
-        ctx.db.audit(member.workspace.id, member.user.id, "camera.add", {"camera": cam.id, "name": cam.name})
-        if body.kind != "webcam":
+        if body.kind not in USER_KINDS:
+            raise HTTPException(400, "A camera is a stream the server reads, or a device that sends its own pictures.")
+        purpose = _purpose(body.purpose)
+        url = body.url
+        if body.nvr is not None:
+            try:
+                url = nvr.build_url(**body.nvr.model_dump())
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from None
+        if body.kind == "stream" or url is not None:
+            # a bridge camera's address is on the society's network and only the bridge reads it
+            problem = check_url(url or "", allow_private=body.kind != "stream" or ctx.settings.allow_private_streams)
+            if problem:
+                raise HTTPException(400, problem)
+        cam = repo(member).add_camera(Camera(None, body.name, body.kind, url, purpose=purpose or "other"))
+        ctx.db.audit(member.workspace.id, member.user.id, "camera.add",
+                     {"camera": cam.id, "name": cam.name, "kind": cam.kind, "nvr": body.nvr.brand if body.nvr else None})
+        if body.kind == "stream":
             manager.start(cam.id, member.workspace.id)
         return camera_json(manager, cam)
 
@@ -82,6 +132,8 @@ def make_router(ctx) -> APIRouter:
         cam = camera_or_404(r, camera_id)
         manager.stop(cam.id)
         pictures = [key for _, _, _, key in r.list_state_examples(cam.id)]
+        tokens.revoke(member.workspace.id, cam.id)
+        hub.close(cam.id, CLOSE_GONE)
         r.delete_camera(cam.id)
         for key in pictures:
             ctx.blobs.delete(key)
@@ -97,6 +149,8 @@ def make_router(ctx) -> APIRouter:
         cam = camera_or_404(r, camera_id)
         if body.name is not None:
             cam.name = body.name
+        if body.purpose is not None:
+            cam.purpose = _purpose(body.purpose)
         if body.zones is not None:
             cam.zones = [Zone(z.get("id") or new_id("zone"), z["name"], [tuple(p) for p in z["polygon"]],
                               z.get("kind") or "area") for z in body.zones]
@@ -117,6 +171,12 @@ def make_router(ctx) -> APIRouter:
                     row.enabled = False  # it points at a zone that no longer exists
                     r.update_watch(row)
                     disabled.append(watch.name)
+        changed = sorted(k for k, v in body.model_dump(exclude_unset=True).items() if v is not None)
+        ctx.db.audit(member.workspace.id, member.user.id, "camera.edit",
+                     {"camera": cam.id, "name": cam.name, "changed": changed, "enabled": cam.enabled,
+                      "disabled_watches": disabled})
+        if not cam.enabled:
+            hub.close(cam.id, CLOSE_OFF)
         if cam.kind in LIVE_KINDS:
             manager.restart(cam.id) if cam.enabled else manager.stop(cam.id)
         return {**camera_json(manager, cam), "disabled_watches": disabled}
@@ -127,7 +187,14 @@ def make_router(ctx) -> APIRouter:
 
     def frame(cam: Camera) -> bytes:
         image = None
+        if cam.kind == "webcam":
+            latest = hub.latest(cam.id)
+            if latest is None:
+                raise HTTPException(404, "No picture from this camera yet.")
+            return latest[1]
         if cam.kind in ("file", "demo") and cam.url:
+            if not inside(cam.url, clip_roots(ctx.settings.data_dir)):
+                raise HTTPException(404, "No picture from this camera yet.")
             cap = cv2.VideoCapture(cam.url)
             cap.set(cv2.CAP_PROP_POS_MSEC, 1000)
             ok, image = cap.read()
@@ -164,6 +231,8 @@ def make_router(ctx) -> APIRouter:
         key = example_key(member.workspace.id, cam.id, zone_id, period, time.time())
         ctx.blobs.put(key, cv2.imencode(".jpg", image)[1].tobytes(), "image/jpeg")
         example_id = r.add_state_example(cam.id, zone_id, state, key)
+        ctx.db.audit(member.workspace.id, member.user.id, "camera.example_add",
+                     {"camera": cam.id, "zone": zone_id, "state": state.strip().lower(), "example": example_id})
         if cam.kind in LIVE_KINDS:
             manager.restart(cam.id)
         return {"id": example_id, "zone_id": zone_id, "state": state.strip().lower(), "period": period,
@@ -184,10 +253,48 @@ def make_router(ctx) -> APIRouter:
             raise HTTPException(404, "No such picture.")
         camera_id, key = gone
         ctx.blobs.delete(key)
+        ctx.db.audit(member.workspace.id, member.user.id, "camera.example_delete",
+                     {"camera": camera_id, "example": example_id})
         cam = r.get_camera(camera_id)
         if cam is not None and cam.kind in LIVE_KINDS:
             manager.restart(cam.id)  # the zone's state is learned again without that picture
         return {"ok": True}
+
+    # device links: a laptop, phone or the bridge sends this camera's frames with a token (api/live.py /ws/cam)
+
+    def pushed_camera(member: CurrentMember, camera_id: str) -> Camera:
+        cam = camera_or_404(repo(member), camera_id)
+        if cam.kind != "webcam":
+            raise HTTPException(400, "Only a camera that sends its own pictures has a device link.")
+        return cam
+
+    @router.post("/api/cameras/{camera_id}/device-token")
+    def issue_device_token(camera_id: str, member: CurrentMember = Depends(require_role("admin"))):
+        """A new device link for this camera, shown once; the earlier link stops working and its socket closes."""
+        cam = pushed_camera(member, camera_id)
+        token = tokens.issue(member.workspace.id, cam.id)
+        hub.close(cam.id, CLOSE_GONE)
+        ctx.db.audit(member.workspace.id, member.user.id, "camera.device_link", {"camera": cam.id, "name": cam.name})
+        url = f"{ctx.settings.public_base_url.rstrip('/')}/cam/{token}"
+        body = {"token": token, "url": url, "qr_svg": qr_svg(url), "qr_url": f"/cam/{token}/qr.svg",
+                **(tokens.info(member.workspace.id, cam.id) or {})}
+        if cam.url:
+            body["bridge_camera"] = f"{token}={cam.url}"  # the bridge's --camera value, with the recorder's password
+        return JSONResponse(body, headers={"Cache-Control": "no-store"})
+
+    @router.get("/api/cameras/{camera_id}/device-token")
+    def device_token_info(camera_id: str, member: CurrentMember = Depends(current_member)):
+        cam = pushed_camera(member, camera_id)
+        info = tokens.info(member.workspace.id, cam.id)
+        return {"linked": info is not None, **(info or {}), "sending": hub.sending(cam.id)}
+
+    @router.delete("/api/cameras/{camera_id}/device-token")
+    def remove_device_token(camera_id: str, member: CurrentMember = Depends(require_role("admin"))):
+        cam = pushed_camera(member, camera_id)
+        removed = tokens.revoke(member.workspace.id, cam.id)
+        hub.close(cam.id, CLOSE_GONE)
+        ctx.db.audit(member.workspace.id, member.user.id, "camera.device_unlink", {"camera": cam.id, "name": cam.name})
+        return {"ok": True, "removed": removed}
 
     @router.post("/api/cameras/{camera_id}/scan")
     def rescan(camera_id: str, member: CurrentMember = Depends(require_role("admin"))):

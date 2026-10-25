@@ -38,7 +38,7 @@ function Stage({ cam, status, setStatus, onAlert, liveRef, webcam }: {
       </div>
     );
   }
-  if (cam.kind === "webcam") {
+  if (cam.kind === "webcam" && webcam.on) {
     // the browser shows its own camera at full frame rate; the server adds boxes from its analysis
     return (
       <LiveView ref={liveRef} cameraId={cam.id} zones={cam.zones} mode="overlay" video={webcam.video}
@@ -48,7 +48,8 @@ function Stage({ cam, status, setStatus, onAlert, liveRef, webcam }: {
       </LiveView>
     );
   }
-  const idle = cam.kind === "demo" ? "Starting the demo camera. The first picture takes a few seconds."
+  const idle = cam.kind === "webcam" ? "Waiting for this camera's device. Start the webcam here, or open its device link on a phone or laptop."
+    : cam.kind === "demo" ? "Starting the demo camera. The first picture takes a few seconds."
     : status?.source === "reconnecting" ? "Can't reach this stream yet. Watchful keeps trying, waiting a little longer each time."
     : "Connecting to the stream.";
   return <LiveView ref={liveRef} cameraId={cam.id} zones={cam.zones} mode="frames" onStatus={setStatus} onAlert={onAlert} idle={idle} />;

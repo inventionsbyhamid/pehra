@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     retention_days: int = 7
     max_upload_mb: int = 200
     max_upload_minutes: int = 10
+    # cameras the server pulls may be on private addresses only when the server itself runs inside the society's
+    # network; on a cloud server that would let a camera address reach the server's own services (netguard.py)
+    allow_private_streams: bool = False
 
     @field_validator("auth_providers", "data_key_old", mode="before")
     @classmethod

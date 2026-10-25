@@ -1,0 +1,207 @@
+"""Cameras that send their own frames: a laptop or phone at /cam/{token}, the bridge on a society computer
+(bridge/pehra_bridge.py), or the app's own webcam page. They send JPEG frames over a WebSocket (api/live.py).
+
+A device token belongs to one camera of one society. It is shown once, only its hash is stored, and issuing a new one
+replaces the old. Replacing it, removing it, turning the camera off or deleting the camera closes any socket sending
+for that camera at once (PushHub.close). The hub also keeps each camera's newest frame, so a live view on another
+device sees the phone's picture."""
+import asyncio
+import hashlib
+import json
+import secrets
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import cv2
+from sqlalchemy import delete, select
+
+from watchful.db import models as m
+
+TOKEN_BYTES = 24  # 32 characters, 192 bits
+MAX_TOKEN_CHARS = 64
+PLANS = Path(__file__).resolve().parents[1] / "data" / "plans.json"
+
+# socket close codes a device acts on (the cam page and the bridge stop for good on GONE and UNKNOWN)
+CLOSE_BAD_KIND = 4400
+CLOSE_SIGN_IN = 4401
+CLOSE_ROLE = 4403
+CLOSE_UNKNOWN = 4404
+CLOSE_TAKEN_OVER = 4409  # another device started sending for this camera
+CLOSE_GONE = 4410  # the link was replaced or removed, or the camera deleted
+CLOSE_OFF = 4412  # the camera is turned off in the control room
+CLOSE_BUSY = 4429
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+class DeviceTokens:
+    """Device tokens in the platform database. A lookup by token crosses societies by design (the token names the
+    society); everything else is by (workspace_id, camera_id)."""
+
+    def __init__(self, db):
+        self.db = db
+
+    def issue(self, workspace_id: str, camera_id: str) -> str:
+        """A new token for this camera, replacing any earlier one."""
+        token = secrets.token_urlsafe(TOKEN_BYTES)
+        with self.db.tx() as s:
+            old = s.scalar(select(m.DeviceToken).where(m.DeviceToken.workspace_id == workspace_id,
+                                                       m.DeviceToken.camera_id == camera_id)
+                           .order_by(m.DeviceToken.created_at).limit(1))
+            created = old.created_at if old else m.utcnow()
+            s.execute(delete(m.DeviceToken).where(m.DeviceToken.workspace_id == workspace_id,
+                                                  m.DeviceToken.camera_id == camera_id))
+            s.add(m.DeviceToken(workspace_id=workspace_id, camera_id=camera_id, token_hash=hash_token(token),
+                                created_at=created, rotated_at=m.utcnow() if old else None))
+        return token
+
+    def find(self, token: str) -> tuple[str, str] | None:
+        """(workspace_id, camera_id) of a token in use, else None."""
+        if not isinstance(token, str) or not token or len(token) > MAX_TOKEN_CHARS:
+            return None
+        with self.db.tx() as s:
+            row = s.execute(select(m.DeviceToken.workspace_id, m.DeviceToken.camera_id)
+                            .where(m.DeviceToken.token_hash == hash_token(token))).first()
+        return (row[0], row[1]) if row else None
+
+    def info(self, workspace_id: str, camera_id: str) -> dict | None:
+        with self.db.tx() as s:
+            row = s.scalar(select(m.DeviceToken).where(m.DeviceToken.workspace_id == workspace_id,
+                                                       m.DeviceToken.camera_id == camera_id).limit(1))
+        if row is None:
+            return None
+        return {"issued_at": (row.rotated_at or row.created_at).isoformat(), "first_at": row.created_at.isoformat()}
+
+    def revoke(self, workspace_id: str, camera_id: str) -> bool:
+        with self.db.tx() as s:
+            return s.execute(delete(m.DeviceToken).where(m.DeviceToken.workspace_id == workspace_id,
+                                                         m.DeviceToken.camera_id == camera_id)).rowcount > 0
+
+
+@dataclass(eq=False)
+class Sender:
+    """One open socket sending frames for a camera; `close` may be called from any thread."""
+    loop: asyncio.AbstractEventLoop
+    stop: asyncio.Event = field(default_factory=asyncio.Event)
+    code: int | None = None
+
+    def close(self, code: int) -> None:
+        def _set():
+            if self.code is None:
+                self.code = code
+            self.stop.set()
+        try:
+            self.loop.call_soon_threadsafe(_set)
+        except RuntimeError:
+            pass  # its loop is gone, and so is the socket
+
+
+class PushHub:
+    """Sockets sending frames, by camera, and each such camera's newest frame for its live views. The newest sender
+    of a camera wins: an earlier one is closed with CLOSE_TAKEN_OVER."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._senders: dict[str, list[Sender]] = {}
+        self._latest: dict[str, tuple[int, bytes, float]] = {}
+        self._seq = 0
+
+    def join(self, camera_id: str, sender: Sender) -> None:
+        with self._lock:
+            earlier = self._senders.setdefault(camera_id, [])
+            for s in earlier:
+                s.close(CLOSE_TAKEN_OVER)
+            earlier.append(sender)
+
+    def leave(self, camera_id: str, sender: Sender) -> bool:
+        """True when nobody sends for this camera any more."""
+        with self._lock:
+            senders = self._senders.get(camera_id, [])
+            if sender in senders:
+                senders.remove(sender)
+            if senders:
+                return False
+            self._senders.pop(camera_id, None)
+            self._latest.pop(camera_id, None)
+            return True
+
+    def close(self, camera_id: str, code: int) -> int:
+        """Closes every socket sending for this camera; how many there were."""
+        with self._lock:
+            senders = list(self._senders.get(camera_id, []))
+        for s in senders:
+            s.close(code)
+        return len(senders)
+
+    def sending(self, camera_id: str) -> bool:
+        with self._lock:
+            return bool(self._senders.get(camera_id))
+
+    def put(self, camera_id: str, jpeg: bytes, ts: float) -> None:
+        with self._lock:
+            self._seq += 1
+            self._latest[camera_id] = (self._seq, jpeg, ts)
+
+    def latest(self, camera_id: str) -> tuple[int, bytes, float] | None:
+        with self._lock:
+            return self._latest.get(camera_id)
+
+
+def push_parts(ctx) -> tuple[PushHub, DeviceTokens]:
+    """The app's one hub and token store, made on first use (api/cameras.py and api/live.py share them)."""
+    if getattr(ctx, "push_hub", None) is None:
+        ctx.push_hub = PushHub()
+        ctx.device_tokens = DeviceTokens(ctx.db)
+    return ctx.push_hub, ctx.device_tokens
+
+
+def needs_faces(repo, camera_id: str) -> bool:
+    """True when a watch on this camera names people (the staff register): its frames must keep their faces. Every
+    other device camera blurs faces before a frame leaves it."""
+    from watchful.rules.engine import needs_for
+    from watchful.rules.watch import Watch
+    watches = []
+    for row in repo.list_watches(camera_id):
+        if row.enabled:
+            try:
+                watches.append(Watch.model_validate(row.watch))
+            except ValueError:
+                continue
+    return bool(watches) and needs_for(watches).faces
+
+
+def retention_days(workspace, default: int) -> int:
+    """How long this society's recordings are kept, from its plan (data/plans.json)."""
+    plan = getattr(workspace, "comp_plan", None) or getattr(workspace, "plan", None)
+    try:
+        for p in json.loads(PLANS.read_text())["plans"]:
+            if p["id"] == plan and p.get("limits", {}).get("retention_days"):
+                return int(p["limits"]["retention_days"])
+    except (OSError, ValueError, KeyError):
+        pass
+    return default
+
+
+def qr_svg(text: str) -> str:
+    """A QR code of `text` as SVG, from OpenCV's QRCodeEncoder (medium error correction, quiet zone included)."""
+    params = cv2.QRCodeEncoder.Params()
+    params.correction_level = cv2.QRCodeEncoder_CORRECT_LEVEL_M
+    modules = cv2.QRCodeEncoder.create(params).encode(text)
+    n = modules.shape[0]
+    path = []
+    for y in range(n):
+        dark = modules[y] == 0
+        x = 0
+        while x < n:
+            if not dark[x]:
+                x += 1
+                continue
+            start = x
+            while x < n and dark[x]:
+                x += 1
+            path.append(f"M{start} {y}h{x - start}v1h{start - x}z")
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {n} {n}" shape-rendering="crispEdges">'
+            f'<rect width="{n}" height="{n}" fill="#fff"/><path fill="#000" d="{"".join(path)}"/></svg>')

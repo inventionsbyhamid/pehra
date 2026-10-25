@@ -12,6 +12,7 @@
     "og": "node scripts/og.mjs"
   },
   "dependencies": {
+    "@techstark/opencv-js": "5.0.0-release.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-router-dom": "6.30.6"

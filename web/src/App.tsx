@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, lazy, Suspense, useContext, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, whenSignedOut } from "./api";
 import { setTimeZone } from "./format";
@@ -21,6 +21,8 @@ import Privacy from "./site/Privacy";
 import Refunds from "./site/Refunds";
 import SiteLogin from "./site/Login";
 
+const CamPage = lazy(() => import("./cam/CamPage"));
+
 type Session = { user: string | null; setUser: (u: string | null) => void };
 const SessionContext = createContext<Session>({ user: null, setUser: () => {} });
 export const useSession = () => useContext(SessionContext);
@@ -34,6 +36,8 @@ export default function App() {
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/refunds" element={<Refunds />} />
       <Route path="/login" element={<SiteLogin />} />
+      {/* a device link: no sign in, the token in the address is the camera's credential */}
+      <Route path="/cam/:token" element={<Suspense fallback={null}><CamPage /></Suspense>} />
       <Route path="*" element={<Workspace />} />
     </Routes>
   );

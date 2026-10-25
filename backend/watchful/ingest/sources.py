@@ -1,5 +1,6 @@
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -7,7 +8,7 @@ from typing import Literal, Protocol
 import cv2
 import numpy as np
 
-Status = Literal["live", "reconnecting", "ended"]
+Status = Literal["live", "reconnecting", "refused", "ended"]
 BACKOFF_S = (1, 2, 4, 8, 16, 30)
 
 
@@ -122,10 +123,13 @@ class _Latest:
 
 
 class StreamSource:
-    """RTSP or HTTP camera read on a background thread; read() returns the newest frame."""
+    """RTSP or HTTP camera read on a background thread; read() returns the newest frame. `guard` (netguard.guard)
+    is asked before every connection: an address it refuses, such as a name that now resolves to a private address,
+    is not opened and the status says refused."""
 
-    def __init__(self, url: str, fps: float, width: int = 960):
+    def __init__(self, url: str, fps: float, width: int = 960, guard: Callable[[str], str | None] | None = None):
         self.url = url
+        self.guard = guard
         self.step = 1.0 / fps
         self.width = width
         self.status: Status = "reconnecting"
@@ -139,6 +143,10 @@ class StreamSource:
         attempt = 0
         index = 0
         while not self._stop.is_set():
+            if self.guard is not None and self.guard(self.url):
+                self.status = "refused"
+                self._stop.wait(BACKOFF_S[-1])
+                continue
             cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG, [
                 cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
             got_frame = False

@@ -186,7 +186,8 @@ export const LiveView = forwardRef<LiveHandle, Props>(function LiveView(
     let decoding = false;
 
     const connect = () => {
-      ws = new WebSocket(wsUrl(`/ws/cameras/${cameraId}`));
+      // overlay: this browser shows its own camera, so the server sends boxes without pictures
+      ws = new WebSocket(wsUrl(`/ws/cameras/${cameraId}${mode === "overlay" ? "?frames=0" : ""}`));
       ws.onopen = () => {
         retry = 1000;
         setState((s) => (s === "live" ? s : "open"));
@@ -240,7 +241,7 @@ export const LiveView = forwardRef<LiveHandle, Props>(function LiveView(
       frame.current?.close();
       frame.current = null;
     };
-  }, [cameraId]);
+  }, [cameraId, mode]);
 
   const showMsg = mode === "frames" ? state !== "live" : !videoActive;
   return (

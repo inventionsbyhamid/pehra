@@ -294,6 +294,21 @@ class LimitsTuning(_Section):
     misses_per_min_ip: int = 10  # unknown sign in link tokens a minute per IP: guessing
 
 
+class PushTuning(_Section):
+    """Cameras that send their own frames: a browser or phone at /cam/{token}, or the bridge (bridge/)."""
+    fps: float = 5.0  # frames a second a device sends, the analysis rate
+    width: int = 960  # a device sends frames at most this wide
+    quality: float = 0.72  # JPEG quality a device encodes with, 0 to 1
+    max_frame_kb: int = 1024  # a bigger frame is dropped
+    max_fps: float = 12.0  # frames arriving faster than this are dropped
+    recheck_s: float = 15.0  # an open socket checks its device token or membership again this often
+    face_width: int = 320  # the browser looks for faces (YuNet in OpenCV.js) on a copy this wide
+    face_score: float = 0.5  # a face found this surely or more is blurred
+    face_grow: float = 0.3  # the blurred box reaches this share of the face's size beyond it on each side
+    face_hold_ms: int = 1200  # a face stays blurred this long after it was last found
+    face_blocks: int = 6  # the mosaic over a face is this many blocks across
+
+
 class Tuning(_Section):
     motion: MotionTuning = MotionTuning()
     detect: DetectTuning = DetectTuning()
@@ -317,6 +332,7 @@ class Tuning(_Section):
     backtest: BacktestTuning = BacktestTuning()
     auth: AuthTuning = AuthTuning()
     limits: LimitsTuning = LimitsTuning()
+    push: PushTuning = PushTuning()
 
 
 def _merge(base: dict, extra: dict) -> dict:
