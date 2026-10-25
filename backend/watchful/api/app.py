@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from watchful.api import account, alerts, blobs, cameras, live, people, search, watches
+from watchful.api import account, alerts, blobs, cameras, incidents, live, people, search, telegram, watches
 from watchful.api.common import LIVE_KINDS
 from watchful.api.headers import SecurityHeaders
 from watchful.auth.deps import AuthContext
@@ -19,9 +19,10 @@ from watchful.brand import BRAND
 from watchful.components import make_blobs, make_detector, make_embedder, make_faces, make_llm, make_repo
 from watchful.config import Settings, get_settings
 from watchful.db import models as m
+from watchful.jobs import worker_alive
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
-NOT_APP = ("api", "ws", "auth", "healthz", "blobs")  # paths the web app never answers
+NOT_APP = ("api", "ws", "auth", "healthz", "blobs", "telegram")  # paths the web app never answers
 SHELL = "app.html"  # the app's own page; index.html is the prerendered landing
 
 
@@ -92,9 +93,13 @@ class AppContext(AuthContext):
 
 
 def create_app(settings: Settings | None = None, llm=None, manager=None, providers: dict | None = None,
-               tuning=None) -> FastAPI:
+               tuning=None, jobs: bool | None = None) -> FastAPI:
+    """`jobs`: start the app's own job worker process; by default when RUN_JOBS_IN_APP and the app runs its own
+    camera manager (tests that pass a manager get none unless they ask)."""
     settings = settings or get_settings()
     ctx = AppContext(settings, llm=llm, manager=manager, providers=providers, tuning=tuning)
+    if jobs is None:
+        jobs = settings.run_jobs_in_app and manager is None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -102,19 +107,29 @@ def create_app(settings: Settings | None = None, llm=None, manager=None, provide
             for cam in ctx.repo_for(ws).list_cameras():
                 if cam.enabled and cam.kind in LIVE_KINDS - {"webcam"}:
                     ctx.manager.start(cam.id, ws)
+        if jobs:
+            from watchful.worker import InAppWorker
+            app.state.jobs = InAppWorker(settings, ctx.tuning)
+            app.state.jobs.start()
         yield
+        if app.state.jobs is not None:
+            app.state.jobs.stopping()
         ctx.manager.shutdown()
+        if app.state.jobs is not None:
+            app.state.jobs.join(30)
 
     app = FastAPI(title=BRAND.name, lifespan=lifespan)
     app.state.ctx = ctx
+    app.state.jobs = None
     app.add_middleware(SecurityHeaders, settings=settings)
 
     @app.get("/healthz")
     def healthz():
         info = cv2.getBuildInformation()
-        return {"ok": True, "opencv": cv2.__version__, "kleidicv": "KleidiCV" in info or "kleidicv" in info.lower()}
+        return {"ok": True, "opencv": cv2.__version__, "kleidicv": "KleidiCV" in info or "kleidicv" in info.lower(),
+                "worker_beat_fresh": worker_alive(settings.data_dir, ctx.tuning.jobs.worker_alive_s)}
 
-    for router in (account, cameras, watches, alerts, search, people, blobs, live):
+    for router in (account, cameras, watches, alerts, incidents, telegram, search, people, blobs, live):
         router.mount(app, ctx)
 
     dist = Path(settings.web_dist) if settings.web_dist else WEB_DIST

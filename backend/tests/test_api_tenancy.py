@@ -12,6 +12,7 @@ from sqlalchemy import select
 from accounts import BASE, browser
 from test_api import StubManager
 from watchful.agent.llm import FakeLLM
+from watchful.alerts.incidents import open_or_touch_incident
 from watchful.api.app import create_app
 from watchful.config import Settings
 from watchful.db import models as m
@@ -42,12 +43,17 @@ def world(tmp_path):
     for key in (f"{cam.id}/kf/7.jpg", "people/per_lake.jpg", f"{B}/x/1.jpg"):
         ctx.blobs.put(key, b"\xff\xd8 picture", "image/jpeg")
     manager.scans["scn_lake"] = {"state": "done", "progress": 1.0, "camera_id": cam.id}
+    incident = open_or_touch_incident(repo, cam.id, watch.id, "critical", "Lake incident", None, time.time())
+    with ctx.db.tx() as tx:
+        link = m.TelegramLink(workspace_id=B, chat_id="-555", title="Lake guards")
+        tx.add(link)
     invite = b.post("/api/invites", json={"role": "viewer"}).json()["invite"]
     with ctx.db.tx() as tx:
         bina = tx.scalar(select(m.User.id).where(m.User.email == "bina@example.com"))
     ids = {"camera_id": cam.id, "watch_id": watch.id, "alert_id": alert.id, "scan_id": "scn_lake",
            "person_id": "per_lake", "user_id": bina, "invite_id": invite["id"], "token": invite["id"],
-           "key": f"{cam.id}/kf/7.jpg", "zone_id": "z1", "example_id": example}
+           "key": f"{cam.id}/kf/7.jpg", "zone_id": "z1", "example_id": example, "incident_id": incident.id,
+           "link_id": link.id}
     return app, a, b, ids, event
 
 
@@ -98,7 +104,8 @@ def test_every_route_is_scoped(world):
 
     secrets = [ids["camera_id"], ids["watch_id"], ids["alert_id"], "per_lake", "Lake", "bina@example.com", B]
     for path in ("/api/cameras", "/api/alerts", f"/api/alerts?camera_id={ids['camera_id']}", "/api/metrics",
-                 "/api/people", "/api/members", "/api/invites", "/api/me"):
+                 "/api/people", "/api/members", "/api/invites", "/api/me", "/api/incidents", "/api/telegram",
+                 "/api/incidents/precision"):
         res = a.get(path)
         assert res.status_code == 200, path
         assert not [x for x in secrets if x in res.text], f"{path} shows another society's data"

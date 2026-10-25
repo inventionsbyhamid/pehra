@@ -211,3 +211,56 @@ def test_summary_is_queued_once_at_nine_society_time(env):
     env.run(nine_ist)
     sent = env.fake.of("sendMessage")[-1][2]
     assert sent["chat_id"] == "-1001" and sent["text"].startswith("Daily summary for Green Park, Sunday 25 October")
+
+
+def test_the_camera_manager_files_live_candidates_as_incidents(tmp_path):
+    """A critical candidate opens its incident with a private frame before the AI check; the verdict is edited in; a
+    repeat of the open incident only adds to its count, with no second AI check."""
+    import json
+    import time
+
+    import cv2
+    import numpy as np
+
+    from accounts import society_repo
+    from watchful.components import make_blobs
+    from watchful.config import Settings
+    from watchful.evidence import EvidencePack
+    from watchful.tuning import Tuning
+    from watchful.workers import WorkerManager
+
+    s = Settings(session_secret="y", data_dir=tmp_path, index_embeddings=False, scan_pool_at_start=False,
+                 _env_file=None)
+    repo = society_repo(s, "Green Park")
+    alert = json.dumps({"tool": "raise_alert", "args": {"summary": "A person is lying still at the deep end.",
+                                                         "severity": "critical", "reason": "no movement"}, "why": "."})
+    llm = FakeLLM([alert] * 5)
+    manager = WorkerManager(s, Tuning(), repo, make_blobs(s), llm=llm)
+    try:
+        frame = cv2.imencode(".jpg", np.full((360, 640, 3), 120, np.uint8))[1].tobytes()
+        now = time.time()
+
+        def pack(fp: str, ts: float) -> EvidencePack:
+            c = Candidate("wat_pool", "cam_pool", ts, 4, "critical", {"reasons": ["still in water"]}, [], fp,
+                          "Someone still in the water")
+            return EvidencePack(c, [(ts, frame)], [(ts, (300.0, 100.0, 60.0, 150.0))])
+
+        manager._on_candidate(pack("fp1", now))
+        early = inc_.list_incidents(repo)
+        assert len(early) == 1 and early[0].reason == "Possible: Someone still in the water. Checking now."
+        assert early[0].picture_key == f"{repo.workspace_id}/incidents/fp1.jpg" and early[0].picture_box
+        end = time.time() + 20
+        while "verdict" not in (inc_.get_incident(repo, early[0].id).agent_json or {}) and time.time() < end:
+            time.sleep(0.1)
+        checked = inc_.get_incident(repo, early[0].id)
+        assert checked.reason == "A person is lying still at the deep end."
+        assert checked.agent_json["why"] == "no movement"
+        assert len(repo.list_alerts()) == 1 and len(llm.calls) == 1
+
+        manager._on_candidate(pack("fp2", now + 30))
+        assert inc_.get_incident(repo, early[0].id).count == 2 and len(llm.calls) == 1
+        with repo.tx() as tx:
+            jobs = tx.scalars(select(m.Job.kind).where(m.Job.kind.in_(("telegram.sync", "incident.escalate")))).all()
+        assert sorted(set(jobs)) == ["incident.escalate", "telegram.sync"]
+    finally:
+        manager.shutdown()

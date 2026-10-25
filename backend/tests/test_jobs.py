@@ -1,5 +1,6 @@
 """The job table and worker (from packsure e97a509): each job runs once, a dead worker's job runs again, a late worker
 cannot touch a job it lost, a deferred job keeps its attempts, and the worker beats and puts worker_up."""
+import os
 import subprocess
 import sys
 import threading
@@ -31,7 +32,7 @@ def queue(tmp_path):
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(_env_file=None, session_secret="s", demo_password="d", data_dir=tmp_path / "data",
+    return Settings(_env_file=None, session_secret="s", data_dir=tmp_path / "data",
                     database_url=f"sqlite:///{tmp_path / 'jobs.db'}")
 
 
@@ -225,7 +226,7 @@ def test_in_app_worker_runs_jobs_in_its_own_process_and_stops(queue, settings):
 
 def test_worker_command_runs_due_jobs(queue, settings, tmp_path):
     job = queue.enqueue("jobs.cleanup", {})
-    env = {"SESSION_SECRET": "s", "DEMO_PASSWORD": "d", "DATA_DIR": str(tmp_path / "data"),
+    env = {"SESSION_SECRET": "s", "DATA_KEY": os.environ["DATA_KEY"], "DATA_DIR": str(tmp_path / "data"),
            "DATABASE_URL": f"sqlite:///{tmp_path / 'jobs.db'}", "PYTHONPATH": str(ROOT / "backend"),
            "PATH": "/usr/bin:/bin"}
     out = subprocess.run([sys.executable, "-m", "watchful.worker", "--until-idle"], env=env, cwd=tmp_path,

@@ -14,6 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 
 from watchful.agent.verifier import Verdict, _fallback, verify
+from watchful.alerts import incidents as incidents_
+from watchful.alerts.crops import frame_still
 from watchful.components import (make_blobs, make_embedder, make_faces, make_llm, make_metrics, make_notifier,
                                  make_repo)
 from watchful.config import Settings
@@ -487,6 +489,48 @@ class WorkerManager:
                                            [], None, fp))
         self._publish(msg["camera_id"], {"type": "alert", "alert": {**asdict(row), "keyframe_url": None}})
         self.metrics.put("Alerts", 1, {"Status": "tamper"})
+        self._incident(lambda: incidents_.open_or_touch_incident(
+            repo, msg["camera_id"], f"camera_{msg['kind']}", "warning", text, None, msg["ts"],
+            tuning=self.tuning.alerts))
+
+    # incidents: repeats of one situation fold into one record and one Telegram message (alerts/incidents.py)
+    def _incident(self, fn):
+        try:
+            return fn()
+        except Exception:  # the alert itself is stored; an incident problem must not lose it
+            log.exception("filing the incident failed")
+            return None
+
+    def _picture(self, repo, pack: EvidencePack) -> tuple[str | None, list | None]:
+        """A private frame of the moment and the object's box in it, for the incident (Telegram's still is cut from
+        it with faces blurred, in the job worker)."""
+        c = pack.candidate
+        if not pack.frames:
+            return None, None
+        ts, jpeg = min(pack.frames, key=lambda f: abs(f[0] - c.ts))
+        box = min(pack.boxes, key=lambda b: abs(b[0] - ts))[1] if pack.boxes else None
+        data, inner = frame_still(jpeg, box, self.tuning.crops)
+        key = f"{repo.workspace_id}/incidents/{c.fingerprint}.jpg"
+        self.blobs.put(key, data, "image/jpeg")
+        return key, inner
+
+    def _repeat_or_open(self, pack: EvidencePack) -> tuple[bool, str | None]:
+        """A live candidate: one that repeats an open incident only adds to its count (no second AI check); a
+        critical one opens its incident now, so Telegram hears before the check finishes. Returns (handled, the
+        incident opened early)."""
+        c, repo = pack.candidate, self._repo(pack.candidate.camera_id)
+        t = self.tuning.alerts
+        if incidents_.active_incident(repo, c.camera_id, c.watch_id, c.ts, t) is not None:
+            incidents_.open_or_touch_incident(repo, c.camera_id, c.watch_id, c.severity, "",
+                                              c.keyframe_keys[0] if c.keyframe_keys else None, c.ts, tuning=t)
+            return True, None
+        if c.severity != "critical":
+            return False, None
+        key, box = self._picture(repo, pack)
+        inc = incidents_.open_or_touch_incident(
+            repo, c.camera_id, c.watch_id, "critical", incidents_.checking_text(c.watch_name),
+            c.keyframe_keys[0] if c.keyframe_keys else None, c.ts, tuning=t, picture_key=key, picture_box=box)
+        return False, inc.id
 
     # alerts
     def _on_candidate(self, pack: EvidencePack) -> None:
@@ -496,9 +540,14 @@ class WorkerManager:
                     c.fingerprint, within_s=self.settings.alert_dedupe_days * 86400):
                 return
             self._inflight.add(c.fingerprint)
-        self.verifiers.submit(self._verify_and_store, pack)
+        handled, early = self._incident(lambda: self._repeat_or_open(pack)) or (False, None)
+        if handled:
+            with self._lock:
+                self._inflight.discard(c.fingerprint)
+            return
+        self.verifiers.submit(self._verify_and_store, pack, early, True)
 
-    def _verify_and_store(self, pack: EvidencePack) -> str | None:
+    def _verify_and_store(self, pack: EvidencePack, incident_id: str | None = None, live: bool = False) -> str | None:
         c = pack.candidate
         try:
             verdict = verify(c, evidence_context(pack, self._repo(c.camera_id), self.blobs), self._llm(c.camera_id))
@@ -506,13 +555,21 @@ class WorkerManager:
             log.exception("verifying %s failed", c.fingerprint)
             verdict = _fallback(c, [], "the check failed")
         try:
-            return self._store(pack, verdict).id
+            row = self._store(pack, verdict)
         except Exception:
             log.exception("storing the alert %s failed", c.fingerprint)
             return None
         finally:
             with self._lock:
                 self._inflight.discard(c.fingerprint)
+        self._incident(lambda: self._file(pack, verdict, row.id, incident_id, live))
+        return row.id
+
+    def _file(self, pack: EvidencePack, verdict: Verdict, alert_id: str, incident_id: str | None, live: bool):
+        repo = self._repo(pack.candidate.camera_id)
+        key, box = (None, None) if incident_id or verdict.status == "dismissed" else self._picture(repo, pack)
+        return incidents_.after_check(repo, pack.candidate, verdict, alert_id, incident_id, tuning=self.tuning.alerts,
+                                      notify=live, picture_key=key, picture_box=box)
 
     def _store(self, pack: EvidencePack, v: Verdict) -> AlertRow:
         c = pack.candidate

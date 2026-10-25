@@ -120,7 +120,8 @@ class TelegramChannel:
                                    files={"photo": ("still.jpg", photo, "image/jpeg")})
         else:
             result = self.bot.call("sendMessage", {"chat_id": chat_id, "text": text[:TEXT_MAX], "reply_markup": markup,
-                                                   "reply_parameters": reply, "link_preview_options": {"is_disabled": True}})
+                                                   "reply_parameters": reply,
+                                                   "link_preview_options": {"is_disabled": True}})
         return str(result["message_id"])
 
     def edit(self, chat_id: str, message_id: str, text: str, buttons: list | None = None,
@@ -560,7 +561,7 @@ def still_for(ctx: JobContext, repo, inc: m.Incident) -> bytes | None:
 
 
 def _base_url(ctx: JobContext) -> str:
-    return getattr(ctx.settings, "public_base_url", "") or ""
+    return ctx.settings.public_base_url or ""
 
 
 @handler(inc_.SYNC, urgent=True)
@@ -590,7 +591,7 @@ def _escalate(ctx: JobContext, payload: dict) -> None:
 def _point_the_webhook(worker) -> None:
     """With a bot token, a webhook secret and a public https address, Telegram is told where to send updates."""
     s = worker.settings
-    base = getattr(s, "public_base_url", "") or ""
+    base = s.public_base_url or ""
     if not (s.telegram_bot_token and s.telegram_webhook_secret and base.startswith("https://")):
         return
     channel = worker.channel

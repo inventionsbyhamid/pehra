@@ -109,7 +109,7 @@ def make_env(tmp_path, tuning_overrides: dict | None = None) -> Env:
     a, b = SqlRepository(engine, wa.id, secret="s"), SqlRepository(engine, wb.id, secret="s")
     fake = FakeTelegram()
     blobs = LocalBlobStore(tmp_path / "blobs")
-    settings = Settings(_env_file=None, session_secret="s", demo_password="d", data_dir=tmp_path / "data")
+    settings = Settings(_env_file=None, session_secret="s", data_dir=tmp_path / "data")
     channel = TelegramChannel(bot=TelegramBot(TOKEN, transport=httpx.MockTransport(fake)))
     worker = Worker(JobQueue(engine), settings, load_tuning(overrides=tuning_overrides),
                     repo_for=lambda ws: {wa.id: a, wb.id: b}[ws], blobs=blobs, channel=channel, error_wait_s=0)

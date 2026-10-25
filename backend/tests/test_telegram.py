@@ -13,7 +13,7 @@ from telegram_fakes import T0, TOKEN, make_env
 from watchful import components
 from watchful.alerts import incidents as inc_
 from watchful.alerts.crops import blurred_crop, frame_still
-from watchful.alerts.incidents import Actor, open_or_touch_incident
+from watchful.alerts.incidents import open_or_touch_incident
 from watchful.alerts.telegram import (TelegramBot, TelegramChannel, TelegramError, buttons, caption, connect_code,
                                       handle_update, linked_groups)
 from watchful.config import Settings
@@ -261,7 +261,7 @@ def test_a_busy_group_defers_and_429_waits_for_retry_after(env):
 
 
 def test_without_a_token_the_log_channel_stands_in(tmp_path, caplog):
-    settings = Settings(_env_file=None, session_secret="s", demo_password="d", data_dir=tmp_path)
+    settings = Settings(_env_file=None, session_secret="s", data_dir=tmp_path)
     assert isinstance(components.make_alert_channel(settings), LogChannel)
     with_token = settings.model_copy(update={"telegram_bot_token": TOKEN})
     channel = components.make_alert_channel(with_token)
@@ -271,4 +271,70 @@ def test_without_a_token_the_log_channel_stands_in(tmp_path, caplog):
     caplog.set_level(logging.INFO, "watchful.telegram")
     open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None, T0)
     env.run(T0)
-    assert env.fake.calls == [] and "Telegram is not connected" in caplog.text and "Someone is in the pool" in caplog.text
+    assert env.fake.calls == [] and "Telegram is not connected" in caplog.text
+    assert "Someone is in the pool" in caplog.text
+
+
+HOOK = "hook-secret-made-in-this-test"
+
+
+def api_app(tmp_path, token: str | None = TOKEN):
+    from accounts import browser
+    from test_api import StubManager
+    from watchful.agent.llm import FakeLLM
+    from watchful.api.app import create_app
+    s = Settings(_env_file=None, session_secret="s" * 32, data_dir=tmp_path, telegram_bot_token=token,
+                 telegram_webhook_secret=HOOK, telegram_api_url="http://127.0.0.1:9")  # no real Telegram
+    app = create_app(s, llm=FakeLLM([]), manager=StubManager())
+    return app, browser(app, "asha@example.com", "ws_green_park", "admin"), \
+        browser(app, "sunil@example.com", "ws_green_park", "supervisor"), \
+        browser(app, "vik@example.com", "ws_green_park", "viewer")
+
+
+def test_api_connects_a_group_through_the_webhook_and_acts_on_incidents(tmp_path):
+    from fastapi.testclient import TestClient
+    app, admin, supervisor, viewer = api_app(tmp_path)
+    assert supervisor.post("/api/telegram/connect").status_code == 403
+    made = admin.post("/api/telegram/connect").json()
+    assert made["command"] == f"/connect {made['code']}"
+    status = viewer.get("/api/telegram").json()
+    assert (status["ready"], status["connected"], status["groups"], status["warnings"]) == (True, False, [], False)
+
+    telegram = TestClient(app)  # Telegram itself: no session, only the secret
+    update = {"update_id": 1, "message": {"chat": {"id": -1001, "type": "group", "title": "Guards"},
+                                          "from": {"id": 7, "first_name": "Asha"}, "text": f"/connect {made['code']}"}}
+    assert telegram.post("/telegram/webhook/wrong", json=update,
+                         headers={"x-telegram-bot-api-secret-token": HOOK}).status_code == 404
+    assert telegram.post(f"/telegram/webhook/{HOOK}", json=update).status_code == 404  # no header
+    reply = telegram.post(f"/telegram/webhook/{HOOK}", json=update, headers={"x-telegram-bot-api-secret-token": HOOK})
+    assert reply.status_code == 200 and reply.json()["text"].startswith("Connected to ws_green_park.")
+    groups = viewer.get("/api/telegram").json()["groups"]
+    assert [g["title"] for g in groups] == ["Guards"] and viewer.get("/api/telegram").json()["connected"]
+
+    assert supervisor.post("/api/telegram/warnings", json={"on": True}).status_code == 403
+    assert admin.post("/api/telegram/warnings", json={"on": True}).json() == {"warnings": True}
+    assert viewer.get("/api/telegram").json()["warnings"] is True
+
+    repo = app.state.ctx.repo_for("ws_green_park")
+    inc = open_or_touch_incident(repo, "cam_x", "wat_x", "critical", "Someone is in the pool.", None, T0)
+    listed = viewer.get("/api/incidents?status=open").json()
+    assert [i["id"] for i in listed] == [inc.id] and listed[0]["reason"] == "Someone is in the pool."
+    assert viewer.post(f"/api/incidents/{inc.id}/acknowledge").status_code == 403
+    done = supervisor.post(f"/api/incidents/{inc.id}/acknowledge").json()
+    assert (done["status"], done["ack_by"], done["changed"]) == ("acknowledged", "sunil@example.com", True)
+    assert supervisor.post(f"/api/incidents/{inc.id}/false_alarm").json()["status"] == "false_alarm"
+    assert viewer.get("/api/incidents/precision").json()["wat_x"]["false_alarm"] == 1
+    assert supervisor.post("/api/incidents/inc_nope/acknowledge").status_code == 404
+
+    link = groups[0]["id"]
+    assert admin.delete(f"/api/telegram/groups/{link}").json() == {"ok": True}
+    assert viewer.get("/api/telegram").json()["groups"] == []
+
+
+def test_api_without_a_token_says_telegram_is_not_connected(tmp_path):
+    app, admin, _, viewer = api_app(tmp_path, token=None)
+    status = viewer.get("/api/telegram").json()
+    assert (status["ready"], status["connected"], status["bot_username"]) == (False, False, None)
+    assert status["message"] == "Telegram is not connected. Alerts show here in the app."
+    refused = admin.post("/api/telegram/connect")
+    assert refused.status_code == 409 and "bot token" in refused.json()["detail"]

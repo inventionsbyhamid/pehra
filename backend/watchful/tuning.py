@@ -206,6 +206,7 @@ class AlertTuning(_Section):
     summary_late_h: float = 3.0  # a worker that was down at summary_hour still sends it this many hours late, no later
     faces_refresh_s: float = 60.0  # enrolled faces used for blurring are read again this often
     http_timeout_s: float = 15.0
+    bot_retry_s: float = 300.0  # the app asks Telegram for the bot's name again this long after a failed try
 
 
 class CropTuning(_Section):
