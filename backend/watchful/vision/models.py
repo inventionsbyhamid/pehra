@@ -144,9 +144,9 @@ def embedder_path(name: str, file: str, settings: Settings | None = None) -> Pat
     return base / EMBEDDERS[name].folder / file
 
 
-def load_net(name: str, settings: Settings | None = None) -> cv2.dnn.Net:
-    engine = ENGINES[settings.dnn_engine if settings else "auto"]
-    return cv2.dnn.readNetFromONNX(str(model_path(name, settings)), engine)
+def load_net(name: str, settings: Settings | None = None, engine: str | None = None) -> cv2.dnn.Net:
+    """A model by name on the settings' engine, or on `engine` when a caller knows better."""
+    return read_net(model_path(name, settings), engine or (settings.dnn_engine if settings else "auto"))
 
 
 def extra_path(file: str, settings: Settings | None = None) -> Path:

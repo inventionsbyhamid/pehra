@@ -8,8 +8,8 @@ from watchful.components import make_ocr, make_plate_reader
 from watchful.config import Settings
 from watchful.tuning import Tuning
 from watchful.vision.ocr import ctc_greedy
-from watchful.vision.plates import (CropRead, LpdYunet, load_grammar, parse, plate_colour, read_plate,
-                                    split_lines, vote)
+from watchful.vision.plates import (CropRead, LpdYunet, crop_confidence, load_grammar, parse, plate_colour,
+                                    read_plate, split_lines, vote)
 
 WHITE, YELLOW, BLACK = (250, 250, 250), (30, 205, 245), (20, 20, 20)
 GREEN, BLUE = (60, 150, 30), (150, 70, 20)
@@ -17,7 +17,7 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
 def settings(**kw):
-    return Settings(demo_password="x", session_secret="y", _env_file=None, **kw)
+    return Settings(session_secret="y", _env_file=None, **kw)
 
 
 @pytest.fixture(scope="module")
@@ -49,13 +49,13 @@ def plate(lines: list[str], bg=WHITE, fg=BLACK, size=(400, 96), ind=True) -> np.
 
 
 def vehicle(plate_img: np.ndarray, body=(40, 40, 150), tilt=0.12, seed=0, size=(480, 360),
-            plate_width=0.34, blur=1.0) -> np.ndarray:
+            plate_width=0.34, blur=1.0, wall=(170, 160, 150), road=(95, 100, 105)) -> np.ndarray:
     """The back of a car seen by a gate camera a little from one side, with sensor noise and JPEG."""
     rng = np.random.default_rng(seed)
     w, h = size
     img = np.empty((h, w, 3), np.uint8)
-    img[: h // 3] = (170, 160, 150)  # wall
-    img[h // 3:] = (95, 100, 105)  # road
+    img[: h // 3] = wall
+    img[h // 3:] = road
     cv2.rectangle(img, (int(w * 0.08), int(h * 0.12)), (int(w * 0.92), int(h * 0.9)), body, -1, cv2.LINE_AA)
     cv2.rectangle(img, (int(w * 0.18), int(h * 0.16)), (int(w * 0.82), int(h * 0.4)), (45, 40, 35), -1)  # glass
     for x in (0.1, 0.78):
@@ -130,12 +130,21 @@ def test_text_boxes_when_no_plate_box():
 
 
 def test_lpd_yunet_finds_the_plate(reader):
-    car = vehicle(plate(["MH 12 AB 1234"]))
+    car = vehicle(plate(["MH 12 AB 1234"]), plate_width=0.45)  # scores 0.79 to 0.98 over seeds and tilts
     found = LpdYunet(settings=settings()).find(car)
-    assert found
-    x, y, w, h = cv2.boundingRect(found[0][0].astype(np.float32))
-    assert 0.25 * 480 < w < 0.45 * 480 and 230 < y + h / 2 < 280  # the plate pasted above the bumper
-    assert reader.read_crop(car).via == "plate box"
+    assert found and found[0][1] >= Tuning().plates.detect_score + 0.15
+    cx, cy = found[0][0].mean(0)
+    assert 132 < cx < 348 and 222 < cy < 274  # inside the plate pasted above the bumper
+    got = reader.read_crop(car)
+    assert got.text == "MH12AB1234" and got.via in ("plate box", "text rows around the plate box")
+
+
+def test_black_cab_in_daylight_is_yellow(reader):
+    cab = vehicle(plate(["MH 01 AB 4521"], bg=YELLOW), body=(22, 22, 22), wall=(80, 80, 80), road=(60, 62, 65),
+                  seed=8)
+    assert cv2.cvtColor(cab, cv2.COLOR_BGR2HSV)[..., 2].mean() < Tuning().plates.dark_v  # a dark crop overall
+    got = read_plate([cab], reader)
+    assert got.text == "MH01AB4521" and got.colour == "yellow"
 
 
 # grammar, voting and colour on their own
@@ -152,6 +161,8 @@ def test_lpd_yunet_finds_the_plate(reader):
     ("MB 08 6787", "WB086787", 1),  # W read as M: state codes try letters read for one another
     ("INDDL2SN6252", "DL2SN6252", 0),
     ("MH12AB12341", "MH12AB1234", 0),  # a stray character after the plate is left out
+    ("MH12AB1234 IND", "MH12AB1234", 0),
+    (["KA19", "INDEQ1316"], "KA19EQ1316", 0),  # the IND strip at the start of a plate's second line
 ])
 def test_grammar_fixes_by_position(raw, text, fixes):
     got = parse(raw)
@@ -161,6 +172,30 @@ def test_grammar_fixes_by_position(raw, text, fixes):
 @pytest.mark.parametrize("raw", ["HELLO", "XX12AB1234", "MH12AB", "", "MH12KK12KK", "KL6D827"])
 def test_grammar_refuses_what_is_not_a_plate(raw):
     assert parse(raw) is None
+
+
+def test_ind_is_only_taken_off_the_ends():
+    got = parse("KA0IND1234")
+    assert got is None or got.text != "KA01234"
+
+
+def test_confidence_counts_cost_crops_and_agreement():
+    cfg = Tuning().plates
+    exact, bent = parse("MH12AB1234"), parse("MH12A81234")
+    assert bent.text == exact.text and crop_confidence(bent, 0.95, 0.9) < crop_confidence(exact, 0.95, 0.9)
+    assert crop_confidence(exact, 0.95, cfg.rows_score) < crop_confidence(exact, 0.95, 0.9)  # no plate box
+    one = CropRead("MH12AB1234", crop_confidence(exact, 0.95, 0.9), "white")
+    alone, agreed = vote([one]), vote([one, one])
+    assert alone.text == agreed.text == "MH12AB1234" and alone.confidence < agreed.confidence
+    with_unread = vote([one, CropRead(None, 0.0, "unknown"), CropRead(None, 0.0, "unknown")])
+    assert with_unread.confidence < alone.confidence
+    # the last character cut off still fits the grammar as another plate: alone it is not trusted
+    cut = parse("MH12AB123")
+    assert cut.text != "MH12AB1234"
+    guess = vote([CropRead(cut.text, crop_confidence(cut, 0.95, 0.9), "white")])
+    assert guess.text is None and guess.confidence < cfg.min_conf and guess.reads == (cut.text,)
+    lone = vote([CropRead("KA1SE0131", 0.86, "white"), CropRead(None, 0.0, "unknown"), CropRead(None, 0.0, "unknown")])
+    assert lone.text is None and lone.confidence < cfg.min_conf
 
 
 def test_every_format_example_reads_as_itself():
@@ -189,7 +224,8 @@ def test_green_and_black_plates():
     assert plate_colour(plate(["MH 12 EV 1234"], bg=GREEN, fg=WHITE), frame) == "green"
     assert plate_colour(plate(["MH 12 SD 1234"], bg=BLACK, fg=YELLOW), frame) == "black"
     assert plate_colour(plate(["MH 12 AB 1234"]), ir(frame)) == "unknown"
-    assert plate_colour(plate(["MH 12 AB 1234"]), (frame * 0.2).astype(np.uint8)) == "unknown"  # night
+    night = (plate(["MH 12 AB 1234"]) * 0.2).astype(np.uint8)  # the plate itself too dark to judge
+    assert plate_colour(night, (frame * 0.2).astype(np.uint8)) == "unknown"
 
 
 def test_crnn_stays_selectable():

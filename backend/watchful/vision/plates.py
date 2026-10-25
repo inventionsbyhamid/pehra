@@ -26,8 +26,8 @@ Colour = Literal["yellow", "white", "green", "black", "unknown"]
 
 @dataclass(frozen=True)
 class PlateRead:
-    text: str | None  # compact, e.g. MH12AB1234; None when unread or when the crops disagree
-    confidence: float
+    text: str | None  # compact, e.g. MH12AB1234; None when unread, when the crops disagree or under min_conf
+    confidence: float  # of the best guess, also when it stays under min_conf; 0 with no guess
     colour: Colour
     reads: tuple[str | None, ...] = ()  # each crop's own read, for the record when they disagree
 
@@ -46,7 +46,7 @@ class CropRead:
     score: float
     colour: Colour
     plate: np.ndarray | None = None  # the warped plate, or the region around its text rows
-    via: str = ""  # "plate box" or "text rows"
+    via: str = ""  # "plate box", "text rows around the plate box" or "text rows"
 
 
 # grammar
@@ -124,13 +124,28 @@ def _fit(window: str, parts: tuple[_Part, ...], g: Grammar, cfg: PlateTuning) ->
     return best
 
 
-def parse(raw: str, grammar: Grammar | None = None, cfg: PlateTuning = PlateTuning()) -> Parsed | None:
-    """The plate text in a raw read: the window and layout costing least (characters changed, characters left out
-    around it, rarer layouts), `O`/`0`, `I`/`1`, `B`/`8` and the like fixed by position, the state code checked."""
+def grammar_cost(p: Parsed, cfg: PlateTuning = PlateTuning()) -> float:
+    """How far a read had to be bent to fit: a changed character is 1."""
+    return p.fixes + cfg.drop_cost * p.dropped + cfg.rank_cost * p.rank
+
+
+def _clean(line: str, g: Grammar) -> str:
+    """Letters and digits only, words that are not the number (the IND strip) taken off either end."""
+    s = re.sub(r"[^A-Z0-9]", "", line.upper())
+    trimmed = None
+    while trimmed != s:
+        trimmed = s
+        for word in g.ignore:
+            s = s.removeprefix(word).removesuffix(word)
+    return s
+
+
+def parse(raw: str | list[str], grammar: Grammar | None = None, cfg: PlateTuning = PlateTuning()) -> Parsed | None:
+    """The plate text in a raw read (one string, or the lines of a plate top to bottom): the window and layout
+    costing least (characters changed, characters left out around it, rarer layouts), `O`/`0`, `I`/`1`, `B`/`8` and
+    the like fixed by position, the state code checked."""
     g = grammar or load_grammar()
-    s = re.sub(r"[^A-Z0-9]", "", raw.upper())
-    for word in g.ignore:
-        s = s.replace(word, "")
+    s = "".join(_clean(line, g) for line in ([raw] if isinstance(raw, str) else raw))
     best, best_key = None, None
     for parts in g.formats:
         shortest = sum(min(p.lengths) for p in parts)
@@ -140,19 +155,27 @@ def parse(raw: str, grammar: Grammar | None = None, cfg: PlateTuning = PlateTuni
                 got = _fit(s[start:start + n], parts, g, cfg)
                 if got is None:
                     continue
-                text, fixes, rank = got
-                dropped = len(s) - n
-                key = (fixes + cfg.drop_cost * dropped + cfg.rank_cost * rank, fixes)
+                parsed = Parsed(got[0], got[1], len(s) - n, got[2])
+                key = (grammar_cost(parsed, cfg), parsed.fixes)
                 if key[0] <= cfg.max_cost and (best_key is None or key < best_key):
-                    best, best_key = Parsed(text, fixes, dropped, rank), key
+                    best, best_key = parsed, key
     return best
+
+
+def crop_confidence(parsed: Parsed, read_score: float, box_score: float, cfg: PlateTuning = PlateTuning()) -> float:
+    """One crop's read: the recogniser's score, less `cost_conf` per unit of grammar cost, scaled by how sure the
+    plate box was (`rows_score` for text rows found without one)."""
+    box = cfg.box_floor + (1 - cfg.box_floor) * box_score
+    return max(0.0, read_score * (1 - cfg.cost_conf * grammar_cost(parsed, cfg)) * box)
 
 
 # voting
 
 def vote(reads: list[CropRead], cfg: PlateTuning = PlateTuning(), grammar: Grammar | None = None) -> PlateRead:
     """One plate from several crops: the text holding at least `min_share` of the reads' confidence, else a
-    character by character vote over reads of the same length that still fits the grammar, else unread (None)."""
+    character by character vote over reads of the same length that still fits the grammar, else unread (None).
+    Its confidence is the agreeing reads' mean, times their share of all the crops (an unread crop counting as a
+    read of `unread_weight`), times `single_read` when one crop alone read it; under `min_conf` it stays unread."""
     colour = _vote_colour(reads)
     texts = tuple(r.text for r in reads)
     valid = [r for r in reads if r.text]
@@ -162,26 +185,29 @@ def vote(reads: list[CropRead], cfg: PlateTuning = PlateTuning(), grammar: Gramm
     for r in valid:
         weight[r.text] += max(r.score, 1e-6)
     total = sum(weight.values())
-    best = max(weight, key=weight.get)
-    if weight[best] / total >= cfg.min_share:
-        mean = np.mean([r.score for r in valid if r.text == best])
-        return PlateRead(best, round(float(weight[best] / total * mean), 3), colour, texts)
-    length = Counter(len(r.text) for r in valid).most_common(1)[0][0]
-    same = [r for r in valid if len(r.text) == length]
-    chars, shares = [], []
-    for i in range(length):
-        at: dict[str, float] = defaultdict(float)
-        for r in same:
-            at[r.text[i]] += max(r.score, 1e-6)
-        c = max(at, key=at.get)
-        chars.append(c)
-        shares.append(at[c] / sum(at.values()))
-    text = "".join(chars)
-    fit = parse(text, grammar, cfg)
-    if len(same) >= cfg.min_char_votes and min(shares) >= cfg.min_share and fit and fit.text == text:
-        conf = float(np.mean(shares) * np.mean([r.score for r in same]) * len(same) / len(valid))
-        return PlateRead(text, round(conf, 3), colour, texts)
-    return PlateRead(None, 0.0, colour, texts)
+    text = max(weight, key=weight.get)
+    if weight[text] / total >= cfg.min_share:
+        agreeing, agreed = [r for r in valid if r.text == text], weight[text]
+    else:
+        length = Counter(len(r.text) for r in valid).most_common(1)[0][0]
+        agreeing = [r for r in valid if len(r.text) == length]
+        chars, shares = [], []
+        for i in range(length):
+            at: dict[str, float] = defaultdict(float)
+            for r in agreeing:
+                at[r.text[i]] += max(r.score, 1e-6)
+            c = max(at, key=at.get)
+            chars.append(c)
+            shares.append(at[c] / sum(at.values()))
+        text = "".join(chars)
+        fit = parse(text, grammar, cfg)
+        if len(agreeing) < cfg.min_char_votes or min(shares) < cfg.min_share or not fit or fit.text != text:
+            return PlateRead(None, 0.0, colour, texts)
+        agreed = sum(max(r.score, 1e-6) for r in agreeing) * float(np.mean(shares))
+    share = agreed / (total + cfg.unread_weight * (len(reads) - len(valid)))
+    conf = float(np.mean([r.score for r in agreeing])) * share * (cfg.single_read if len(agreeing) == 1 else 1.0)
+    conf = round(conf, 3)
+    return PlateRead(text if conf >= cfg.min_conf else None, conf, colour, texts)
 
 
 def _vote_colour(reads: list[CropRead]) -> Colour:
@@ -202,12 +228,13 @@ def is_grey(image: np.ndarray, cfg: PlateTuning = PlateTuning()) -> bool:
     if image.ndim == 2:
         return True
     chroma = image.max(2).astype(np.int16) - image.min(2)
-    return float(np.percentile(chroma, 99)) < cfg.grey_chroma
+    return float(np.percentile(chroma, cfg.grey_percentile)) < cfg.grey_chroma
 
 
 def plate_colour(plate: np.ndarray, frame: np.ndarray, cfg: PlateTuning = PlateTuning()) -> Colour:
-    """The plate's background by HSV, its text removed by Otsu; unknown on grey (IR) or dark frames."""
-    if is_grey(frame, cfg) or float(cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)[..., 2].mean()) < cfg.dark_v:
+    """The plate's background by HSV, its text removed by Otsu; unknown on a grey (IR) frame or when the plate itself
+    is too dark or too flat to tell (a dark car body around it does not matter)."""
+    if is_grey(frame, cfg):
         return "unknown"
     h, w = plate.shape[:2]
     y, x = int(h * cfg.colour_border), int(w * cfg.colour_border)
@@ -220,6 +247,8 @@ def plate_colour(plate: np.ndarray, frame: np.ndarray, cfg: PlateTuning = PlateT
     hsv = cv2.cvtColor(inner, cv2.COLOR_BGR2HSV)
     hue, sat, val = (float(np.median(hsv[..., i][background])) for i in range(3))
     text_val = float(np.median(hsv[..., 2][~background]))
+    if max(val, text_val) < cfg.dark_v or abs(val - text_val) < cfg.min_contrast:
+        return "unknown"
     if val < cfg.black_v:
         return "black" if text_val >= cfg.white_v else "unknown"
     if sat >= cfg.colour_s:
@@ -281,6 +310,12 @@ class LpdYunet:
         corners *= np.float32([w, h])  # back to the crop's own pixels
         lo, hi = corners.min(1), corners.max(1)
         size = hi - lo
+        x, y = corners[..., 0], corners[..., 1]
+        area = 0.5 * np.abs((x * np.roll(y, -1, 1) - np.roll(x, -1, 1) * y).sum(1))  # corners in landmark order
+        sliver = area < self.cfg.min_fill * size.prod(1)
+        if sliver.any():  # corners that crossed or collapsed: the box around them still holds the plate
+            corners[sliver] = np.stack([lo[sliver], np.c_[hi[sliver, 0], lo[sliver, 1]], hi[sliver],
+                                        np.c_[lo[sliver, 0], hi[sliver, 1]]], 1)
         aspect = size[:, 0] / np.maximum(size[:, 1], 1e-3)
         tol = self.cfg.outside * np.float32([w, h])
         inside = (lo >= -tol).all(1) & (hi <= np.float32([w, h]) + tol).all(1)
@@ -314,7 +349,7 @@ def split_lines(plate: np.ndarray, cfg: PlateTuning = PlateTuning()) -> list[np.
     if hi <= lo:
         return [plate]
     row = lo + int(np.argmin(profile[lo:hi]))
-    if profile[row] > cfg.split_gap * float(np.percentile(profile, 90)):
+    if profile[row] > cfg.split_gap * float(np.percentile(profile, cfg.busy_percentile)):
         return [plate]
     return [plate[:row], plate[row:]]
 
@@ -334,6 +369,15 @@ def _rows(boxes: list, overlap: float) -> list[list]:
     return [sorted(row, key=lambda b: b.quad[:, 0].min()) for row in rows]
 
 
+@dataclass(frozen=True)
+class _Candidate:
+    parsed: Parsed
+    read_score: float
+    box_score: float
+    plate: np.ndarray
+    via: str
+
+
 class PlateReader:
     def __init__(self, detector: PlateDetector, ocr, cfg: PlateTuning = PlateTuning(),
                  grammar: Grammar | None = None):
@@ -344,35 +388,33 @@ class PlateReader:
         return vote([self.read_crop(c) for c in crops[:self.cfg.max_crops]], self.cfg, self.grammar)
 
     def read_crop(self, crop: np.ndarray) -> CropRead:
-        best: tuple[Parsed, float, np.ndarray, str] | None = None
+        best: _Candidate | None = None
         first_plate = None
-        for quad, _ in self.detector.find(crop)[:self.cfg.max_plates]:
+        for quad, box_score in self.detector.find(crop)[:self.cfg.max_plates]:
             plate = self._warp(crop, quad)
             first_plate = plate if first_plate is None else first_plate
-            got = self._read_plate(plate)
-            if got is None or self._cost(got[0]):  # the box may cut characters off: read the text around it too
+            got = self._read_plate(plate, box_score)
+            if got is None or grammar_cost(got.parsed, self.cfg):  # the box may cut characters off: read around it
                 region, _ = flatten(crop, widen(quad, self.cfg.reread_margin))
-                got = self._pick(got, self._read_text_rows(region))
+                got = self._pick(got, self._read_text_rows(region, box_score, "text rows around the plate box"))
             best = self._pick(best, got)
-            if best and not self._cost(best[0]):
+            if best and not grammar_cost(best.parsed, self.cfg):
                 break
         if best is None:
-            best = self._read_text_rows(crop)
+            best = self._read_text_rows(crop, self.cfg.rows_score)
         if best is None:
             colour = plate_colour(first_plate, crop, self.cfg) if first_plate is not None else "unknown"
             return CropRead(None, 0.0, colour, first_plate)
-        parsed, score, plate, via = best
-        conf = max(0.0, score * (1 - self.cfg.fix_penalty * parsed.fixes))
-        return CropRead(parsed.text, conf, plate_colour(plate, crop, self.cfg), plate, via)
+        conf = crop_confidence(best.parsed, best.read_score, best.box_score, self.cfg)
+        return CropRead(best.parsed.text, conf, plate_colour(best.plate, crop, self.cfg), best.plate, best.via)
 
-    def _cost(self, p: Parsed) -> float:
-        return p.fixes + self.cfg.drop_cost * p.dropped + self.cfg.rank_cost * p.rank
-
-    def _pick(self, a, b):
+    def _pick(self, a: _Candidate | None, b: _Candidate | None) -> _Candidate | None:
         """The better of two reads: the lower grammar cost, then the higher score."""
         if a is None or b is None:
             return a or b
-        return a if (self._cost(a[0]), -a[1]) <= (self._cost(b[0]), -b[1]) else b
+        def key(c):
+            return grammar_cost(c.parsed, self.cfg), -c.read_score
+        return a if key(a) <= key(b) else b
 
     def _warp(self, image: np.ndarray, quad: np.ndarray) -> np.ndarray:
         tl, tr, br, bl = quad
@@ -380,29 +422,34 @@ class PlateReader:
         plate, _ = flatten(image, widen(quad, self.cfg.margin), self.cfg.plate_height / height, cv2.INTER_CUBIC)
         return plate
 
-    def _read_plate(self, plate: np.ndarray) -> tuple[Parsed, float, np.ndarray, str] | None:
+    def _score(self, score: float | None) -> float:
+        return self.cfg.unscored_read if score is None else score
+
+    def _read_plate(self, plate: np.ndarray, box_score: float) -> _Candidate | None:
         lines = split_lines(plate, self.cfg)
         for parts in [lines] if len(lines) == 1 else [lines, [plate]]:  # a cut that reads nothing: one line
             reads = [self.ocr.read_line(line) for line in parts]
-            parsed = parse("".join(t for t, _ in reads), self.grammar, self.cfg)
+            parsed = parse([t for t, _ in reads], self.grammar, self.cfg)
             if parsed:
-                return parsed, float(np.mean([s for _, s in reads])), plate, "plate box"
+                score = float(np.mean([self._score(s) for _, s in reads]))
+                return _Candidate(parsed, score, box_score, plate, "plate box")
         return None
 
-    def _read_text_rows(self, crop: np.ndarray) -> tuple[Parsed, float, np.ndarray, str] | None:
+    def _read_text_rows(self, crop: np.ndarray, box_score: float, via: str = "text rows") -> _Candidate | None:
         """PP-OCR's own text lines, a row at a time and two stacked rows together."""
         rows = _rows(self.ocr.read(crop), self.cfg.group_overlap)
         groups = [[row] for row in rows] + [[a, b] for a, b in zip(rows, rows[1:])]
         best = None
         for group in groups:
             boxes = [box for row in group for box in row]
-            parsed = parse("".join(box.text for box in boxes), self.grammar, self.cfg)
+            parsed = parse([box.text for box in boxes], self.grammar, self.cfg)
             if not parsed:
                 continue
             points = np.concatenate([box.quad for box in boxes])
             region = order_quad(cv2.boxPoints(cv2.minAreaRect(points)))
             plate, _ = flatten(crop, widen(region, self.cfg.region_margin))
-            best = self._pick(best, (parsed, float(np.mean([box.score for box in boxes])), plate, "text rows"))
+            score = float(np.mean([box.score for box in boxes]))
+            best = self._pick(best, _Candidate(parsed, score, box_score, plate, via))
         return best
 
 

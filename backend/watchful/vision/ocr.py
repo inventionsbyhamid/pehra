@@ -16,7 +16,7 @@ import numpy as np
 
 from watchful.config import Settings
 from watchful.registry import register
-from watchful.vision.models import model_path, read_net, vocabulary
+from watchful.vision.models import load_net, vocabulary
 from watchful.vision.quality import flatten, grey, order_quad
 
 # Model Zoo PP-OCRv3 DB values: longest input side, pixel scale and mean, post processing
@@ -25,11 +25,6 @@ DET_MEAN = (122.67891434, 116.66876762, 104.00698793)
 DET_BINARY, DET_POLYGON, DET_MAX_BOXES, DET_UNCLIP = 0.3, 0.5, 200, 2.0
 V5_HEIGHT, V5_MIN_WIDTH = 48, 320  # PP-OCRv5 recognition input: 48 px high, padded to at least 320 wide
 CRNN_SIZE = (100, 32)
-
-
-def load_net(name: str, settings: Settings | None = None, engine: str | None = None) -> cv2.dnn.Net:
-    """A model by name on the settings' engine, or on `engine` when a caller knows better."""
-    return read_net(model_path(name, settings), engine or (settings.dnn_engine if settings else "auto"))
 
 
 @dataclass(frozen=True)
@@ -70,7 +65,8 @@ class _Detector:
 
 class _V5Recogniser:
     def __init__(self, settings: Settings | None):
-        self.net = load_net("text_rec_v5", settings)
+        classic = settings is not None and settings.dnn_engine == "classic"
+        self.net = load_net("text_rec_v5", settings, engine="new" if classic else None)  # classic cannot read it
         self.vocab = vocabulary("text_rec_v5", settings)
 
     def __call__(self, crop: np.ndarray) -> tuple[str, float | None]:
@@ -108,11 +104,11 @@ class PpOcr:
         with self._lock:
             return [quad for quad, _ in self.detector.detect(image)]
 
-    def read_line(self, crop: np.ndarray) -> tuple[str, float]:
-        """One upright line of text already cut out, and the recogniser's confidence (0.5 when it gives none)."""
+    def read_line(self, crop: np.ndarray) -> tuple[str, float | None]:
+        """One upright line of text already cut out, and the recogniser's confidence when it gives one."""
         with self._lock:
             text, score = self.recognise(crop)
-        return text.strip(), 0.5 if score is None else score
+        return text.strip(), score
 
     def read(self, image: np.ndarray) -> list[TextBox]:
         out = []
@@ -135,8 +131,8 @@ class FakeOcr:
     def detect(self, image: np.ndarray) -> list[np.ndarray]:
         return [box.quad for box in self.boxes]
 
-    def read_line(self, crop: np.ndarray) -> tuple[str, float]:
-        return "", 0.0
+    def read_line(self, crop: np.ndarray) -> tuple[str, float | None]:
+        return "", None
 
     def read(self, image: np.ndarray) -> list[TextBox]:
         return list(self.boxes)
