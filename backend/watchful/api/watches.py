@@ -58,6 +58,7 @@ def make_router(ctx) -> APIRouter:
         return purposes()
 
     def scoped(r, watch: Watch, body: WatchIn) -> Watch:
+        watch.subject.same_as = None  # only a lookout points at a sighting, one of this society's own (lookout below)
         if body.scope in ("camera", "site"):
             watch.scope = body.scope
         if body.excluded_cameras is not None:
@@ -166,6 +167,8 @@ def make_router(ctx) -> APIRouter:
         r = repo(member)
         fill: dict = {}
         if body.person_id:
+            if not any(e.person_id == body.person_id for e in r.list_enrollments()):
+                raise HTTPException(404, "No such person.")
             fill["who"] = body.person_id
         elif body.description:
             fill["text"] = body.description

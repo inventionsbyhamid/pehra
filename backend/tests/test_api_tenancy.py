@@ -136,3 +136,43 @@ def test_blob_from_another_society_is_refused(world):
     alerts = b.get("/api/alerts").json()
     assert alerts[0]["keyframe_url"].startswith("/api/blobs/") and b.get(alerts[0]["keyframe_url"]).status_code == 200
     assert json.dumps(a.get("/api/alerts").json()) == "[]"
+
+
+def test_a_watch_never_points_at_another_societys_picture(world):
+    """A sighting to look out for (same_as) puts its picture in front of the verifier and on alerts, so only a lookout
+    sets it, from this society's own sighting; a person to look out for must be one of this society's enrolled
+    staff."""
+    app, a, _, ids, event = world
+    repo = app.state.ctx.repo_for(A)
+    cam = repo.add_camera(Camera(None, "Green gate", "stream", "rtsp://green"))
+    mine = EventRow(None, cam.id, time.time(), "enter", 3, "person", None, {}, f"{cam.id}/kf/3.jpg", [0.2], [0.3],
+                    None)
+    repo.add_events([mine])
+    theirs = {"event_id": event.id, "crop_key": ids["key"], "embedding": [0.1], "expires_at": time.time() + 3600}
+    own = {"event_id": mine.id, "crop_key": mine.keyframe_key, "embedding": [0.3], "expires_at": time.time() + 3600}
+    lookout = {"name": "Lookout", "subject": {"classes": ["person"]}, "conditions": [{"signal": "present"}]}
+    for same in (theirs, own):
+        for body in ({"watch": {**lookout, "subject": {"classes": ["person"], "same_as": same}}, "text": "lookout"},
+                     {"preset": "lookout", "fill": {"same_as": same}}):
+            res = a.post(f"/api/cameras/{cam.id}/watches", json=body)
+            assert res.status_code in (200, 400), res.text  # a checked client watch may be refused outright
+            if res.status_code == 200:
+                assert res.json()["watch"]["subject"]["same_as"] is None
+    saved = [w.watch for w in repo.list_watches(cam.id)]
+    assert saved and all(w["subject"].get("same_as") is None for w in saved)
+    assert ids["key"] not in json.dumps(saved)
+
+    assert a.post("/api/lookouts", json={"camera_ids": [cam.id], "event_id": event.id}).status_code == 404
+    made = a.post("/api/lookouts", json={"camera_ids": [cam.id], "event_id": mine.id})
+    assert made.status_code == 200
+    (watch_id,) = made.json()["watch_ids"]
+    same_as = next(w for w in repo.list_watches(cam.id) if w.id == watch_id).watch["subject"]["same_as"]
+    assert same_as["crop_key"] == mine.keyframe_key and same_as["event_id"] == mine.id
+
+    for person in ("per_lake", "per_nobody"):  # another society's staff, and nobody
+        assert a.post("/api/lookouts", json={"camera_ids": [cam.id], "person_id": person}).status_code == 404
+    repo.add_enrollment(Enrollment("per_green", "Green staff", [0.5] * 128))
+    found = a.post("/api/lookouts", json={"camera_ids": [cam.id], "person_id": "per_green"})
+    assert found.status_code == 200
+    (watch_id,) = found.json()["watch_ids"]
+    assert next(w for w in repo.list_watches(cam.id) if w.id == watch_id).watch["subject"]["who"] == "per_green"
