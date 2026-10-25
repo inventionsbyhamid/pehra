@@ -188,3 +188,65 @@ def test_a_failed_import_leaves_the_earlier_database_in_place(tmp_path, monkeypa
         components.make_engine(s)
     assert (tmp_path / "watchful.db").read_bytes() == before and legacy.is_legacy(tmp_path / "watchful.db")
     assert not list(tmp_path.glob("*.importing*")) and not list(tmp_path.glob("*.legacy-*"))
+
+
+def write_legacy(path) -> bytes:
+    old = sqlite3.connect(path)
+    old.executescript(LEGACY_SCHEMA)
+    cam = {"id": "cam_1", "name": "Plaza", "kind": "demo", "url": "/clips/plaza.mp4", "enabled": True, "tuning": {},
+           "last_scan": None, "zones": []}
+    with old:
+        old.execute("insert into cameras values (?, ?)", ("cam_1", json.dumps(cam)))
+    old.close()
+    return path.read_bytes()
+
+
+def test_a_crash_during_the_import_never_leaves_the_path_empty(tmp_path, monkeypatch):
+    """The old file is kept under its new name first, then one rename puts the new file in its place: stopped at the
+    last step, the path still holds the whole old database, and the next start imports it."""
+    from pathlib import Path
+    from watchful.db import legacy
+    path = tmp_path / "watchful.db"
+    before = write_legacy(path)
+    rename = Path.replace
+
+    def stop_at_the_swap(self, target):
+        if self.name == "watchful.importing.db":
+            raise KeyboardInterrupt  # the process is killed here
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "replace", stop_at_the_swap)
+    with pytest.raises(KeyboardInterrupt):
+        legacy.adopt_legacy(f"sqlite:///{path}", None)
+    assert path.read_bytes() == before and legacy.is_legacy(path)
+    (kept,) = tmp_path.glob("watchful.legacy-*.db")
+    assert kept.read_bytes() == before
+    monkeypatch.undo()
+    repo = components.make_repo(Settings(session_secret="y", data_dir=tmp_path, _env_file=None), DEFAULT_WORKSPACE)
+    assert repo.get_camera("cam_1").name == "Plaza" and not legacy.is_legacy(path)
+    assert not list(tmp_path.glob("*.importing*"))
+
+
+def test_two_processes_starting_together_import_once(tmp_path):
+    import subprocess
+    import sys
+    path = tmp_path / "watchful.db"
+    write_legacy(path)
+    start = ("import sys, time\n"
+             "from watchful.db import legacy\n"
+             "real = legacy.import_legacy\n"
+             "def slow(*args):\n"
+             "    time.sleep(2)\n"
+             "    return real(*args)\n"
+             "legacy.import_legacy = slow\n"
+             "print(legacy.adopt_legacy(sys.argv[1], None))\n")
+    procs = [subprocess.Popen([sys.executable, "-c", start, f"sqlite:///{path}"], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True) for _ in range(2)]
+    outs = [p.communicate(timeout=120) for p in procs]
+    assert [p.returncode for p in procs] == [0, 0], outs
+    printed = [out.strip().splitlines()[-1] for out, _ in outs]
+    assert printed.count("None") == 1, printed  # the other waited, then found the new file
+    (kept,) = tmp_path.glob("watchful.legacy-*.db")
+    assert str(kept) in printed and not list(tmp_path.glob("*.importing*"))
+    repo = components.make_repo(Settings(session_secret="y", data_dir=tmp_path, _env_file=None), DEFAULT_WORKSPACE)
+    assert [c.id for c in repo.list_cameras()] == ["cam_1"]
