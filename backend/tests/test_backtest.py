@@ -78,7 +78,7 @@ def test_backtest_counts_yesterdays_fires(repo):
     r = backtest(w, repo, ["cam_pool"], now=NOW.timestamp(), tz=TZ)
     assert r.fires == 3 and len(r.examples) == 3
     assert all("Pool" in e for e in r.examples) and "10:10 PM" in r.examples[0]
-    assert not r.not_replayed
+    assert not r.assumed and r.summary == "Would have fired 3 times."
 
 
 def test_backtest_replays_crossings_by_direction(repo):
@@ -100,5 +100,6 @@ def test_backtest_says_what_it_cannot_replay(repo):
               conditions=[Condition(signal="in_zone", zones=["water"]),
                           Condition(signal="still_s", zones=["water"], op=">=", value=20)])
     r = backtest(w, repo, ["cam_pool", "cam_gate"], now=NOW.timestamp(), tz=TZ)
-    assert r.not_replayed == ["still_s"] and r.fires == 1 and r.upper_bound
+    assert r.assumed == ["still_s"] and r.fires == 1 and r.visits == 1
+    assert r.summary == "About 1 visit, assuming staying still held."
     assert any("Main gate" in s for s in r.skipped)  # no water zone there

@@ -59,6 +59,7 @@ class SignalContext:
     health: str = "live"
     states: object | None = None  # saved zone state examples (rules.zonestate.ZoneStates)
     classes: list[str] = field(default_factory=list)  # the watch's subject classes, for scene signals
+    shared: dict = field(default_factory=dict)  # per camera, shared by every watch: zone states, the flow tool
 
     def events(self, kind: str, track_id: int) -> list[EventRow]:
         return [e for e in self.tick.events if e.kind == kind and e.track_id == track_id]
@@ -81,6 +82,7 @@ class SignalSpec:
     caveat: str = ""
     own_hold: bool = False  # reads params.hold_s itself; otherwise the engine holds the condition
     replay: bool = False  # can be replayed from the event index by a backtest
+    label: str = ""  # plain words for it, when a backtest has to assume it
 
 
 REGISTRY: dict[str, SignalSpec] = {}
@@ -88,10 +90,10 @@ REGISTRY: dict[str, SignalSpec] = {}
 
 def signal(name: str, level: Literal["track", "scene"], value: Literal["bool", "number", "text"],
            description: str, needs: tuple[str, ...] = (), tier: Tier = "A", caveat: str = "",
-           own_hold: bool = False, replay: bool = False):
+           own_hold: bool = False, replay: bool = False, label: str = ""):
     def register(fn: Fn) -> Fn:
         REGISTRY[name] = SignalSpec(name, level, value, description, frozenset(needs), fn, tier, caveat, own_hold,
-                                    replay)
+                                    replay, label or name.replace("_s", "").replace("_", " "))
         return fn
     return register
 
@@ -264,7 +266,7 @@ def returns(ctx, cond, track):
 @signal("zone_looks_like", "scene", "bool",
         "The view inside a zone matches params.text better than params.not_text for params.hold_s seconds "
         "(open vocabulary, for example 'an open gate' against 'a closed gate', 'smoke' against 'clear air').",
-        needs=("embed",), tier="B", own_hold=True,
+        needs=("embed",), tier="B", own_hold=True, label="the zone's look",
         caveat="An image and text model judges the look of the zone; the AI double checks each alert.")
 def zone_looks_like(ctx, cond, track):
     import numpy as np
@@ -304,7 +306,7 @@ def _text_vec(ctx, text: str):
         "Open vocabulary look or action of the subject, checked locally by an image and text model with no AI cost: "
         "closer to params.text than to params.not_text for params.hold_s seconds (for example 'a person eating' "
         "against 'a person not eating', or glasses, helmets, vests, masks, phones, carried things, clothes).",
-        needs=("embed",), tier="B", own_hold=True,
+        needs=("embed",), tier="B", own_hold=True, label="the look",
         caveat="An image and text model judges looks; the AI double checks each alert.")
 def looks_like(ctx, cond, track):
     import numpy as np
@@ -346,7 +348,7 @@ def crossed(ctx, cond, track):
 @signal("stationary_s", "track", "number",
         "Seconds the subject has stayed in the same spot (its box barely moves), carried over short detector misses "
         "and checked against a picture of the spot every few seconds even when nothing moves. For parked or left "
-        "behind things, or someone waiting.", needs=("slow",), tier="A",
+        "behind things, or someone waiting.", needs=("slow",), tier="A", label="staying in one spot",
         caveat="Something hidden behind another thing is missed.")
 def stationary_s(ctx, cond, track):
     if cond.zones and not _in(track, cond.zones):
@@ -356,9 +358,6 @@ def stationary_s(ctx, cond, track):
         return SignalValue(0.0)
     seconds = ctx.tick.ts - h.anchor[0]
     return SignalValue(seconds, f"has stayed in one spot for {duration(seconds)}")
-
-
-_dis = None
 
 
 def _flow_region(box, pad: float, size: tuple[int, int]) -> tuple[int, int, int, int]:
@@ -378,48 +377,69 @@ def _small_gray(image, region, width: int):
     return cv2.resize(gray, (width, max(8, round(gray.shape[0] * scale))), interpolation=cv2.INTER_AREA), scale
 
 
-def _box_flow(prev, cur, region, box, scale: float, percentile: float) -> float:
-    """A high percentile of DIS optical flow inside the box, in frame pixels."""
-    global _dis
-    if _dis is None:
-        _dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_ULTRAFAST)
-    flow = _dis.calc(prev, cur, None)
-    mag = cv2.magnitude(flow[..., 0], flow[..., 1])
+def _own_motion(ctx, prev, cur, region, box, scale: float, percentile: float) -> tuple[float, np.ndarray]:
+    """How much the inside of the box moves on its own, in frame pixels: each pixel's DIS flow is compared with
+    standing still and with the flow of the ring around the box (water, ground, a lighting change), whichever is
+    nearer. Also the ring's flow, so the box's own drift can be judged the same way."""
+    dis = ctx.shared.get("dis")
+    if dis is None:
+        preset = getattr(cv2, f"DISOPTICAL_FLOW_PRESET_{ctx.tuning.still_preset.upper()}")
+        dis = ctx.shared["dis"] = cv2.DISOpticalFlow_create(preset)
+    flow = dis.calc(prev, cur, None)
     x, y, w, h = box
+    inner = np.zeros(flow.shape[:2], bool)
     bx0, by0 = max(0, int((x - region[0]) * scale)), max(0, int((y - region[1]) * scale))
     bx1, by1 = int((x + w - region[0]) * scale), int((y + h - region[1]) * scale)
-    inner = mag[by0:max(by1, by0 + 1), bx0:max(bx1, bx0 + 1)]
-    return float(np.percentile(inner if inner.size else mag, percentile)) / scale
+    inner[by0:max(by1, by0 + 1), bx0:max(bx1, bx0 + 1)] = True
+    ring = flow[~inner]
+    around = np.median(ring, axis=0) if len(ring) else np.zeros(2, np.float32)
+    inside = flow[inner] if inner.any() else flow.reshape(-1, 2)
+    residual = np.minimum(np.linalg.norm(inside, axis=1), np.linalg.norm(inside - around, axis=1))
+    return float(np.percentile(residual, percentile)) / scale, around / scale
+
+
+def _update_still(ctx, track, h: TrackHistory) -> None:
+    """Per track and once per look, whatever zones the watches name, so watches never reset each other."""
+    cfg, st, now = ctx.tuning, h.still, ctx.tick.ts
+    if ctx.image is None or now - st.get("ts", float("-inf")) < cfg.still_every_s:
+        return
+    box, size = track.box, ctx.tick.size
+    cx, cy = box[0] + box[2] / 2, box[1] + box[3] / 2
+    prev, dt = st.get("gray"), now - st.get("ts", now)
+    still = False
+    if prev is not None and 0 < dt <= cfg.still_gap_s:
+        cur, scale = _small_gray(ctx.image, st["region"], cfg.still_width)
+        if cur is not None and cur.shape == prev.shape:
+            body = max(box[3], 1.0)
+            own, around = _own_motion(ctx, prev, cur, st["region"], st["box"], scale, cfg.still_percentile)
+            moved = np.array([cx - st["centre"][0], cy - st["centre"][1]])
+            drift = min(np.linalg.norm(moved), np.linalg.norm(moved - around)) / body / dt
+            still = own / body / dt <= cfg.still_flow and drift <= cfg.still_drift
+    st["since"] = (st.get("since") or st["ts"]) if still else None
+    region = _flow_region(box, cfg.still_pad, size)
+    st.update(region=region, box=box, gray=_small_gray(ctx.image, region, cfg.still_width)[0], ts=now,
+              centre=(cx, cy))
 
 
 @signal("still_s", "track", "number",
-        "Seconds the subject has shown almost no movement inside its own box (dense optical flow), while it stays in "
-        "view. For someone or something that should be moving.", tier="B",
-        caveat="Resting or floating looks the same as not moving; ripples and glare can hide stillness.")
+        "Seconds the subject has shown almost no movement of its own inside its box (dense optical flow, judged "
+        "against the flow around it, so drifting with water or a lighting change is not movement), while inside the "
+        "zones. For someone or something that should be moving.", tier="B", label="staying still",
+        caveat="Resting or floating looks the same as not moving; glare can hide stillness.")
 def still_s(ctx, cond, track):
     h = ctx.history.get(track.track_id)
-    if h is None or ctx.image is None or (cond.zones and not _in(track, cond.zones)):
-        if h is not None:
-            h.still.clear()
+    if h is None:
         return SignalValue(0.0)
-    cfg, st, now = ctx.tuning, h.still, ctx.tick.ts
-    if now - st.get("ts", float("-inf")) >= cfg.still_every_s:
-        box, size = track.box, ctx.tick.size
-        cx, cy = box[0] + box[2] / 2, box[1] + box[3] / 2
-        prev, dt = st.get("gray"), now - st.get("ts", now)
-        still = False
-        if prev is not None and 0 < dt <= cfg.still_gap_s:
-            cur, scale = _small_gray(ctx.image, st["region"], cfg.still_width)
-            if cur is not None and cur.shape == prev.shape:
-                body = max(box[3], 1.0)
-                flow = _box_flow(prev, cur, st["region"], box, scale, cfg.still_percentile) / body / dt
-                drift = math.hypot(cx - st["centre"][0], cy - st["centre"][1]) / body / dt
-                still = flow <= cfg.still_flow and drift <= cfg.still_drift
-        st["since"] = (st.get("since") or st["ts"]) if still else None
-        region = _flow_region(box, cfg.still_pad, size)
-        st.update(region=region, gray=_small_gray(ctx.image, region, cfg.still_width)[0], ts=now, centre=(cx, cy))
-    since = st.get("since")
-    seconds = now - since if since is not None else 0.0
+    _update_still(ctx, track, h)
+    since = h.still.get("since")
+    if since is None:
+        return SignalValue(0.0)
+    if cond.zones:
+        inside = _in(track, cond.zones)
+        if not inside:
+            return SignalValue(0.0)
+        since = max(since, min(track.zones_inside[z] for z in inside))
+    seconds = ctx.tick.ts - since
     return SignalValue(seconds, f"has hardly moved for {duration(seconds)}" if seconds else None)
 
 
@@ -463,20 +483,26 @@ def vanished_in_zone(ctx, cond, track):
     return SignalValue(True, f"went out of sight in {gone['zone']} {now - gone['ts']:.0f} s ago and has not come back")
 
 
+def _company(me, other, cfg) -> bool:
+    """Near on screen and at about the same depth: box heights far apart mean one is much nearer the camera."""
+    h1, h2 = max(me.box[3], 1.0), max(other.box[3], 1.0)
+    if max(h1, h2) / min(h1, h2) > cfg.alone_depth_ratio:
+        return False
+    return math.dist(foot_point(me.box), foot_point(other.box)) <= cfg.alone_distance * (h1 + h2) / 2
+
+
 @signal("alone", "track", "bool",
         "The subject is the only one of its class (or of params.classes) inside the zones, and no other is within a "
-        "few body heights of it.", tier="A", replay=True)
+        "few body heights of it at the same depth.", tier="A", replay=True)
 def alone(ctx, cond, track):
     where = _in(track, cond.zones) if cond.zones else []
     if cond.zones and not where:
         return SignalValue(False)
     company = set(cond.params.get("classes") or [track.cls])
-    reach = ctx.tuning.alone_distance * max(track.box[3], 1.0)
-    me = foot_point(track.box)
     for t in ctx.tick.tracks:
         if t.track_id == track.track_id or t.cls not in company:
             continue
-        if any(z in t.zones_inside for z in cond.zones) or math.dist(foot_point(t.box), me) <= reach:
+        if any(z in t.zones_inside for z in cond.zones) or _company(track, t, ctx.tuning):
             return SignalValue(False)
     return SignalValue(True, f"alone in {where[0]}" if where else "alone")
 
@@ -485,27 +511,35 @@ def alone(ctx, cond, track):
         "The state of a zone, learned from example pictures the owner saved for it (any state names, for example "
         "'open' and 'closed', 'covered' and 'uncovered', 'empty' and 'occupied'), checked every few seconds even "
         "when nothing moves; 'unknown' until there are examples. Use op 'is' with the state name as value.",
-        tier="B", caveat="Needs a few example pictures of each state, by day and by night.")
+        needs=("embedder",), tier="B", label="the zone's state",
+        caveat="Needs a few example pictures of each state, by day and by night.")
 def zone_state(ctx, cond, track):
-    if not cond.zones:
+    if not cond.zones or ctx.states is None or not ctx.states.has(cond.zones[0]) or cond.zones[0] not in ctx.zones:
         return SignalValue("unknown")
-    zone = cond.zones[0]
-    st = ctx.state.setdefault(f"zone_state:{zone}", {})
-    if ctx.states is not None and ctx.image is not None and (ctx.slow or "checked" not in st) \
-            and ctx.states.has(zone) and zone in ctx.zones:
-        st["checked"] = ctx.tick.ts
+    zone, cfg, now = cond.zones[0], ctx.states.cfg, ctx.tick.ts
+    mem = ctx.shared.setdefault("zone_state", {}).setdefault(zone, {})  # one reading per zone for every watch
+    if ctx.health != "live":
+        mem.clear()  # nothing is known about the zone while the camera can't see it
+        return SignalValue("unknown")
+    if ctx.image is not None and now - mem.get("checked", float("-inf")) >= cfg.slow_tick_s:
+        mem["checked"] = now
         guess = ctx.states.classify(ctx.zones[zone], ctx.image)
-        if guess.state != "unsure":
-            st["state"] = guess.state
-    state = st.get("state", "unknown")
+        if guess.state == "unsure":
+            mem["unsure"] = mem.get("unsure", 0) + 1
+        else:
+            mem.update(state=guess.state, sure=now, unsure=0)
+    if mem.get("unsure", 0) >= cfg.state_unsure_checks or now - mem.get("sure", float("-inf")) > cfg.state_max_age_s \
+            or now - mem.get("checked", float("-inf")) > 2 * cfg.slow_tick_s:
+        mem.pop("state", None)
+    state = mem.get("state", "unknown")
     return SignalValue(state, f"{zone} is {state}" if state != "unknown" else None)
 
 
 @signal("attribute", "track", "text",
         "A value a reader attached to the subject, named by params.name (for example plate_text or plate_colour from "
         "the number plate reader); 'unknown' until read. Compare with op 'is', '!=', 'contains', or 'in' with a list.",
-        tier="B", caveat="Only as good as the reader; colours can't be told apart at night on black and white "
-                         "cameras.")
+        tier="B", label="what the reader read",
+        caveat="Only as good as the reader; colours can't be told apart at night on black and white cameras.")
 def attribute(ctx, cond, track):
     name = str(cond.params.get("name") or "")
     value = track.attributes.get(name) if name else None

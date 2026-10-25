@@ -91,13 +91,26 @@ class LineTracker:
         self.lines = [z for z in zones if z.is_line and len(z.polygon) >= 2]
         self.cfg = cfg
         self._side: dict[tuple[int, str], int] = {}
+        self._last: dict[int, tuple[float, float]] = {}
+
+    def _swapped(self, t: Track, foot, before_look: dict) -> bool:
+        """The tracker swapped ids: this track jumped onto the spot where another one stood a look ago."""
+        last = before_look.get(t.id)
+        size = max(t.box[2], t.box[3], 1.0)
+        if last is None or np.hypot(foot[0] - last[0], foot[1] - last[1]) <= self.cfg.line_max_jump * size:
+            return False
+        return any(np.hypot(foot[0] - p[0], foot[1] - p[1]) <= self.cfg.line_swap_near * size
+                   for tid, p in before_look.items() if tid != t.id)
 
     def update(self, tracks: list[Track], ended: list[Track], ts: float,
                frame_size: tuple[int, int]) -> list[ZoneEvent]:
         events = []
+        before_look = dict(self._last)
         for t in tracks:
             foot = foot_point(t.box)
             margin = self.cfg.line_hysteresis * max(t.box[3], 1.0)
+            swapped = self._swapped(t, foot, before_look)
+            self._last[t.id] = foot
             for line in self.lines:
                 dist, along = line_position(line, foot, frame_size)
                 if abs(dist) < margin:
@@ -106,10 +119,11 @@ class LineTracker:
                 before = self._side.get(key)
                 self._side[key] = side
                 within = -self.cfg.line_extend <= along <= 1 + self.cfg.line_extend
-                if before is not None and before != side and within:
+                if before is not None and before != side and within and not swapped:
                     events.append(ZoneEvent("cross", line.name, t.id, t.cls, ts,
                                             direction="in" if side > 0 else "out"))
         for t in ended:
+            self._last.pop(t.id, None)
             for line in self.lines:
                 self._side.pop((t.id, line.name), None)
         return events

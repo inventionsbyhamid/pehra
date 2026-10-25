@@ -21,8 +21,8 @@ from watchful.evidence import EvidenceBuffer, EvidencePack, evidence_context, fi
 from watchful.ingest.clips import ClipRecorder
 from watchful.ingest.sources import FileSource, PushSource, StreamSource
 from watchful.notify import ApprovalNotifier
-from watchful.rules.engine import RuleEngine, log_row, needs_for, validate
-from watchful.rules.watch import Watch
+from watchful.rules.engine import RuleEngine, log_row, needs_for
+from watchful.rules.watch import Watch, select_watches
 from watchful.rules.zonestate import load_states
 from watchful.store.db import AlertRow, Camera
 from watchful.tuning import Tuning, load_tuning
@@ -108,7 +108,7 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
     if needs.faces and enrollments:
         faces = make_faces(settings, tuning)
         faces.load(enrollments)
-    embedder = TextCache(make_embedder(settings), texts or {}) if needs.embed else None
+    embedder = TextCache(make_embedder(settings), texts or {}) if needs.embed or needs.embedder else None
     pipe = CameraPipeline(camera, repo, blobs, faces, settings, tuning, needs, embedder)
     states = None
     if any(c.signal == "zone_state" for _, w in watches for c in w.conditions):
@@ -342,22 +342,8 @@ class WorkerManager:
     def _watches(self, camera_id: str, zones: list | None = None) -> tuple[list[tuple[str, Watch]], list[str]]:
         """The camera's enabled watches that can run, and a plain note for each that can't."""
         repo = self._repo(camera_id)
-        names = {z.name for z in (zones if zones is not None else repo.get_camera(camera_id).zones)}
-        ok, problems = [], []
-        for row in repo.list_watches(camera_id):
-            if not row.enabled:
-                continue
-            try:
-                w = Watch.model_validate(row.watch)
-            except ValueError as e:
-                problems.append(f"{row.text}: {str(e).splitlines()[0]}")
-                continue
-            issues = validate(w, names)
-            if issues:
-                problems.append(f"{w.name}: {'; '.join(issues)}")
-            else:
-                ok.append((row.id, w))
-        return ok, problems
+        zones = zones if zones is not None else repo.get_camera(camera_id).zones
+        return select_watches(repo.list_watches(camera_id), camera_id, zones)
 
     def _camera_lock(self, camera_id: str) -> threading.Lock:
         with self._lock:

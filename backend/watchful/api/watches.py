@@ -1,18 +1,17 @@
 """Watches: presets and purposes, a camera's watches, the watch card (preview with its backtest), adding one in plain
 words, switching one on or off, and lookouts. Previewing, adding and switching watches needs an admin; a lookout for a
 person needs a supervisor."""
-import json
 import time
 from dataclasses import asdict
 
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from watchful.agent.compiler import card, compile_watch, context_for, mentions_age
+from watchful.agent.compiler import Invalid, card, check_watch, compile_watch, context_for
+from watchful.api.blobs import owns
 from watchful.api.common import LIVE_KINDS, alert_or_404, camera_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
 from watchful.rules.backtest import backtest
-from watchful.rules.engine import validate
 from watchful.rules.presets import describe, preset, purposes
 from watchful.rules.watch import SameAs, Watch
 from watchful.store.db import Camera, WatchRow
@@ -86,15 +85,33 @@ def make_router(ctx) -> APIRouter:
         camera_or_404(r, camera_id)
         return [asdict(x) for x in r.list_watches(camera_id)]
 
+    def restart_where_it_runs(r, watch: Watch, home_camera_id: str) -> None:
+        for c in r.list_cameras():
+            if c.kind in LIVE_KINDS and watch.applies_to(c.id, home_camera_id):
+                manager.restart(c.id)
+
     def save_watch(member: CurrentMember, cam: Camera, text: str, watch: Watch, shown: dict | None = None) -> WatchRow:
         r, shown = repo(member), shown or {}
         row = r.add_watch(WatchRow(None, cam.id, text, watch.model_dump(), True, coverage=shown.get("coverage", []),
                                    setup=shown.get("setup", []), cannot=shown.get("cannot", [])))
         ctx.db.audit(member.workspace.id, member.user.id, "watch.add", {"watch": row.id, "camera": cam.id})
-        for c in (r.list_cameras() if watch.scope == "site" else [cam]):
-            if c.kind in LIVE_KINDS and watch.applies_to(c.id, cam.id):
-                manager.restart(c.id)
+        restart_where_it_runs(r, watch, cam.id)
         return row
+
+    def checked(member: CurrentMember, cam: Camera, body: WatchIn) -> tuple[Watch, dict]:
+        """A watch the client sends is checked again like the AI's, and may only point at this society's pictures and
+        events; the card is worked out again rather than trusted."""
+        r = repo(member)
+        try:
+            result = check_watch(body.watch, body.text or str(body.watch.get("name") or ""), context_for(r, cam),
+                                 body.coverage, body.cannot)
+        except Invalid as e:
+            raise HTTPException(400, f"That watch can't be saved: {e}.")
+        same = result.watch.subject.same_as
+        if same and ((same.crop_key and not owns(r, member.workspace.id, same.crop_key))
+                     or (same.event_id and r.get_event(same.event_id) is None)):
+            raise HTTPException(400, "That watch can't be saved: it points at a picture from somewhere else.")
+        return result.watch, card(result)
 
     @router.post("/api/cameras/{camera_id}/watches")
     def add_watch(camera_id: str, body: WatchIn, member: CurrentMember = Depends(require_role("admin"))):
@@ -108,24 +125,19 @@ def make_router(ctx) -> APIRouter:
                 raise HTTPException(400, f"That preset can't be used: {e}")
             text = body.preset
         elif body.watch is not None:
-            try:
-                watch = Watch.model_validate(body.watch)
-            except ValueError as e:
-                raise HTTPException(400, f"That watch can't be saved: {str(e).splitlines()[0]}")
-            unknown = [p for p in validate(watch, set()) if p.startswith("unknown signal")]
-            if unknown or mentions_age(json.dumps(body.watch)):
-                raise HTTPException(400, "That watch can't be saved: " + ("; ".join(unknown) or
-                                                                         "no watch may be about anyone's age."))
+            watch, shown = checked(member, cam, body)
             text = body.text or watch.name
-            shown = {"coverage": body.coverage, "setup": body.setup, "cannot": body.cannot}
         else:
             result = compile_watch(body.text or "", context_for(r, cam), ctx.llm_for(member.workspace.id, "compile"))
             shown = card(result)
             if result.watch is None:
-                return shown
+                return {**shown, "saved": False}
+            if result.cannot:  # only part of the words can be watched: show the card and let a person decide
+                return {**shown, "watch": scoped(r, result.watch, body).model_dump(), "saved": False,
+                        "problem": "Only part of this can be watched. Check the card, then save it."}
             watch, text = result.watch, body.text or ""
         row = save_watch(member, cam, text, scoped(r, watch, body), shown)
-        return {**shown, "id": row.id, "watch": row.watch, "problem": None}
+        return {**shown, "id": row.id, "watch": row.watch, "problem": None, "saved": True}
 
     @router.patch("/api/watches/{watch_id}")
     def toggle_watch(watch_id: str, enabled: bool = Body(..., embed=True),
@@ -137,7 +149,7 @@ def make_router(ctx) -> APIRouter:
         row.enabled = enabled
         r.update_watch(row)
         ctx.db.audit(member.workspace.id, member.user.id, "watch.toggle", {"watch": row.id, "enabled": enabled})
-        manager.restart(row.camera_id)
+        restart_where_it_runs(r, Watch.model_validate(row.watch), row.camera_id)
         return asdict(row)
 
     def alert_sighting(r, alert_id: str):

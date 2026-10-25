@@ -69,17 +69,25 @@ class Watch(_Model):
         return camera_id == home_camera_id
 
 
-def select_watches(rows, camera_id: str) -> list[tuple[str, Watch]]:
-    """The enabled watches that run on a camera: its own and every site watch that does not exclude it.
-    Rows that no longer parse are left out; the worker reports them."""
-    out = []
+def select_watches(rows, camera_id: str, zones) -> tuple[list[tuple[str, Watch]], list[str]]:
+    """The enabled watches that can run on a camera (its own and every site watch that does not exclude it), and
+    a plain note for each that applies but can't run there (a zone or line this camera doesn't have)."""
+    from watchful.rules.engine import validate
+    kinds = {z.name: z.kind for z in zones}
+    ok, notes = [], []
     for row in rows:
         if not row.enabled:
             continue
         try:
             w = Watch.model_validate(row.watch)
-        except ValueError:
+        except ValueError as e:
+            notes.append(f"{row.text}: {str(e).splitlines()[0]}")
             continue
-        if w.applies_to(camera_id, row.camera_id):
-            out.append((row.id, w))
-    return out
+        if not w.applies_to(camera_id, row.camera_id):
+            continue
+        issues = validate(w, kinds)
+        if issues:
+            notes.append(f"{w.name}: {'; '.join(issues)}")
+        else:
+            ok.append((row.id, w))
+    return ok, notes

@@ -1,4 +1,9 @@
 {
+  "_notes": [
+    "age_terms: words that mean a child, an age group or a size or height standing in for age; any of them makes a request a cannot.",
+    "boy and girl usually mean a child, so they count. Job titles that use them for adults (delivery boy, office boy) are in not_age_phrases and never count.",
+    "Drawn zone and line names (a kids play area) are places, not ages, and are masked before the check."
+  ],
   "age_terms": [
     "child",
     "children",
@@ -52,7 +57,11 @@
     "year old",
     "how old",
     "young",
-    "younger"
+    "younger",
+    "boy",
+    "boys",
+    "girl",
+    "girls"
   ],
   "age_reason": "I can't tell anyone's age, and I never watch children as a group.",
   "age_alternative": "anyone in that place, anyone alone there, or anyone not moving there for a while",
@@ -96,5 +105,34 @@
     "count every",
     "attendance",
     "timings"
-  ]
+  ],
+  "not_age_phrases": [
+    "delivery boy",
+    "delivery boys",
+    "office boy",
+    "office boys",
+    "pantry boy",
+    "paper boy",
+    "newspaper boy",
+    "milk boy",
+    "room boy",
+    "lift boy",
+    "liftman boy",
+    "car wash boy",
+    "tea boy",
+    "peon boy",
+    "delivery girl",
+    "delivery girls"
+  ],
+  "readers": {
+    "plate_text": "plate reading",
+    "plate_colour": "plate reading"
+  },
+  "default_hours": {
+    "pool": "06:00 to 20:00",
+    "swimming pool": "06:00 to 20:00",
+    "gym": "05:00 to 22:00",
+    "club house": "08:00 to 22:00",
+    "play area": "07:00 to 20:00"
+  }
 }

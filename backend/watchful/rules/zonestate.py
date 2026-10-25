@@ -134,9 +134,10 @@ def load_states(rows, read_picture, zones: list[Zone], cfg: ZoneTuning, embedder
     return out
 
 
-def example_key(camera_id: str, zone_id: str, period: str, ts: float) -> str:
-    """Where a saved example picture lives; the period rides in the name so lists need no decoding."""
-    return f"{camera_id}/states/{zone_id}/{int(ts * 1000)}_{period}.jpg"
+def example_key(workspace_id: str, camera_id: str, zone_id: str, period: str, ts: float) -> str:
+    """Where a saved example picture lives, under its society; the period rides in the name so lists need no
+    decoding."""
+    return f"{workspace_id}/{camera_id}/states/{zone_id}/{int(ts * 1000)}_{period}.jpg"
 
 
 def period_of(key: str) -> str | None:

@@ -354,13 +354,14 @@ def test_zone_state_without_examples_is_unknown():
 def test_attribute_signal_reads_whatever_a_reader_attached():
     t0 = at(12)
     cab = TrackState(1, "car", PARK, t0, t0, attributes={"plate_colour": "yellow", "plate_text": "MH12AB1234"})
-    plain = TrackState(2, "car", PARK, t0, t0)
+    plain = TrackState(2, "car", PARK, t0, t0, attributes={"plate_colour": "white"})
+    unread = TrackState(3, "car", PARK, t0, t0)  # unknown never matches, not even !=
     cases = [(Condition(signal="attribute", params={"name": "plate_colour"}, op="is", value="yellow"), [1]),
              (Condition(signal="attribute", params={"name": "plate_colour"}, op="in", value=["green", "yellow"]), [1]),
              (Condition(signal="attribute", params={"name": "plate_text"}, op="contains", value="mh12"), [1]),
              (Condition(signal="attribute", params={"name": "plate_colour"}, op="!=", value="yellow"), [2])]
     for cond, ids in cases:
-        tick = Tick(t0, (1000, 500), True, [cab, plain], [])
+        tick = Tick(t0, (1000, 500), True, [cab, plain, unread], [])
         got = engine(watch(cond, classes=("car",)), []).on_tick("cam", tick, t0)
         assert [c.track_id for c in got] == ids, cond
 
@@ -373,11 +374,12 @@ def test_camera_health_follows_tamper_events_and_offline():
     t0 = at(12)
     w = watch(Condition(signal="camera_health", op="!=", value="live"), classes=(), cooldown_s=1)
     e = engine(w, [])
-    seq = [Tick(t0, (320, 240), False, [], []), Tick(t0 + 1, (320, 240), False, [], [tamper(t0 + 1, "covered")]),
-           Tick(t0 + 2, (320, 240), False, [], []), Tick(t0 + 3, (320, 240), False, [], [tamper(t0 + 3, "restored")]),
-           Tick(t0 + 4, (320, 240), False, [], [], health="offline")]
+    seq = [Tick(t0, (320, 240), False, [], []), Tick(t0 + 10, (320, 240), False, [], [tamper(t0 + 10, "covered")]),
+           Tick(t0 + 20, (320, 240), False, [], []),
+           Tick(t0 + 30, (320, 240), False, [], [tamper(t0 + 30, "restored")]),
+           Tick(t0 + 40, (320, 240), False, [], [], health="offline")]
     fired = [t.ts - t0 for t in seq if e.on_tick("cam", t, t.ts)]
-    assert fired == [1, 4]
+    assert fired == [10, 40]
 
 
 def test_any_signal_can_be_held_for_seconds():
@@ -439,7 +441,7 @@ def test_state_examples_are_kept_per_society(tmp_path):
     pictures = {}
     for night in (False, True):
         for state in ("open", "closed"):
-            key = example_key(cam.id, "g1", "night" if night else "day", len(pictures))
+            key = example_key(a.workspace_id, cam.id, "g1", "night" if night else "day", len(pictures))
             pictures[key] = cv2.imencode(".png", gate_frame(state, night, seed=1))[1].tobytes()
             a.add_state_example(cam.id, "g1", state.title(), key)
     rows = a.list_state_examples(cam.id)
@@ -450,7 +452,9 @@ def test_state_examples_are_kept_per_society(tmp_path):
     states = load_states(rows, pictures.__getitem__, [GATE_ZONE], Tuning().zones)
     assert states.states("gate") == {"open": {"day", "night"}, "closed": {"day", "night"}}
     assert states.classify(GATE_ZONE, gate_frame("closed", True, seed=3)).state == "closed"
-    b.delete_state_example(rows[0][0])
+    assert b.delete_state_example(rows[0][0]) is None
     assert len(a.list_state_examples(cam.id)) == 4
-    a.delete_state_example(rows[0][0])
+    assert a.delete_state_example(rows[0][0]) == (cam.id, rows[0][3])
     assert len(a.list_state_examples(cam.id)) == 3
+    a.delete_camera(cam.id)
+    assert a.list_state_examples(cam.id) == []

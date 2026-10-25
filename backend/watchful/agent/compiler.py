@@ -47,8 +47,9 @@ class CompileContext:
     lines: list[str] = field(default_factory=list)
     state_examples: dict[str, dict[str, list[str]]] = field(default_factory=dict)  # zone to state to periods
     people: dict[str, str] = field(default_factory=dict)  # enrolled staff id to name
-    camera_flags: dict = field(default_factory=dict)  # e.g. night_ir, plate_readable
+    camera_flags: dict = field(default_factory=dict)  # e.g. night_ir, attributes read on this camera
     purpose: str | None = None
+    places: list[str] = field(default_factory=list)  # every zone and line name in the society, for the age check
 
     def __post_init__(self):
         if not isinstance(self.zones, dict):
@@ -61,6 +62,11 @@ class CompileContext:
     @property
     def names(self) -> list[str]:
         return list(self.zones) + list(self.lines)
+
+    @property
+    def place_names(self) -> list[str]:
+        """Names that are only places, whatever words they hold (a kids play area)."""
+        return self.names + list(self.places)
 
 
 @dataclass
@@ -91,12 +97,37 @@ def _age_pattern() -> re.Pattern:
     return re.compile(r"\b(?:(?:a|an|the|some|any)\s+)?(" + "|".join(re.escape(t) for t in terms) + r")\b", re.I)
 
 
-def mentions_age(text) -> bool:
-    return bool(text) and _age_pattern().search(str(text)) is not None
+def _mask(text: str, names=()) -> tuple[str, list[str]]:
+    """Drawn place names (a kids play area) and job titles (a delivery boy) swapped for markers, so their words are
+    never read as an age; _unmask puts them back."""
+    found: list[str] = []
+
+    def keep(m: re.Match) -> str:
+        found.append(m.group(0))
+        return f"\x00{len(found) - 1}\x00"
+
+    for phrase in sorted({n for n in (*names, *_words()["not_age_phrases"]) if n and n.strip()}, key=len, reverse=True):
+        text = re.sub(re.escape(phrase), keep, text, flags=re.I)
+    return text, found
 
 
-def _neutral(text: str) -> str:
-    out = re.sub(r"\s{2,}", " ", _age_pattern().sub("someone", text)).strip()
+def _unmask(text: str, found: list[str]) -> str:
+    return re.sub("\x00(\\d+)\x00", lambda m: found[int(m.group(1))], text)
+
+
+def mentions_age(text, names=()) -> bool:
+    """Whether words are about a child or an age. names are drawn zones and lines, which are only places."""
+    return bool(text) and _age_pattern().search(_mask(str(text), names)[0]) is not None
+
+
+def _age_phrase(text: str, names=()) -> str | None:
+    m = _age_pattern().search(_mask(text, names)[0])
+    return m.group(0) if m else None
+
+
+def _neutral(text: str, names=()) -> str:
+    masked, found = _mask(text, names)
+    out = _unmask(re.sub(r"\s{2,}", " ", _age_pattern().sub("someone", masked)).strip(), found)
     return out[:1].upper() + out[1:]
 
 
@@ -112,26 +143,26 @@ def _clause(c: dict | object) -> str:
     return str(params.get("text") or signal)
 
 
-def _strip_age(w: dict) -> tuple[dict | None, list[str]]:
+def _strip_age(w: dict, names=()) -> tuple[dict | None, list[str]]:
     """Removes every part of an AI written watch that is about age or children. A watch whose subject was
-    picked by age, or that has nothing left, is dropped."""
+    picked by age, or that has nothing left, is dropped. Drawn place names are only places."""
     removed, kept = [], []
     for c in w.get("conditions") or []:
-        if mentions_age(json.dumps(c.get("params") or {})) or mentions_age(c.get("value")):
+        if mentions_age(json.dumps(c.get("params") or {}), names) or mentions_age(c.get("value"), names):
             removed.append(_clause(c))
         else:
             kept.append(c)
     subject = w.get("subject") or {}
-    lost_subject = mentions_age(subject.get("looks_like"))
+    lost_subject = mentions_age(subject.get("looks_like"), names)
     if lost_subject:
         removed.append(subject.pop("looks_like"))
     w["conditions"] = kept
     if lost_subject or not kept:
         return None, removed or [w.get("name", "")]
     for key in ("name", "verify"):
-        if mentions_age(w.get(key)):
+        if mentions_age(w.get(key), names):
             removed.append(w[key])
-            w[key] = _neutral(w[key])
+            w[key] = _neutral(w[key], names)
     return w, removed
 
 
@@ -162,19 +193,25 @@ def _fix_names(w: Watch, ctx: CompileContext) -> list[str]:
     return list(dict.fromkeys(missing))
 
 
-def _ai_setup(item) -> bool:
+def _ai_setup(item, names=()) -> bool:
     """Setup tasks the AI wrote are kept, except drawing and pictures: code works those out from the watch."""
-    if not isinstance(item, str) or not item.strip() or mentions_age(item):
+    if not isinstance(item, str) or not item.strip() or mentions_age(item, names):
         return False
     low = item.strip().lower()
     return not (low.startswith("draw") or "picture" in low or "photo" in low)
 
 
 def _setup(w: Watch, ctx: CompileContext, missing: list[str], given: list) -> list[str]:
-    out = [s.strip() for s in given or [] if _ai_setup(s)]
+    out = [s.strip() for s in given or [] if _ai_setup(s, ctx.place_names)]
     lines = {str(c.params.get("line") or (c.zones[0] if c.zones else "")) for c in w.conditions
              if c.signal == "crossed"}
     where = "on each camera it should run on" if w.scope == "site" else "on this camera"
+    readers = set(ctx.camera_flags.get("attributes") or [])
+    for c in w.conditions:
+        name = str(c.params.get("name") or "")
+        if c.signal == "attribute" and name and name not in readers:
+            reader = _words()["readers"].get(name, name.replace("_", " ") + " reading")
+            out.append(f"Turn on {reader} {'for this camera' if w.scope == 'camera' else where}.")
     for name in missing:
         if name in lines:
             out.append(f"Draw a line called {name} where things cross, with the inside on its right.")
@@ -199,7 +236,8 @@ def _setup(w: Watch, ctx: CompileContext, missing: list[str], given: list) -> li
 def _coverage(w: Watch, given, ctx: CompileContext) -> list[Coverage]:
     out: list[Coverage] = []
     for item in given or []:
-        if not isinstance(item, dict) or mentions_age(item.get("clause")) or "output" in str(item.get("signal")):
+        if not isinstance(item, dict) or mentions_age(item.get("clause"), ctx.place_names) \
+                or "output" in str(item.get("signal")):
             continue
         signal, tier = str(item.get("signal") or ""), str(item.get("tier") or "B").upper()
         tier = tier if tier in TIERS else "B"
@@ -245,36 +283,37 @@ def _asks_to_log(text: str) -> bool:
     return re.search(rf"\b({words})\b", text, re.I) is not None
 
 
-def _settle_overlaps(coverage: list[Coverage], cannot: list[Cannot]) -> list[Cannot]:
+def _settle_overlaps(coverage: list[Coverage], cannot: list[Cannot], names=()) -> list[Cannot]:
     """A part that is watched is not also a part that can't be: its limit becomes the coverage caveat."""
     watched = [(c.clause.strip().lower(), c) for c in coverage if c.tier != "X"]
     kept = []
     for c in cannot:
         clause = c.clause.strip().lower()
         cov = next((v for k, v in watched if clause and (clause in k or k in clause)), None)
-        if cov is None or mentions_age(c.clause):
+        if cov is None or mentions_age(c.clause, names):
             kept.append(c)
         elif c.reason not in cov.caveat:
             cov.caveat = (cov.caveat + " " + c.reason).strip()
     return kept
 
 
-def _finish(cannot: list[Cannot], text: str, age: bool, removed: list[str]) -> list[Cannot]:
+def _finish(cannot: list[Cannot], text: str, age: bool, removed: list[str], names=()) -> list[Cannot]:
     words = _words()
     for c in cannot:
-        if not c.alternative or mentions_age(c.alternative):
-            c.alternative = words["age_alternative"] if mentions_age(c.clause) else words["fallback_alternative"]
-    if (age or removed) and not any(mentions_age(c.clause) for c in cannot):
-        m = _age_pattern().search(text) or next((_age_pattern().search(r) for r in removed if mentions_age(r)), None)
-        cannot.append(Cannot(m.group(0) if m else "age", words["age_reason"], words["age_alternative"]))
+        if not c.alternative or mentions_age(c.alternative, names):
+            c.alternative = words["age_alternative"] if mentions_age(c.clause, names) else words["fallback_alternative"]
+    if (age or removed) and not any(mentions_age(c.clause, names) for c in cannot):
+        phrase = _age_phrase(text, names) or next((p for r in removed if (p := _age_phrase(r, names))), None)
+        cannot.append(Cannot(phrase or "age", words["age_reason"], words["age_alternative"]))
     for c in cannot:
-        if mentions_age(c.clause):
+        if mentions_age(c.clause, names):
             c.reason = words["age_reason"]
     return cannot
 
 
-def context_for(repo, cam, night_ir: bool = True) -> CompileContext:
-    """What the compiler is told about one camera. Society cameras switch to black and white IR at night."""
+def context_for(repo, cam, night_ir: bool = True, attributes: list[str] = ()) -> CompileContext:
+    """What the compiler is told about one camera. Society cameras switch to black and white IR at night.
+    attributes are what readers attach on this camera (plate_text and plate_colour once plate reading is on)."""
     from watchful.rules.zonestate import period_of
     names = {z.id: z.name for z in cam.zones}
     examples: dict[str, dict[str, list[str]]] = {}
@@ -283,9 +322,10 @@ def context_for(repo, cam, night_ir: bool = True) -> CompileContext:
             periods = examples.setdefault(names[zone_id], {}).setdefault(state, [])
             if period_of(key) and period_of(key) not in periods:
                 periods.append(period_of(key))
-    return CompileContext(zones={z.name: z.kind for z in cam.zones}, state_examples=examples,
+    places = sorted({z.name for c in repo.list_cameras() for z in c.zones})
+    return CompileContext(zones={z.name: z.kind for z in cam.zones}, state_examples=examples, places=places,
                           people={e.person_id: e.name for e in repo.list_enrollments()},
-                          camera_flags={"night_ir": night_ir},
+                          camera_flags={"night_ir": night_ir, "attributes": list(attributes)},
                           purpose=getattr(cam, "purpose", None))
 
 
@@ -296,6 +336,71 @@ def card(r: CompileResult) -> dict:
             "coverage": [asdict(c) for c in r.coverage], "setup": r.setup, "cannot": [asdict(c) for c in r.cannot]}
 
 
+class Invalid(ValueError):
+    """A watch that would compile but never fire, or break a rule; problems are plain sentences."""
+
+    def __init__(self, problems: list[str]):
+        super().__init__("; ".join(problems))
+        self.problems = problems
+
+
+def _kinds(ctx: CompileContext) -> dict[str, str]:
+    return {**dict.fromkeys(ctx.zones, "area"), **dict.fromkeys(ctx.lines, "line")}
+
+
+def _build(data: dict, text: str, ctx: CompileContext, from_ai: bool = True) -> CompileResult:
+    """Every check code makes on a watch, the same for the AI's reply and for a watch a client sends to be saved.
+    Raises Invalid (or a parse error) for a watch that must be fixed first."""
+    words, names = _words(), ctx.place_names
+    age = mentions_age(text, names)
+    cannot = _cannot(data.get("cannot"))
+    w, removed = (_strip_age(dict(data["watch"]), names) if data.get("watch") else (None, []))
+    if w is None:
+        problem = data.get("problem") or data.get("error")
+        if not cannot and not removed:
+            cannot = [Cannot(text, str(problem or words["fallback_reason"]), words["fallback_alternative"])]
+        cover = [c for c in _coverage(None, data.get("coverage"), ctx) if c.tier == "X"]
+        return CompileResult(None, cover, [], _finish(cannot, text, age, removed, names))
+    subject = w.setdefault("subject", {})
+    subject["classes"] = resolve_classes(subject.get("classes") or ["person"])
+    if any(c.get("signal") == "looks_like" for c in w.get("conditions", [])):
+        subject.pop("looks_like", None)  # the condition already checks appearance
+    watch = Watch.model_validate(w)
+    who = watch.subject.who
+    if who not in ("anyone", "unknown", "known") and who not in ctx.people:
+        raise Invalid([f"who must be anyone, unknown, known or one of {sorted(ctx.people)}, not {who}"])
+    missing = _fix_names(watch, ctx)
+    problems = validate(watch, {**_kinds(ctx), **dict.fromkeys(missing)}) + _contradictions(watch)
+    if problems:
+        raise Invalid(problems)
+    if from_ai and watch.output == "log" and not _asks_to_log(text):
+        watch.output = "alert"  # only words that ask for a log make one; a person saving the card chose it
+        watch.severity = "warning" if watch.severity == "info" else watch.severity
+    if watch.output == "log":
+        watch.severity, watch.repeat = "info", False  # one row each time it becomes true
+    coverage = _coverage(watch, data.get("coverage"), ctx)
+    cannot = _settle_overlaps(coverage, cannot, names)
+    for cov in coverage:
+        if cov.tier == "X" and not any(c.clause == cov.clause for c in cannot):
+            cannot.append(Cannot(cov.clause, cov.caveat or words["fallback_reason"], ""))
+    return CompileResult(watch, coverage, _setup(watch, ctx, missing, data.get("setup")),
+                         _finish(cannot, text, age, removed, names))
+
+
+def check_watch(spec: dict, text: str, ctx: CompileContext, coverage=(), cannot=()) -> CompileResult:
+    """A watch a client sends to be saved (usually the one its card showed), checked again here exactly like the
+    AI's: privacy, catalog, names and kinds, contradictions, output rules; coverage tiers and setup are worked out
+    again rather than trusted. Raises Invalid with plain problems."""
+    if mentions_age(json.dumps(spec), ctx.place_names):
+        raise Invalid(["no watch may be about anyone's age"])
+    try:
+        return _build({"watch": spec, "coverage": list(coverage), "cannot": list(cannot)}, text, ctx, from_ai=False)
+    except Invalid:
+        raise
+    except (ValueError, KeyError, TypeError, ValidationError) as e:
+        raise Invalid([_explain(e)]) from e
+
+
 def compile_watch(text: str, ctx: CompileContext | list[str], llm: LLM,
                   people: dict[str, str] | None = None) -> CompileResult:
     if not isinstance(ctx, CompileContext):
@@ -304,8 +409,8 @@ def compile_watch(text: str, ctx: CompileContext | list[str], llm: LLM,
     system = render("compile", catalog=catalog(), classes=COCO, vocabulary=sorted(vocabulary()), zones=ctx.zones,
                     lines=ctx.lines, state_examples=ctx.state_examples, people=ctx.people,
                     attributes=words["attributes"], camera_flags=ctx.camera_flags, purpose=ctx.purpose or "not set",
-                    presets=describe())
-    age = mentions_age(text)
+                    default_hours=words["default_hours"], presets=describe())
+    mixed = ""  # the last line and area mix up, which becomes the reason if the AI never fixes it
     messages = [Msg("user", text)]
     last, data = "", {}
     for _ in range(ATTEMPTS):
@@ -320,44 +425,17 @@ def compile_watch(text: str, ctx: CompileContext | list[str], llm: LLM,
         except ValueError as e:
             last = _explain(e)
             continue  # a cut off or garbled reply: ask again from the start rather than feeding it back
-        cannot = _cannot(data.get("cannot"))
         try:
-            w, removed = (_strip_age(dict(data["watch"])) if data.get("watch") else (None, []))
-            if w is None:
-                problem = data.get("problem") or data.get("error")
-                if not cannot and not removed:
-                    cannot = [Cannot(text, str(problem or words["fallback_reason"]), words["fallback_alternative"])]
-                cover = [c for c in _coverage(None, data.get("coverage"), ctx) if c.tier == "X"]
-                return CompileResult(None, cover, [], _finish(cannot, text, age, removed))
-            subject = w.setdefault("subject", {})
-            subject["classes"] = resolve_classes(subject.get("classes") or ["person"])
-            if any(c.get("signal") == "looks_like" for c in w.get("conditions", [])):
-                subject.pop("looks_like", None)  # the condition already checks appearance
-            watch = Watch.model_validate(w)
-            who = watch.subject.who
-            if who not in ("anyone", "unknown", "known") and who not in ctx.people:
-                raise ValueError(f"who must be anyone, unknown, known or one of {sorted(ctx.people)}, not {who}")
-            missing = _fix_names(watch, ctx)
-            problems = validate(watch, set(ctx.names) | set(missing)) + _contradictions(watch)
-            if problems:
-                raise ValueError("; ".join(problems))
-            if watch.output == "log" and not _asks_to_log(text):
-                watch.output = "alert"  # only words that ask for a log make one
-                watch.severity = "warning" if watch.severity == "info" else watch.severity
-            if watch.output == "log":
-                watch.severity, watch.repeat = "info", False  # one row each time it becomes true
-            coverage = _coverage(watch, data.get("coverage"), ctx)
-            cannot = _settle_overlaps(coverage, cannot)
-            for cov in coverage:
-                if cov.tier == "X" and not any(c.clause == cov.clause for c in cannot):
-                    cannot.append(Cannot(cov.clause, cov.caveat or words["fallback_reason"], ""))
-            return CompileResult(watch, coverage, _setup(watch, ctx, missing, data.get("setup")),
-                                 _finish(cannot, text, age, removed))
+            return _build(data, text, ctx)
         except (ValueError, KeyError, TypeError, ValidationError) as e:
+            if isinstance(e, Invalid):
+                mixed = next((p for p in e.problems if " not a line" in p or " not an area" in p), mixed)
             last = _explain(e)
             messages = [Msg("user", text), Msg("assistant", raw),
                         Msg("user", f"That watch is not valid: {last}. Reply with fixed JSON.")]
     if last and data:
-        cannot = _finish([Cannot(text, words["fallback_reason"], words["fallback_alternative"])], text, age, [])
+        reason = (mixed[:1].upper() + mixed[1:] + ".") if mixed else words["fallback_reason"]
+        cannot = _finish([Cannot(text, reason, words["fallback_alternative"])], text,
+                         mentions_age(text, ctx.place_names), [], ctx.place_names)
         return CompileResult(None, [], [], cannot)
     return CompileResult(None, error=f"I couldn't turn that into a watch: {last}")

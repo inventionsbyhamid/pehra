@@ -81,7 +81,10 @@ def make_router(ctx) -> APIRouter:
         r = repo(member)
         cam = camera_or_404(r, camera_id)
         manager.stop(cam.id)
+        pictures = [key for _, _, _, key in r.list_state_examples(cam.id)]
         r.delete_camera(cam.id)
+        for key in pictures:
+            ctx.blobs.delete(key)
         ctx.db.audit(member.workspace.id, member.user.id, "camera.delete", {"camera": cam.id, "name": cam.name})
         if cam.kind == "file" and cam.url and Path(cam.url).resolve().is_relative_to(
                 (Path(ctx.settings.data_dir) / "uploads").resolve()):
@@ -107,10 +110,10 @@ def make_router(ctx) -> APIRouter:
         r.update_camera(cam)
         disabled = []
         if body.zones is not None:
-            names = {z.name for z in cam.zones}
+            kinds = {z.name: z.kind for z in cam.zones}
             for row in r.list_watches(cam.id):
                 watch = Watch.model_validate(row.watch)
-                if row.enabled and watch.scope == "camera" and row.camera_id == cam.id and validate(watch, names):
+                if row.enabled and watch.scope == "camera" and row.camera_id == cam.id and validate(watch, kinds):
                     row.enabled = False  # it points at a zone that no longer exists
                     r.update_watch(row)
                     disabled.append(watch.name)
@@ -158,7 +161,7 @@ def make_router(ctx) -> APIRouter:
         if image is None:
             raise HTTPException(400, "That picture can't be read.")
         period = "night" if is_night(image, ctx.tuning.zones) else "day"
-        key = example_key(cam.id, zone_id, period, time.time())
+        key = example_key(member.workspace.id, cam.id, zone_id, period, time.time())
         ctx.blobs.put(key, cv2.imencode(".jpg", image)[1].tobytes(), "image/jpeg")
         example_id = r.add_state_example(cam.id, zone_id, state, key)
         if cam.kind in LIVE_KINDS:
@@ -175,8 +178,15 @@ def make_router(ctx) -> APIRouter:
 
     @router.delete("/api/examples/{example_id}")
     def delete_state_example(example_id: str, member: CurrentMember = Depends(require_role("admin"))):
-        if not repo(member).delete_state_example(example_id):
+        r = repo(member)
+        gone = r.delete_state_example(example_id)
+        if gone is None:
             raise HTTPException(404, "No such picture.")
+        camera_id, key = gone
+        ctx.blobs.delete(key)
+        cam = r.get_camera(camera_id)
+        if cam is not None and cam.kind in LIVE_KINDS:
+            manager.restart(cam.id)  # the zone's state is learned again without that picture
         return {"ok": True}
 
     @router.post("/api/cameras/{camera_id}/scan")

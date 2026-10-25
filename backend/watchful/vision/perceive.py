@@ -29,6 +29,7 @@ class Needs:
     faces: bool = False
     embed: bool = False
     slow: bool = False  # detect every zones.slow_tick_s even when nothing moves, for parked or left things
+    embedder: bool = False  # load the image model for zone pictures, without embedding every person
 
 
 @dataclass

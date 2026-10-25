@@ -1,5 +1,4 @@
 import json
-from dataclasses import dataclass
 
 from watchful.agent.compiler import CompileContext, compile_watch, mentions_age
 from watchful.agent.llm import FakeLLM
@@ -32,10 +31,10 @@ def test_cannot_offers_the_nearest_alternative():
     assert r.error is None and r.cannot
     assert all(c.alternative and not mentions_age(c.alternative) for c in r.cannot)
     assert any(mentions_age(c.clause) for c in r.cannot)
-    if r.watch is not None:
-        text = json.dumps(r.watch.model_dump())
-        assert not mentions_age(text)
-        assert all(c.signal != "looks_like" for c in r.watch.conditions)
+    assert r.watch is not None  # the parts that are not about age stay: someone alone at the pool deck
+    assert [c.signal for c in r.watch.conditions] == ["in_zone", "alone"]
+    assert not mentions_age(json.dumps(r.watch.model_dump()))
+    assert r.watch.name == "Someone alone at the pool" and r.watch.verify == "Is someone alone at the pool?"
     assert not any(mentions_age(c.clause) for c in r.coverage)
 
 
@@ -59,27 +58,30 @@ def test_what_cannot_be_watched_is_never_a_silent_no_op():
     assert r.watch is None and r.cannot and "mood" not in r.cannot[0].alternative
 
 
-def test_site_watch_covers_new_cameras():
+def test_site_watch_covers_new_cameras(tmp_path):
     site = reply({"name": "Camera covered", "scope": "site", "subject": {"classes": []},
                   "conditions": [{"signal": "camera_health", "op": "!=", "value": "live"}],
                   "severity": "warning", "verify": ""})
     r = compile_watch("tell me when any camera is covered or offline", GATE, FakeLLM([site]))
     assert r.watch.scope == "site"
 
-    @dataclass
-    class Row:
-        id: str
-        camera_id: str
-        watch: dict
-        enabled: bool = True
-
+    from watchful.store.db import Camera, SqliteRepository, WatchRow
+    repo = SqliteRepository(tmp_path / "w.db")
+    gate, pool = (repo.add_camera(Camera(None, n, "stream", None)) for n in ("Gate", "Pool"))
     spec = r.watch.model_dump()
-    rows = [Row("wat_site", "cam_gate", spec), Row("wat_pool", "cam_pool", {**spec, "scope": "camera"}),
-            Row("wat_off", "cam_gate", {**spec, "name": "off"}, enabled=False)]
-    assert [i for i, _ in select_watches(rows, "cam_added_later")] == ["wat_site"]
-    assert [i for i, _ in select_watches(rows, "cam_pool")] == ["wat_site", "wat_pool"]
-    rows[0].watch = {**spec, "excluded_cameras": ["cam_pool"]}
-    assert [i for i, _ in select_watches(rows, "cam_pool")] == ["wat_pool"]
+    site_row = repo.add_watch(WatchRow(None, gate.id, "covered", spec))
+    pool_row = repo.add_watch(WatchRow(None, pool.id, "pool only", {**spec, "scope": "camera"}))
+    repo.add_watch(WatchRow(None, gate.id, "off", spec, enabled=False))
+    later = repo.add_camera(Camera(None, "Added later", "stream", None))
+
+    def running(cam):
+        return [i for i, _ in select_watches(repo.list_watches(cam.id), cam.id, cam.zones)[0]]
+
+    assert running(later) == [site_row.id]
+    assert running(pool) == [site_row.id, pool_row.id]
+    site_row.watch = {**spec, "excluded_cameras": [pool.id]}
+    repo.update_watch(site_row)
+    assert running(pool) == [pool_row.id] and running(later) == [site_row.id]
 
 
 def test_coverage_tiers_are_reported():
@@ -197,7 +199,7 @@ def test_watch_card_api_previews_backtests_and_saves(tmp_path):
     app.state.ctx.llm = FakeLLM([still])
     card = c.post(f"/api/cameras/{pool['id']}/watches/preview", json={"text": "someone still in the water"}).json()
     assert card["watch"]["name"] == "Still in the water" and card["coverage"][0]["tier"] == "B"
-    assert card["backtest"]["not_replayed"] == ["still_s"] and card["backtest"]["fires"] == 0
+    assert card["backtest"]["assumed"] == ["still_s"] and card["backtest"]["fires"] == 0
     assert c.get(f"/api/cameras/{pool['id']}/watches").json() == []  # a preview saves nothing
 
     saved = c.post(f"/api/cameras/{pool['id']}/watches", json={"text": "someone still in the water",

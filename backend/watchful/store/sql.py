@@ -231,7 +231,7 @@ class SqlRepository:
         with self.tx() as s:
             if s.scalar(select(m.Camera.id).where(m.Camera.id == camera_id, self._mine(m.Camera))) is None:
                 return
-            for model in (m.Event, m.Alert, m.PersonLabel, m.Zone):
+            for model in (m.Event, m.Alert, m.PersonLabel, m.StateExample, m.Zone):
                 s.execute(delete(model).where(self._mine(model), model.camera_id == camera_id))
             s.execute(delete(m.Watch).where(self._mine(m.Watch), m.Watch.camera_id == camera_id,
                                             m.Watch.scope == "camera"))
@@ -454,10 +454,15 @@ class SqlRepository:
                              .order_by(m.StateExample.created_at, m.StateExample.id)).all()
         return [(i, z, st, key) for i, z, st, key in rows if key]
 
-    def delete_state_example(self, example_id: str) -> bool:
+    def delete_state_example(self, example_id: str) -> tuple[str, str] | None:
+        """The deleted example's (camera id, picture key), or None when this society has no such example."""
         with self.tx() as s:
-            return s.execute(delete(m.StateExample).where(m.StateExample.id == example_id,
-                                                          self._mine(m.StateExample))).rowcount > 0
+            row = s.scalar(select(m.StateExample).where(m.StateExample.id == example_id, self._mine(m.StateExample)))
+            if row is None:
+                return None
+            gone = (row.camera_id, row.picture_key)
+            s.delete(row)
+            return gone
 
 
 def _as_stored(row: WatchRow) -> WatchRow:

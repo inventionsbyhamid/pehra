@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -108,17 +110,20 @@ class SignalTuning(_Section):
     search_top_n: int = 12  # best matches the AI double checks
     search_dedupe_s: float = 10.0  # scene matches closer than this on one camera count once
     search_embed_on_demand: int = 24  # unindexed moments embedded during a search; the rest wait for the indexer
-    alone_distance: float = 3.0  # body heights; anyone of the same class closer than this is company
+    alone_distance: float = 3.0  # mean body heights of the two; anyone of the same class closer is company
+    alone_depth_ratio: float = 1.6  # box heights this far apart are at different depths, so not company
+    alert_cooldown_floor_s: float = 5.0  # an alert watch never fires again for the same thing sooner than this
     stationary_move: float = 0.25  # box heights the centre may wander and still count as staying put
     parked_rejoin_s: float = 60.0  # a new track on a parked spot within this long takes over its clock
     parked_rejoin_iou: float = 0.5
     parked_template_match: float = 0.5  # edge picture correlation that says the parked thing is still there
     still_every_s: float = 0.5
-    still_flow: float = 0.03  # body heights per second of optical flow inside the box under which it is still
+    still_flow: float = 0.04  # body heights a second of own movement under which it is still (swimmers about 0.1)
     still_drift: float = 0.05  # body heights per second the box centre may drift and still be still
-    still_percentile: float = 75  # of the flow inside the box, so moving arms or legs count as movement
-    still_pad: float = 0.25  # share of the box added around it for the flow
-    still_width: int = 96
+    still_percentile: float = 75  # of the own movement inside the box, so moving arms or legs count
+    still_pad: float = 0.5  # share of the box added around it: the ring whose flow is the water or ground
+    still_width: int = 160  # crops are resized to this before the flow; small crops blur body and water together
+    still_preset: Literal["ultrafast", "fast", "medium"] = "medium"  # DIS; medium about 8 ms a look on the dev box
     still_gap_s: float = 3.0  # a longer gap between checks starts the still clock again
     vanish_hold_s: float = 30.0  # seconds out of sight before a vanish counts, unless the watch says
     vanish_hold_by_kind: dict[str, float] = {"water": 15.0}
@@ -130,6 +135,8 @@ class ZoneTuning(_Section):
     slow_tick_s: float = Field(5.0, ge=2, le=10)  # zone checks that run even when nothing moves
     line_hysteresis: float = 0.1  # share of the box height a foot point must clear a line by to change side
     line_extend: float = 0.1  # share of a line's length a crossing may land beyond either end
+    line_max_jump: float = 0.5  # box sizes; a bigger jump onto where another track just stood is an id swap
+    line_swap_near: float = 0.5  # box sizes from another track's last foot point that counts as its spot
     state_size: int = 64  # zone pictures are compared at this size
     state_pre_blur: float = 1.0  # before CLAHE, so it does not lift sensor noise into edges
     state_blur: float = 2.0  # after, so a gate a few pixels off still matches
@@ -138,6 +145,8 @@ class ZoneTuning(_Section):
     state_edge_weight: float = 0.5  # edge picture against the image model, when there is one
     state_margin: float = 0.05  # how much nearer one state's examples must be than the next state's
     state_min_score: float = 0.3
+    state_unsure_checks: int = 3  # this many unsure looks in a row and the state is unknown
+    state_max_age_s: float = 120.0  # a state not confirmed for this long is unknown
     night_saturation: float = 20  # mean saturation of a small copy under which a picture is night (IR)
     night_probe_width: int = 32
 
@@ -149,6 +158,7 @@ class BacktestTuning(_Section):
     min_page_s: float = 60.0
     max_examples: int = 5
     max_track_s: float = 3600.0  # a track with no end in the index is closed after this
+    max_seconds: float = 10.0  # a backtest stops after this much work and says how far it got
 
 
 class PerceiveTuning(_Section):

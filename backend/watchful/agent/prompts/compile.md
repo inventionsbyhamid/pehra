@@ -59,8 +59,9 @@ Output, severity and scope:
 * scope "site" when the request says any camera, every camera, all cameras, anywhere or everywhere; otherwise
   "camera".
 
-Times: "after 10 PM" or "at night" means from that hour until 06:00; "during the day" means 08:00 to 18:00;
-"after pool hours" means 20:00 to 06:00 unless the request gives hours (add a setup task naming the hours used).
+Times: "after 10 PM" or "at night" means from that hour until 06:00; "during the day" means 08:00 to 18:00.
+Opening hours to assume when the request names a place but gives no hours: {{default_hours}}. "After hours" is
+outside them; add a setup task naming the hours used.
 
 coverage: one entry per part of the request: {"clause": the words from the request, "signal": the building
 block that watches it, "tier": "A", "B", "C" or "X", "caveat": a short plain limit or ""}. A: zones, lines,

@@ -52,6 +52,9 @@ def _norm(v) -> str:
 
 
 def compare(value, op: str, target) -> bool:
+    """Unknown (nothing read yet, no examples, camera not live) fails every comparison, even != and in."""
+    if isinstance(value, str) and _norm(value) == "unknown":
+        return False
     if op in ("==", "is"):
         return _norm(value) == _norm(target) if isinstance(target, str) else value == target
     if op == "!=":
@@ -68,17 +71,37 @@ def compare(value, op: str, target) -> bool:
     return v >= t if op == ">=" else v <= t
 
 
-def validate(w: Watch, zone_names: set[str]) -> list[str]:
-    """Lines are zones of kind line, so a line name counts as a zone name here."""
+def kind_problem(name: str, kind: str | None, want_line: bool) -> str | None:
+    """Lines go only in crossed, areas everywhere else; a mix up would compile and never fire."""
+    if kind is None or (kind == "line") == want_line:
+        return None
+    if want_line:
+        return f"{name} is an area, not a line, so nothing can cross it; crossed needs a drawn line"
+    return f"{name} is a line, not an area, so nothing can be inside it; only crossed can use a line"
+
+
+def validate(w: Watch, zones: set[str] | dict[str, str | None]) -> list[str]:
+    """zones are the drawn names, or names to kinds; with kinds, a line used as an area (or the other way) is a
+    problem too. Lines are zones of kind line."""
+    kinds = zones if isinstance(zones, dict) else dict.fromkeys(zones)
     problems = []
+
+    def check(name: str, want_line: bool, unknown: str) -> None:
+        if name not in kinds:
+            problems.append(f"{unknown}: {name}")
+        elif p := kind_problem(name, kinds[name], want_line):
+            problems.append(p)
+
     for c in w.conditions:
         if c.signal not in REGISTRY:
             problems.append(f"unknown signal: {c.signal}")
-        problems += [f"unknown zone: {z}" for z in c.zones if z not in zone_names]
-        line = c.params.get("line")
-        if line and line not in zone_names:
-            problems.append(f"unknown line: {line}")
-    problems += [f"unknown zone: {z}" for z in w.zones if z not in zone_names]
+        crossing = c.signal == "crossed"
+        for z in c.zones:
+            check(z, crossing, "unknown line" if crossing else "unknown zone")
+        if c.params.get("line"):
+            check(str(c.params["line"]), True, "unknown line")
+    for z in w.zones:
+        check(z, False, "unknown zone")
     problems += [f"unknown class: {c}" for c in w.subject.classes if c not in COCO]
     return problems
 
@@ -100,6 +123,7 @@ def needs_for(watches: list[Watch]) -> Needs:
                 needs.faces |= "faces" in spec.needs
                 needs.embed |= "embed" in spec.needs
                 needs.slow |= "slow" in spec.needs
+                needs.embedder |= "embedder" in spec.needs
     return needs
 
 
@@ -123,9 +147,9 @@ class _Parked:
 class RuleEngine:
     def __init__(self, watches: list[tuple[str, Watch]], zones: list[Zone], tuning: Tuning, tz: str,
                  camera_kind: str = "stream", embedder=None, states=None):
-        names = {z.name for z in zones}
+        kinds = {z.name: z.kind for z in zones}
         for _, w in watches:
-            problems = validate(w, names)
+            problems = validate(w, kinds)
             if problems:
                 raise ValueError(f"{w.name}: " + "; ".join(problems))
         self.watches, self.tuning, self.tz, self.kind = watches, tuning, tz, camera_kind
@@ -140,6 +164,7 @@ class RuleEngine:
         self.health = "live"
         self.parked: list[_Parked] = []
         self.watch_stationary = any(c.signal == "stationary_s" for _, w in watches for c in w.conditions)
+        self.shared: dict = {"zone_state": {}}  # per camera, shared by every watch: zone states, the flow tool
         self._last_slow = float("-inf")
 
     def on_tick(self, camera_id: str, tick: Tick, now: float, image=None) -> list[Candidate]:
@@ -158,7 +183,7 @@ class RuleEngine:
             state = self.state.setdefault(wid, {})
             ctx = SignalContext(camera_id, self.zones, tick, self.tuning.signals, self.history, self.sightings,
                                 subjects, self.embedder, image, state, self.tuning.appearance.same, slow,
-                                self.health, self.states, list(w.subject.classes))
+                                self.health, self.states, list(w.subject.classes), self.shared)
             holds = state.setdefault("_holds", {})
             scene = [self._eval(ctx, holds, i, c, None) for i, c in enumerate(w.conditions)
                      if REGISTRY[c.signal].level == "scene"]
@@ -285,7 +310,8 @@ class RuleEngine:
             self.armed[key] = True
             return False
         last = self.last_fired.get(key)
-        cooled = last is None or ts - last >= w.cooldown_s
+        cooldown = w.cooldown_s if w.output == "log" else max(w.cooldown_s, self.tuning.signals.alert_cooldown_floor_s)
+        cooled = last is None or ts - last >= cooldown
         if not cooled or not (self.armed.get(key, True) or w.repeat):
             return False
         self.armed[key] = False
