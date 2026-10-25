@@ -15,6 +15,13 @@ export interface Me {
   timezone: string;
 }
 
+export interface Invite {
+  society: string;
+  invited_by: string | null;
+  role: string;
+  expires_at: string;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -63,6 +70,7 @@ export const api = {
   providers: () => get<{ providers: { name: string; label: string }[] }>("/api/auth/providers"),
   createSociety: (name: string, timezone: string) =>
     post<{ workspace: Society; role: string }>("/api/workspaces", { name, timezone }),
+  invite: (token: string) => get<Invite>(`/api/invites/${encodeURIComponent(token)}`),
   acceptInvite: (token: string) => post<{ workspace: Society; role: string }>("/api/invites/accept", { token }),
   logout: () => fetch("/auth/logout", { method: "POST", credentials: "same-origin" }),
 

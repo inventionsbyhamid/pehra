@@ -7,8 +7,8 @@ import { expect, type Page } from "@playwright/test";
 const CMD = process.env.SIGNIN_LINK_CMD
   ?? "python -m watchful.auth signin-link judge@example.com --workspace-id default";
 
-export async function signIn(page: Page) {
-  const url = execSync(CMD, { encoding: "utf8" }).trim().split("\n").pop()!;
+export async function signIn(page: Page, cmd: string = CMD) {
+  const url = execSync(cmd, { encoding: "utf8" }).trim().split("\n").pop()!;
   await page.goto(new URL(url).pathname);
   await page.getByRole("button", { name: /^Sign in to / }).click();
   await expect(page.getByRole("heading", { name: "Cameras", level: 1 })).toBeVisible();

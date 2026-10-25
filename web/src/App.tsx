@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, whenSignedOut } from "./api";
 import { setTimeZone } from "./format";
 import { Shell } from "./components/Shell";
@@ -44,6 +44,7 @@ function Workspace() {
   const [society, setSociety] = useState<boolean>(false);
   const [checked, setChecked] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
 
   function load() {
     api.me()
@@ -69,7 +70,7 @@ function Workspace() {
 
   if (location.pathname.startsWith("/join/")) {
     const token = location.pathname.slice("/join/".length);
-    return <SessionContext.Provider value={{ user, setUser }}><Join token={token} onDone={() => { history.replaceState(null, "", "/app"); load(); }} /></SessionContext.Provider>;
+    return <SessionContext.Provider value={{ user, setUser }}><Join token={token} onDone={() => { navigate("/app", { replace: true }); load(); }} /></SessionContext.Provider>;
   }
 
   if (!society) return <SessionContext.Provider value={{ user, setUser }}><Welcome onDone={load} /></SessionContext.Provider>;

@@ -2,6 +2,7 @@
 (adapted from packsure e97a509)."""
 import base64
 import hashlib
+import json
 import time
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
@@ -275,7 +276,10 @@ def test_invite_link_works_once(env):
 
     meena = browser(env.app)
     sign_in(env, meena, "g-2", "meena@example.com")
-    assert meena.get(f"/api/invites/{token}").json()["society"] == "Green Park"
+    shown = meena.get(f"/api/invites/{token}").json()  # what the join page shows before a click
+    assert set(shown) == {"society", "invited_by", "role", "expires_at"}
+    assert (shown["society"], shown["invited_by"], shown["role"]) == ("Green Park", "Asha", "supervisor")
+    assert ws not in json.dumps(shown) and meena.get("/api/me").json()["workspace"] is None  # looking joins nothing
     joined = meena.post("/api/invites/accept", json={"token": token})
     assert joined.status_code == 200 and joined.json()["workspace"]["id"] == ws
     assert meena.get("/api/me").json()["role"] == "supervisor"

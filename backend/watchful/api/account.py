@@ -425,10 +425,13 @@ def make_router(ctx) -> APIRouter:
 
     @router.get("/api/invites/{token}")
     def invite_info(token: str):
+        """What the join page shows before anyone accepts: the society, who invited and the role; nothing else."""
         invite = load_invite(token)
         with ctx.db.tx() as s:
             society = s.scalar(select(m.Workspace.name).where(m.Workspace.id == invite.workspace_id))
-        return {"society": society, "role": invite.role, "expires_at": iso(invite.expires_at)}
+            inviter = s.get(m.User, invite.created_by) if invite.created_by else None
+        return {"society": society, "invited_by": inviter and (inviter.name or inviter.email), "role": invite.role,
+                "expires_at": iso(invite.expires_at)}
 
     @router.post("/api/invites/accept")
     def accept_invite(body: TokenIn, response: Response, user: m.User = Depends(current_user)):
