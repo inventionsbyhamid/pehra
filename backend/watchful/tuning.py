@@ -193,6 +193,47 @@ class ClipTuning(_Section):
     preset: str = "veryfast"
 
 
+class AlertTuning(_Section):
+    group_s: float = 600.0  # a trigger this soon after the last one on the same camera and watch joins its incident
+    escalate_min: float = 2.0  # an unacknowledged critical incident is posted again after this many minutes
+    escalate_times: int = 3  # and at most this many times
+    edit_every_s: float = 10.0  # a count change edits a Telegram message at most this often; a status change at once
+    chat_per_min: int = 18  # Telegram allows about 20 messages a minute in a group
+    chat_gap_s: float = 1.0  # and about one a second in one chat
+    code_minutes: float = 30.0  # a Telegram connect code works this long, once
+    code_length: int = 8
+    summary_hour: int = 9  # the daily summary, in the society's time zone
+    summary_late_h: float = 3.0  # a worker that was down at summary_hour still sends it this many hours late, no later
+    faces_refresh_s: float = 60.0  # enrolled faces used for blurring are read again this often
+    http_timeout_s: float = 15.0
+
+
+class CropTuning(_Section):
+    margin: float = 0.6  # share of the box's width and height added on each side of a still
+    max_side: int = 960
+    detect_side: int = 640  # stills smaller than this are enlarged for the face detector, so small faces are found
+    face_score: float = 0.5  # lower than enrolment's, so in doubt a face is blurred
+    face_grow: float = 0.35  # share of a face box added around it before blurring
+    blur_cells: int = 6  # a face is pixelated to this many cells across, then smoothed
+    head_share: float = 0.3  # top share of a person box blurred when no face is found in it
+    jpeg_quality: int = 85
+
+
+class JobTuning(_Section):
+    lease_s: float = 300.0
+    urgent_lease_s: float = 30.0  # an urgent job (a Telegram send) left by a stopped worker runs again this soon
+    max_attempts: int = 5
+    retry_in_s: float = 60.0
+    idle_s: float = 1.0
+    urgent_idle_s: float = 0.2
+    error_wait_s: float = 5.0
+    daily_check_s: float = 600.0
+    periodic_s: float = 60.0  # how often a running worker queues timed jobs, such as the 9 AM summaries
+    worker_alive_s: float = 60.0  # a worker that has not beaten for this long is taken as stopped
+    heartbeat_s: float = 60.0  # worker_up is put this often
+    keep_done_days: float = 7.0  # finished jobs are deleted after this many days
+
+
 class PlateTuning(_Section):
     max_crops: int = 5
     detect_side: int = 640  # LPD-YuNet input, longest side, rounded to 64
@@ -266,6 +307,9 @@ class Tuning(_Section):
     perceive: PerceiveTuning = PerceiveTuning()
     scan: ScanTuning = ScanTuning()
     clips: ClipTuning = ClipTuning()
+    alerts: AlertTuning = AlertTuning()
+    crops: CropTuning = CropTuning()
+    jobs: JobTuning = JobTuning()
     evidence: EvidenceTuning = EvidenceTuning()
     plates: PlateTuning = PlateTuning()
     zones: ZoneTuning = ZoneTuning()

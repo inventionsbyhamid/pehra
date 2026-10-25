@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     scan_overlap_s: float = 2.0
     ai_parallel: int = 6
 
+    # alerts: the channel incidents go to (alerts/telegram.py); without TELEGRAM_BOT_TOKEN the log channel stands in
+    alert_channel: str = "telegram"
+    telegram_bot_token: str | None = None  # from BotFather; never logged
+    telegram_webhook_secret: str | None = None  # Telegram sends it back with every update
+    telegram_api_url: str = "https://api.telegram.org"
+    run_jobs_in_app: bool = True  # false where systemd runs the job worker on its own (AWS)
+
     openrouter_api_key: str | None = None
     openrouter_model: str = "deepseek/deepseek-v4.1-flash"
     # optional per task models, so compiling, checking and answering can use different models

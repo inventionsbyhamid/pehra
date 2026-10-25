@@ -44,3 +44,24 @@ class CloudWatchMetrics:
             points, self.buffer = self.buffer, []
         for i in range(0, len(points), 20):
             self.cw.put_metric_data(Namespace=self.namespace, MetricData=points[i:i + 20])
+
+
+def start_heartbeat(metrics, name: str, every_s: float = 60.0,
+                    stop: threading.Event | None = None) -> threading.Thread:
+    """Puts `name` = 1 (no dimensions) every `every_s` seconds from a daemon thread until `stop` is set, so an alarm
+    on missing points can tell that the process stopped."""
+    stop = stop or threading.Event()
+
+    def beat():
+        while True:
+            try:
+                metrics.put(name, 1, unit="Count")
+                metrics.flush()
+            except Exception:
+                log.exception("the %s heartbeat failed", name)
+            if stop.wait(every_s):
+                return
+
+    thread = threading.Thread(target=beat, name=f"heartbeat-{name}", daemon=True)
+    thread.start()
+    return thread

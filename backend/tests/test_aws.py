@@ -138,8 +138,8 @@ NAMESPACE = "Watchful"
 MODEL = "anthropic.claude-haiku-5-5"
 # metrics the alarms read that the app does not put yet, with what will put them; a strict xfail below fails the
 # moment one appears in the code, so its entry is removed and the main check covers it
-PENDING_METRICS = {"worker_up": "the job worker's heartbeat", "camera_workers_down": "the camera pool's supervisor"}
-PENDING_MODULES = {"watchful.worker": "the job worker that deploy/systemd/watchful-worker.service runs"}
+PENDING_METRICS = {"camera_workers_down": "the camera pool's supervisor"}
+PENDING_MODULES: dict[str, str] = {}
 
 
 @pytest.fixture
@@ -996,7 +996,7 @@ def test_deploy_files_agree():
     assert "reverse_proxy 127.0.0.1:8000" in (DEPLOY / "Caddyfile").read_text()
     worker = re.search(r"^ExecStart=(.*)$", units["watchful-worker"], re.M).group(1).split()
     assert worker == ["@PYTHON@", "@APP@/current/deploy/ssm_env.py", "--", "@PYTHON@", "-m", "watchful.worker"]
-    assert set(PENDING_MODULES) <= {"watchful.worker"}
+    assert importlib.util.find_spec("watchful.worker") is not None
     assert "RUN_JOBS_IN_APP=false" in setup  # the worker unit is the only job worker
 
     data = re.search(r"^DATA=(\S+)", setup, re.M).group(1)
