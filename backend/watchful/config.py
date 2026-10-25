@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # each of these names a registered component (see watchful/registry.py and components.py)
     storage: str = "local"
-    db: str = "sqlite"
+    db: str = "sql"  # SQLAlchemy; DATABASE_URL's scheme picks SQLite or PostgreSQL
     ai_provider: str = "openrouter"
     metrics: str = "log"
     notify: str = "log"
@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     embedder: str = "siglip2_b32"
 
     data_dir: Path = Path("data")
+    database_url: str | None = None  # default sqlite:///{data_dir}/watchful.db, see `database`
+    data_key: str | None = None  # encrypts camera addresses at rest; SESSION_SECRET when unset
     web_dist: Path | None = None  # the built web app; defaults to web/dist in the repo
     models_dir: Path = Path("models")
     analysis_fps: float = 5.0
@@ -55,7 +57,6 @@ class Settings(BaseSettings):
     bedrock_model: str | None = None
     aws_region: str = "us-east-1"
     s3_bucket: str | None = None
-    ddb_table_prefix: str = "watchful"
     sns_topic_arn: str | None = None
 
     demo_user: str = "judge"
@@ -66,6 +67,10 @@ class Settings(BaseSettings):
     retention_days: int = 7
     max_upload_mb: int = 200
     max_upload_minutes: int = 10
+
+    @property
+    def database(self) -> str:
+        return self.database_url or f"sqlite:///{self.data_dir / 'watchful.db'}"
 
 
 @lru_cache

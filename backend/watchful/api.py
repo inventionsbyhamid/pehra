@@ -28,7 +28,7 @@ from watchful.rules.engine import validate
 from watchful.rules.presets import describe, preset
 from watchful.rules.watch import SameAs, Watch
 from watchful.search import SearchQuery, search
-from watchful.store.db import Camera, WatchRow, new_id
+from watchful.store.db import DEFAULT_WORKSPACE, Camera, WatchRow, new_id
 from watchful.tuning import load_tuning
 from watchful.vision.faces import ConsentRequired, Enrollment, NoFaceFound
 from watchful.vision.scan import cut_clip
@@ -48,7 +48,7 @@ class State:
     def __init__(self, settings: Settings, llm=None, manager=None):
         self.settings = settings
         self.tuning = load_tuning(settings.tuning_file)
-        self.repo = make_repo(settings)
+        self.repo = make_repo(settings, DEFAULT_WORKSPACE)  # one society until sign in brings real ones
         self.blobs = make_blobs(settings)
         self.compile_llm = llm or make_llm(settings, self.repo, "compile")
         self.ask_llm = llm or make_llm(settings, self.repo, "ask")

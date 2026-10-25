@@ -97,7 +97,7 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
     cv2.setNumThreads(settings.camera_threads)  # leave the cores to scans and other cameras
     base = Tuning.model_validate_json(tuning_json)
     tuning = load_tuning(None, camera.tuning) if camera.tuning else base
-    repo, blobs = make_repo(settings), make_blobs(settings)
+    repo, blobs = make_repo(settings, camera.workspace_id), make_blobs(settings)
     needs = needs_for([w for _, w in watches]) if watches else Needs(classes={"person"})
     faces = None
     if needs.faces and enrollments:

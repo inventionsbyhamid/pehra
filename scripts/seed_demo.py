@@ -12,13 +12,13 @@ from watchful.components import make_repo  # noqa: E402
 from watchful.config import get_settings  # noqa: E402
 from watchful.rules.presets import preset  # noqa: E402
 from watchful.rules.watch import Watch  # noqa: E402
-from watchful.store.db import Camera, WatchRow, new_id  # noqa: E402
+from watchful.store.db import DEFAULT_WORKSPACE, Camera, WatchRow, new_id  # noqa: E402
 from watchful.vision.zones import Zone  # noqa: E402
 
 
 def main(spec_path: str = "deploy/demo.json") -> None:
     spec = json.loads(Path(spec_path).read_text())
-    repo = make_repo(get_settings())
+    repo = make_repo(get_settings(), DEFAULT_WORKSPACE)
     for cam in repo.list_cameras():
         if cam.kind == "demo":
             cam.enabled = False

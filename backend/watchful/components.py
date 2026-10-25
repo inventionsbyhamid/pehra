@@ -1,4 +1,6 @@
 """Builds the parts the settings name. Swap a model or a service by changing a setting."""
+import threading
+
 from watchful.config import Settings
 from watchful.registry import build
 from watchful.tuning import Tuning
@@ -10,9 +12,8 @@ def load_all() -> None:
     import watchful.metrics  # noqa: F401
     import watchful.notify  # noqa: F401
     import watchful.store.blobs  # noqa: F401
-    import watchful.store.db  # noqa: F401
-    import watchful.store.dynamo  # noqa: F401
     import watchful.store.s3  # noqa: F401
+    import watchful.store.sql  # noqa: F401
     import watchful.vision.detect  # noqa: F401
     import watchful.vision.embed  # noqa: F401
     import watchful.vision.faces  # noqa: F401
@@ -59,9 +60,34 @@ def make_blobs(settings: Settings):
     return build("blobs", settings.storage, data_dir=settings.data_dir, settings=settings)
 
 
-def make_repo(settings: Settings):
+_engines: dict[str, object] = {}
+_engines_lock = threading.Lock()
+
+
+def make_engine(settings: Settings):
+    """One engine per database per process, its schema brought up to date by Alembic on first use."""
+    from watchful.db.legacy import adopt_legacy
+    from watchful.db.session import make_engine as engine_for, migrate
+    url = settings.database
+    with _engines_lock:
+        if url not in _engines:
+            adopt_legacy(url, settings.data_key or settings.session_secret)
+            engine = engine_for(url)
+            migrate(engine)
+            _engines[url] = engine
+        return _engines[url]
+
+
+def make_repo(settings: Settings, workspace_id: str | None = None):
+    """The repository of one society. Until sign in brings real societies, the demo's single society is used."""
+    from watchful.store.db import DEFAULT_WORKSPACE
+    from watchful.store.sql import ensure_workspace
     load_all()
-    return build("repo", settings.db, path=settings.data_dir / "watchful.db", settings=settings)
+    engine = make_engine(settings)
+    if workspace_id is None or workspace_id == DEFAULT_WORKSPACE:
+        workspace_id = DEFAULT_WORKSPACE
+        ensure_workspace(engine, DEFAULT_WORKSPACE)
+    return build("repo", settings.db, engine=engine, workspace_id=workspace_id, settings=settings)
 
 
 def make_metrics(settings: Settings):

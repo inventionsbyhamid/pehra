@@ -59,7 +59,6 @@ Built for the OpenCV AI Competition 2026, powered by AWS. MIT licensed.
 | --- | --- |
 | EC2 Graviton4 (COOL AMI when available) | API, camera workers and parallel scans |
 | S3 | Clips, keyframes and enrolment photos; the retention job deletes clips and pictures after 7 days (enrolment photos stay until the person is removed) |
-| DynamoDB | Cameras, events, watches, alerts, enrolments (tables created on first use) |
 | CloudWatch | Frames per second, ms per frame, frames skipped, detector runs, AI calls, alerts, scan speed |
 | SNS | Email to a caregiver when a person approves a serious alert, at most one per 10 minutes |
 | Bedrock | Optional AI provider for the agent (`AI_PROVIDER=bedrock`) |
@@ -76,7 +75,8 @@ Every part is registered by name and picked by a setting (`backend/watchful/regi
 | `POSE_MODEL`, `FACE_MODEL`, `EMBEDDER` | `mediapipe`, `yunet_sface`, `siglip2` |
 | `AI_PROVIDER`, `OPENROUTER_MODEL`, `BEDROCK_MODEL` | `openrouter` or `bedrock`, any model id |
 | `AI_MODEL_COMPILE`, `AI_MODEL_VERIFY`, `AI_MODEL_ASK` | a different model per task |
-| `STORAGE`, `DB`, `METRICS`, `NOTIFY` | `local`/`s3`, `sqlite`/`dynamodb`, `log`/`cloudwatch`, `log`/`sns` |
+| `STORAGE`, `METRICS`, `NOTIFY` | `local`/`s3`, `log`/`cloudwatch`, `log`/`sns` |
+| `DATABASE_URL` | SQLite (default `sqlite:///data/watchful.db`) or PostgreSQL; the schema comes from Alembic (`backend/migrations`) |
 | `DNN_ENGINE` | `auto`, `new`, `classic` |
 
 Thresholds live in one typed config, `backend/watchful/tuning.py`, overridable with a JSON file (`TUNING_FILE`)

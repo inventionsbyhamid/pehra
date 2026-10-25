@@ -7,15 +7,25 @@ import pytest
 from watchful.ingest.clips import ClipRecorder
 from watchful.ingest.sources import Frame
 from watchful.store.blobs import LocalBlobStore
-from watchful.store.db import AlertRow, Camera, EventRow, SqliteRepository, WatchRow
+from alembic.autogenerate import compare_metadata
+from alembic.migration import MigrationContext
+from sqlalchemy import select, text
+
+from watchful.db import models as m
+from watchful.db.session import make_engine, migrate
+from watchful.store.db import DEFAULT_WORKSPACE, AlertRow, Camera, EventRow, WatchRow
+from watchful.store.sql import SqlRepository, ensure_workspace
 from watchful.tuning import ClipTuning
 from watchful.vision.faces import Enrollment
 from watchful.vision.zones import Zone
 
 
-@pytest.fixture
-def repo(tmp_path):
-    return SqliteRepository(tmp_path / "w.db")
+@pytest.fixture(params=["sqlite_file", "sqlite_memory"])
+def repo(request, tmp_path):
+    engine = make_engine(f"sqlite:///{tmp_path / 'w.db'}" if request.param == "sqlite_file" else "sqlite://")
+    migrate(engine)
+    ensure_workspace(engine, DEFAULT_WORKSPACE)
+    return SqlRepository(engine, DEFAULT_WORKSPACE, secret="a test secret")
 
 
 def event(cam, ts, zone="kitchen", kind="enter", cls="person"):
@@ -62,6 +72,51 @@ def test_enrollments_and_ai_calls(repo):
     repo.record_ai_call()
     repo.record_ai_call()
     assert repo.count_ai_calls_today() == 2
+
+
+def test_watch_columns_follow_the_spec(repo):
+    cam = repo.add_camera(Camera(None, "Pool", "stream", "rtsp://x"))
+    w = repo.add_watch(WatchRow(None, cam.id, "still in the water", {"name": "x", "severity": "critical"}))
+    assert w.severity == "critical" and repo.list_watches(cam.id)[0].severity == "critical"
+    site = repo.add_watch(WatchRow(None, None, "after hours", {"name": "y"}, scope="site",
+                                   excluded_cameras=[cam.id]))
+    other = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://y"))
+    assert [x.id for x in repo.list_watches(other.id)] == [site.id]
+    assert [x.id for x in repo.list_watches(cam.id)] == [w.id]
+
+
+def test_camera_fields_round_trip(repo):
+    cam = repo.add_camera(Camera(None, "Laptop", "webcam", None, purpose="lobby", last_frame_at=1000.5))
+    demo = repo.add_camera(Camera(None, "Plaza", "demo", "/clips/plaza.mp4", [Zone("z1", "door", [(0, 0), (1, 1)])]))
+    got = {c.id: c for c in repo.list_cameras()}
+    assert got[cam.id].kind == "webcam" and got[cam.id].purpose == "lobby" and got[cam.id].last_frame_at == 1000.5
+    assert got[demo.id].kind == "demo" and got[demo.id].url == "/clips/plaza.mp4"
+    demo.zones = [Zone("z2", "gate", [(0, 0), (0.5, 0.5)]), Zone("z1", "door", [(0, 0), (1, 0.5)])]
+    repo.update_camera(demo)
+    assert [(z.id, z.polygon[1]) for z in repo.get_camera(demo.id).zones] == [("z2", (0.5, 0.5)), ("z1", (1, 0.5))]
+    repo.delete_camera(demo.id)
+    assert repo.get_camera(demo.id) is None and [c.id for c in repo.list_cameras()] == [cam.id]
+
+
+def test_camera_addresses_are_stored_encrypted(tmp_path):
+    engine = make_engine(f"sqlite:///{tmp_path / 'w.db'}")
+    migrate(engine)
+    ensure_workspace(engine, DEFAULT_WORKSPACE)
+    repo = SqlRepository(engine, DEFAULT_WORKSPACE, secret="one key")
+    cam = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://admin:hunter2@10.0.0.5/ch1"))
+    with engine.connect() as c:
+        stored = c.execute(select(m.Camera.url_enc)).scalar()
+    assert "hunter2" not in stored and repo.get_camera(cam.id).url == "rtsp://admin:hunter2@10.0.0.5/ch1"
+    assert SqlRepository(engine, DEFAULT_WORKSPACE, secret="another key").get_camera(cam.id).url is None
+
+
+def test_migrations_match_the_models(tmp_path):
+    engine = make_engine(f"sqlite:///{tmp_path / 'w.db'}")
+    migrate(engine)
+    with engine.connect() as c:
+        assert compare_metadata(MigrationContext.configure(c), m.Base.metadata) == []
+        assert c.execute(text("pragma foreign_keys")).scalar() == 1
+        assert c.execute(text("pragma journal_mode")).scalar() == "wal"
 
 
 def test_blobs(tmp_path):

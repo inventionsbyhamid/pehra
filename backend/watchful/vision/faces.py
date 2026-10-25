@@ -25,6 +25,7 @@ class Enrollment:
     feature: list[float]
     consent_ts: float = field(default_factory=time.time)
     thumbnail_key: str | None = None
+    workspace_id: str = "default"  # store.db.DEFAULT_WORKSPACE
 
 
 @dataclass

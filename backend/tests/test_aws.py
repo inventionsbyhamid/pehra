@@ -26,12 +26,12 @@ def aws(monkeypatch):
 
 def settings(tmp_path, **kw):
     return Settings(demo_password="x", session_secret="y", data_dir=tmp_path, aws_region=REGION,
-                    s3_bucket="wf-test", ddb_table_prefix="wft", _env_file=None, **kw)
+                    s3_bucket="wf-test", _env_file=None, **kw)
 
 
-@pytest.fixture(params=["sqlite", "dynamodb"])
-def repo(request, tmp_path, aws):
-    return make_repo(settings(tmp_path, db=request.param))
+@pytest.fixture
+def repo(tmp_path, aws):
+    return make_repo(settings(tmp_path))
 
 
 def ev(cam, ts, zone="kitchen", kind="enter"):
