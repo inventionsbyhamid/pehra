@@ -112,7 +112,9 @@ def test_closed_live_view_is_released_quickly(server, monkeypatch):
     assert released == [cam["id"]]
 
 
-def test_push_only_for_webcams_and_stops_when_closed(server, monkeypatch):
+def test_push_only_for_webcams_and_keeps_running_when_closed(server, monkeypatch):
+    """A camera that sends its own pictures keeps running when its sender leaves, so with no pictures it goes
+    offline (health.py) instead of quietly stopping."""
     from websockets.exceptions import ConnectionClosed
     c, cookie = _signed_in(server)
     stream = c.post("/api/cameras", json={"name": "Gate", "kind": "stream", "url": "rtsp://x"}).json()
@@ -128,8 +130,5 @@ def test_push_only_for_webcams_and_stops_when_closed(server, monkeypatch):
     cam = c.post("/api/cameras", json={"name": "Desk", "kind": "webcam"}).json()
     with connect(f"ws://{server}/ws/cameras/{cam['id']}/push", additional_headers={"Cookie": cookie}) as ws:
         ws.send(b"\xff\xd8")
-    for _ in range(20):
-        if stopped:
-            break
-        time.sleep(0.1)
-    assert stopped == [cam["id"]]
+    time.sleep(1)
+    assert stopped == []

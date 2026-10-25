@@ -191,6 +191,9 @@ class ClipTuning(_Section):
     after_s: float = 5.0
     crf: int = 28
     preset: str = "veryfast"
+    threads: int = 1  # x264 threads per clip; on a many core host its default takes about 170 MB a clip
+    writers: int = 2  # clips a camera process encodes at once; the rest wait as JPEGs
+    nice: int = 10  # clips encode at a lower priority than the analysis, which must keep its frame rate
 
 
 class AlertTuning(_Section):
@@ -322,6 +325,23 @@ class PushTuning(_Section):
     face_failures: int = 3  # the page stops, saying why, after this many frames in a row it could not blur
 
 
+class HealthTuning(_Section):
+    offline_s: float = 30.0  # no picture for this long and the camera is offline
+    start_s: float = 60.0  # a camera is not judged until its process reports it, for at most this long
+    check_every_s: float = 1.0
+    seen_every_s: float = 30.0  # a running camera's last picture time is written to the database this often
+
+
+class ResourcesTuning(_Section):
+    # RSS of the app, its camera and scan processes and the job worker together, which deploy/check_memory.py checks:
+    # c8g.large has 4 GiB, the rest is for the OS, Caddy and Litestream
+    memory_budget_mb: int = 3072
+    latency_window: int = 300  # analysed frames per camera behind its latency percentiles
+    restart_max_s: float = 300.0  # longest wait before a dead camera process is started again
+    text_tower_idle_s: float = 300.0  # the app drops the image model's text tower (about 1.5 GB) after this long unused
+    report_every_s: float = 1.0  # camera status to the app
+
+
 class Tuning(_Section):
     motion: MotionTuning = MotionTuning()
     detect: DetectTuning = DetectTuning()
@@ -346,6 +366,8 @@ class Tuning(_Section):
     auth: AuthTuning = AuthTuning()
     limits: LimitsTuning = LimitsTuning()
     push: PushTuning = PushTuning()
+    health: HealthTuning = HealthTuning()
+    resources: ResourcesTuning = ResourcesTuning()
 
 
 def _merge(base: dict, extra: dict) -> dict:

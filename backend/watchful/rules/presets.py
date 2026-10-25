@@ -20,6 +20,13 @@ def suggestions(purpose: str | None) -> list[str]:
     return list(purposes().get((purpose or "").strip().lower(), {}).get("watches", []))
 
 
+DEFAULT_WATCHES = ("camera_problem",)  # site watches every new society starts with
+
+
+def default_watches() -> list[Watch]:
+    return [preset(name) for name in DEFAULT_WATCHES]
+
+
 def preset_names() -> list[str]:
     return list(_presets())
 

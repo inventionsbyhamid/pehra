@@ -45,6 +45,25 @@ class Detector(Protocol):
     def detect(self, image: np.ndarray) -> list[Detection]: ...
 
 
+class DetectorView:
+    """One camera's classes on a detector that many cameras share: a camera process loads the network once."""
+
+    def __init__(self, shared, classes: set[str] | None = None):
+        self.shared, self.name = shared, shared.name
+        self.set_classes(classes)
+
+    def set_classes(self, classes: set[str] | None) -> None:
+        self.class_ids = class_ids_for(classes)
+
+    def detect(self, image: np.ndarray) -> list[Detection]:
+        return self.shared.detect(image, self.class_ids)
+
+
+def class_ids_for(classes: set[str] | None) -> np.ndarray:
+    """None means all 80 classes."""
+    return np.array([i for i, c in enumerate(COCO) if classes is None or c in classes], dtype=np.int64)
+
+
 @register("detector", *YOLOX_INPUT)
 class YoloxDetector:
     def __init__(self, name: str = "yolox_nano", classes: set[str] | None = None,
@@ -57,12 +76,15 @@ class YoloxDetector:
         self.grids, self.strides = _grids(self.size)
 
     def set_classes(self, classes: set[str] | None) -> None:
-        """None means all 80 classes."""
-        ids = [i for i, c in enumerate(COCO) if classes is None or c in classes]
-        self.class_ids = np.array(ids, dtype=np.int64)
+        self.class_ids = class_ids_for(classes)
 
-    def detect(self, image: np.ndarray) -> list[Detection]:
-        if len(self.class_ids) == 0:
+    def view(self, classes: set[str] | None = None) -> DetectorView:
+        return DetectorView(self, classes)
+
+    def detect(self, image: np.ndarray, class_ids: np.ndarray | None = None) -> list[Detection]:
+        """`class_ids`: a camera's own classes (DetectorView) instead of this detector's."""
+        class_ids = self.class_ids if class_ids is None else class_ids
+        if len(class_ids) == 0:
             return []
         h, w = image.shape[:2]
         ratio = min(self.size / h, self.size / w)
@@ -78,7 +100,7 @@ class YoloxDetector:
         xy = (out[:, :2] + self.grids) * self.strides
         wh = np.exp(out[:, 2:4]) * self.strides
         scores = out[:, 4:5] * out[:, 5:]
-        scores = scores[:, self.class_ids]
+        scores = scores[:, class_ids]
         best = scores.argmax(1)
         best_score = scores[np.arange(len(scores)), best]
         keep = best_score >= self.conf
@@ -91,7 +113,7 @@ class YoloxDetector:
         x1 = np.clip(boxes[:, 0] + boxes[:, 2], 0, w)
         y1 = np.clip(boxes[:, 1] + boxes[:, 3], 0, h)
         boxes = np.stack([x0, y0, x1 - x0, y1 - y0], 1)
-        cls_ids = self.class_ids[best]
+        cls_ids = class_ids[best]
         idx = cv2.dnn.NMSBoxesBatched(boxes.tolist(), best_score.tolist(), cls_ids.tolist(),
                                       self.conf, self.nms)
         dets = []

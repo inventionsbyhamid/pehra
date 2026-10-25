@@ -11,12 +11,52 @@ from watchful.registry import register
 MEDIA_PATH = "/api/blobs/"
 
 
+def society_key(workspace_id: str | None, *parts) -> str:
+    """A blob key under its society, `{workspace_id}/...`, so storage, links and retention can tell societies apart.
+    Without a society (a test's bare camera) the parts alone."""
+    return "/".join([str(workspace_id)] * bool(workspace_id) + [str(p) for p in parts])
+
+
+def in_society(key: str | None, workspace_id: str) -> bool:
+    return bool(key) and bool(workspace_id) and key.startswith(f"{workspace_id}/")
+
+
 class BlobStore(Protocol):
     def put(self, key: str, data: bytes, content_type: str) -> None: ...
     def get(self, key: str) -> bytes: ...
     def url(self, key: str) -> str: ...
     def delete(self, key: str) -> None: ...
     def delete_older_than(self, days: int, keep: tuple[str, ...] = ("people/",)) -> int: ...
+
+
+class SocietyBlobs:
+    """One society's view of the blob store: a key outside `{workspace_id}/` is refused, so a camera, an AI check or a
+    search of one society can neither write nor read another's pictures."""
+
+    def __init__(self, inner: BlobStore, workspace_id: str):
+        if not workspace_id:
+            raise ValueError("SocietyBlobs needs the society's workspace_id")
+        self.inner, self.workspace_id = inner, workspace_id
+
+    def _check(self, key: str) -> str:
+        if not in_society(key, self.workspace_id):
+            raise KeyError(f"{key} is not a key of society {self.workspace_id}")
+        return key
+
+    def put(self, key: str, data: bytes, content_type: str) -> None:
+        self.inner.put(self._check(key), data, content_type)
+
+    def get(self, key: str) -> bytes:
+        return self.inner.get(self._check(key))
+
+    def url(self, key: str) -> str:
+        return self.inner.url(self._check(key))
+
+    def delete(self, key: str) -> None:
+        self.inner.delete(self._check(key))
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
 
 
 class BackgroundPuts:

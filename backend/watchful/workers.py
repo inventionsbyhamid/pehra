@@ -1,9 +1,7 @@
-"""Runs cameras: one process per live, demo or webcam camera, and parallel scans for uploads.
-Candidates come back with their evidence; the AI checks them here and alerts are stored."""
-import json
+"""Runs cameras: live, demo and webcam cameras share a few camera processes (pool.py), uploads are scanned in
+parallel. Rows, candidates and health come back from the processes; the app writes them through each camera's own
+society, checks candidates with the AI and stores alerts, and judges each camera's health."""
 import logging
-
-import cv2
 import multiprocessing as mp
 import queue
 import secrets
@@ -16,21 +14,18 @@ from dataclasses import asdict, dataclass, field
 from watchful.agent.verifier import Verdict, _fallback, verify
 from watchful.alerts import incidents as incidents_
 from watchful.alerts.crops import frame_still
-from watchful.components import (make_blobs, make_embedder, make_faces, make_llm, make_metrics, make_notifier,
-                                 make_repo)
+from watchful.components import made_embedders, make_embedder, make_llm, make_metrics, make_notifier, make_repo
 from watchful.config import Settings
-from watchful.evidence import EvidenceBuffer, EvidencePack, evidence_context, file_pack
-from watchful.ingest.clips import ClipRecorder
-from watchful.ingest.sources import FileSource, PushSource, StreamSource
+from watchful.evidence import EvidencePack, evidence_context, file_pack
+from watchful.health import BACK, HealthBook, check as health_check, holds, is_health_watch
 from watchful.notify import ApprovalNotifier
-from watchful.rules.engine import RuleEngine, log_row, needs_for
+from watchful.pool import WorkerPool
+from watchful.rules.engine import log_row, needs_for
 from watchful.rules.watch import Watch, select_watches
-from watchful.rules.zonestate import load_states
-from watchful.store.db import AlertRow, Camera
-from watchful.tuning import Tuning, load_tuning
-from watchful.vision.embed import TextCache, watch_texts
+from watchful.store.db import AlertRow, Camera, EventRow
+from watchful.tuning import Tuning
+from watchful.vision.embed import watch_texts
 from watchful.vision.perceive import Needs
-from watchful.vision.pipeline import CameraPipeline
 from watchful.vision.scan import ScanPool, probe_start_time, scan_file
 
 log = logging.getLogger("watchful.workers")
@@ -39,11 +34,6 @@ log = logging.getLogger("watchful.workers")
 def should_record(repo, camera: Camera) -> bool:
     """A demo camera records its timeline once; later runs only show the live view and alerts."""
     return camera.kind != "demo" or not repo.query_events(camera_id=camera.id, limit=1)
-
-
-TAMPER_TEXT = {"covered": "The camera picture went flat, as if the lens is covered.",
-               "blurred": "The camera picture is blurred.",
-               "moved": "The camera seems to have been turned or moved."}
 
 
 def run_retention(settings: Settings, repos, blobs) -> None:
@@ -56,7 +46,8 @@ def run_retention(settings: Settings, repos, blobs) -> None:
     repos = repos if isinstance(repos, (list, tuple)) else [repos]
     days = {id(r): retention_days_of(r, settings.retention_days) for r in repos}
     demos = {id(r): [c.id for c in r.list_cameras() if c.kind == "demo"] for r in repos}
-    keep = ("people/", *(f"{d}/" for ids in demos.values() for d in ids))
+    keep = ("people/", *(f"{r.workspace_id}/people/" for r in repos),  # bare people/ and camera keys until rekeyed
+            *(p for r in repos for d in demos[id(r)] for p in (f"{r.workspace_id}/{d}/", f"{d}/")))
     owned = {id(r): (f"{r.workspace_id}/", *(f"{c.id}/" for c in r.list_cameras())) for r in repos}
     for kept in sorted(set(days.values()) or {settings.retention_days}):  # a longer plan's pictures wait for theirs
         blobs.delete_older_than(kept, keep=keep + tuple(p for r in repos if days[id(r)] > kept for p in owned[id(r)]))
@@ -69,16 +60,6 @@ def run_retention(settings: Settings, repos, blobs) -> None:
             f.unlink(missing_ok=True)
 
 
-def overlay_tracks(tick) -> list[dict]:
-    """The latest tracks for the live view, boxes normalized 0..1 so the browser can draw them."""
-    w, h = tick.size
-    if not w or not h:
-        return []
-    return [{"id": s.track_id, "cls": s.cls, "label": s.known_name or s.cls, "posture": s.posture,
-             "box": [round(s.box[0] / w, 4), round(s.box[1] / h, 4), round(s.box[2] / w, 4), round(s.box[3] / h, 4)]}
-            for s in tick.tracks]
-
-
 @dataclass
 class WorkerStatus:
     running: bool = False
@@ -88,119 +69,19 @@ class WorkerStatus:
     loops: int = 0
     stats: dict = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)
+    health: str | None = None  # live, offline, covered, moved or blurred, as the app last judged it
+    process: int | None = None  # the camera process it runs on
 
 
-def _source(camera: Camera, settings: Settings):
-    fps, width = max(settings.display_fps, settings.analysis_fps), settings.analysis_width
-    if camera.kind == "demo":
-        return FileSource(camera.url, fps, loop=True, realtime=settings.demo_realtime, width=width)
-    if camera.kind == "file":
-        return FileSource(camera.url, fps, realtime=settings.demo_realtime, width=width)
-    if camera.kind == "webcam":
-        return PushSource(fps, width)
-    return StreamSource(camera.url, fps, width)
-
-
-def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: list, settings_json: str,
-               tuning_json: str, in_q, out_q, viewers, scanning, stop, texts: dict | None = None) -> None:
-    """The camera process: source, pipeline, rules, clips and evidence."""
-    settings = Settings(**json.loads(settings_json), _env_file=None)
-    cv2.setNumThreads(settings.camera_threads)  # leave the cores to scans and other cameras
-    base = Tuning.model_validate_json(tuning_json)
-    tuning = load_tuning(None, camera.tuning) if camera.tuning else base
-    repo, blobs = make_repo(settings, camera.workspace_id), make_blobs(settings)
-    needs = needs_for([w for _, w in watches]) if watches else Needs(classes={"person"})
-    faces = None
-    if needs.faces and enrollments:
-        faces = make_faces(settings, tuning)
-        faces.load(enrollments)
-    embedder = TextCache(make_embedder(settings), texts or {}) if needs.embed or needs.embedder else None
-    pipe = CameraPipeline(camera, repo, blobs, faces, settings, tuning, needs, embedder)
-    states = None
-    if any(c.signal == "zone_state" for _, w in watches for c in w.conditions):
-        states = load_states(repo.list_state_examples(camera.id), blobs.get, camera.zones, tuning.zones, embedder)
-    engine = RuleEngine(watches, camera.zones, tuning, settings.timezone, camera.kind, embedder, states)
-    source = _source(camera, settings)
-    webcam = isinstance(source, PushSource)
-    clips = ClipRecorder(blobs, max(settings.display_fps, settings.analysis_fps), tuning.clips)
-    evidence = EvidenceBuffer(tuning.evidence, camera.zones)
-    pending: list[tuple[float, object]] = []
-    loops, last_pos, last_status, last_done = 0, None, 0.0, float("-inf")
-    tracks: list[dict] = []
-    recording = should_record(repo, camera)
-    frames_done, t_start = 0, time.monotonic()
-
-    def send(msg: dict) -> None:
-        try:
-            out_q.put_nowait(msg)
-        except queue.Full:
-            pass
-
-    while not stop.is_set():
-        if camera.kind == "demo" and (loops >= 1 or not recording) and viewers.value == 0:
-            time.sleep(0.5)
-            continue
-        if isinstance(source, PushSource):
-            try:
-                while True:
-                    jpeg, ts = in_q.get_nowait()
-                    source.push(jpeg, ts)
-            except queue.Empty:
-                pass
-        frame = source.read(timeout=1.0)
-        now = time.monotonic()
-        if now - last_status >= 1.0:
-            last_status = now
-            send({"type": "status", "camera_id": camera.id, "source_status": source.status, "loops": loops,
-                  "fps": frames_done / max(now - t_start, 1e-3), "stats": pipe.stats()})
-        if frame is None:
-            if source.status == "ended":
-                pipe.finish(time.time())
-                break
-            continue
-        if frame.pos is not None and last_pos is not None and frame.pos < last_pos:
-            loops += 1
-            recording = recording and camera.kind != "demo"
-        last_pos = frame.pos
-        clips.on_frame(frame)
-        rate = settings.live_fps_during_scan if scanning.value > 0 else settings.analysis_fps
-        analyse = frame.ts - last_done >= 1.0 / rate - 1e-3
-        if analyse:
-            last_done = frame.ts
-            result = pipe.process(frame, record=recording)
-            frames_done += 1
-            evidence.add(frame, result.tick)
-            tracks = overlay_tracks(result.tick)
-            if webcam and viewers.value > 0:
-                send({"type": "overlay", "camera_id": camera.id, "ts": frame.ts, "tracks": tracks})
-        if viewers.value > 0 and not webcam:
-            h, w = frame.image.shape[:2]
-            ok, jpg = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, settings.display_quality])
-            if ok:
-                send({"type": "frame", "camera_id": camera.id, "jpeg": jpg.tobytes(), "ts": frame.ts,
-                      "width": w, "height": h, "tracks": tracks})
-        if not analyse:
-            continue
-        for e in result.tick.events:
-            if e.kind.startswith("tamper_") and e.kind != "tamper_restored":
-                send({"type": "tamper", "camera_id": camera.id, "ts": e.ts, "kind": e.kind[len("tamper_"):],
-                      "detail": e.data.get("detail", "")})
-        for c in engine.on_tick(camera.id, result.tick, now=frame.ts, image=frame.image):
-            if c.output == "log":
-                row = log_row(c)
-                if recording:
-                    repo.add_events([row])  # a log watch writes a row and never alerts
-                send({"type": "log", "camera_id": camera.id, "row": asdict(row)})
-                continue
-            c.clip_key = f"{camera.id}/clips/{c.fingerprint}.mp4"
-            clips.request(c.ts, c.clip_key)
-            pending.append((frame.ts + tuning.evidence.after_s, c))
-        for item in [p for p in pending if frame.ts >= p[0]]:
-            pending.remove(item)
-            send({"type": "candidate", "pack": evidence.pack(item[1])})
-    clips.close()
-    send({"type": "status", "camera_id": camera.id, "source_status": "stopped", "loops": loops, "fps": 0,
-          "stats": pipe.stats(), "stopped": True})
+@dataclass
+class _Cam:
+    camera: Camera
+    status: WorkerStatus
+    last_frame_at: float | None = None  # as its process last reported, or when it was started
+    tamper: str | None = None
+    seen_written: float = 0.0
+    started: float = field(default_factory=time.time)
+    seen: bool = False  # it has sent a picture, in this run or an earlier one; a camera never seen is not judged
 
 
 class Subscription:
@@ -241,24 +122,16 @@ class Subscription:
         return self._events.empty() and self._frame is None
 
 
-@dataclass
-class _Handle:
-    process: object
-    in_q: object
-    viewers: object
-    stop: object
-    status: WorkerStatus = field(default_factory=WorkerStatus)
-    wanted: bool = True  # False once stopped on purpose; a dead wanted worker is restarted
-    restarts: int = 0
-    next_restart: float = 0.0
 
 
 class WorkerManager:
     """Cameras of every society; each camera's rows go through its own society's repository (repo_for), known from
     start or scan_upload. A manager given one society's `repo` (tests, tools) serves that society; the app gives
-    repo_for and `societies` (every society's id) instead."""
+    repo_for and `societies` (every society's id) instead. Camera health is a signal: a watch on it alerts like any
+    other (health.py)."""
 
-    def __init__(self, settings: Settings, tuning: Tuning, repo, blobs, llm=None, repo_for=None, societies=None):
+    def __init__(self, settings: Settings, tuning: Tuning, repo, blobs, llm=None, repo_for=None, societies=None,
+                 processes: int | None = None):
         if repo is None and (repo_for is None or societies is None):
             raise ValueError("give one society's repo, or repo_for and societies")
         self.settings, self.tuning, self.repo, self.blobs = settings, tuning, repo, blobs
@@ -270,7 +143,12 @@ class WorkerManager:
         self.ctx = mp.get_context("spawn")
         self.out_q = self.ctx.Queue(maxsize=2000)
         self.scanning = self.ctx.Value("i", 0)
-        self.handles: dict[str, _Handle] = {}
+        self.pool = WorkerPool(settings, processes or settings.camera_processes, tuning, self.out_q, self.scanning,
+                               self.ctx, self.repo_for)
+        self.cams: dict[str, _Cam] = {}
+        self.processes: dict[int, dict] = {}  # each camera process's last report: pid, models loaded, RSS
+        self.health = HealthBook(self.repo_for, self._health_changed)
+        self._texts: dict[str, list[float]] = {}  # watch texts as vectors, made once
         self.subs: dict[str, list[Subscription]] = defaultdict(list)
         self.scans: dict[str, dict] = {}
         self.llm = llm  # tests give one; else one per society, counting against its own AI cap
@@ -288,6 +166,7 @@ class WorkerManager:
             threading.Thread(target=lambda: self._pool().warm(), daemon=True).start()
         threading.Thread(target=self._listen, daemon=True).start()
         threading.Thread(target=self._supervise, daemon=True).start()
+        threading.Thread(target=self._watch_health, daemon=True).start()
         threading.Thread(target=self._report, daemon=True).start()
         threading.Thread(target=self._janitor, daemon=True).start()
         self.indexer = None
@@ -301,6 +180,9 @@ class WorkerManager:
         return [self.repo_for(ws) for ws in self.societies()]
 
     def _janitor(self, every_s: float = 6 * 3600) -> None:
+        from watchful.store.rekey import rekey_society
+        for r in self._safe(self._all_repos) or []:
+            self._safe(rekey_society, r, self.blobs)  # keys from before societies move under theirs, once
         while not self._closed:
             try:
                 run_retention(self.settings, self._all_repos(), self.blobs)
@@ -308,18 +190,31 @@ class WorkerManager:
                 log.exception("retention cleanup failed")
             time.sleep(every_s)
 
+    @staticmethod
+    def _safe(fn, *args):
+        try:
+            return fn(*args)
+        except Exception:
+            log.exception("%s failed", getattr(fn, "__name__", fn))
+            return None
+
     def _report(self, every_s: float = 60) -> None:
+        """Every minute: camera processes down (the alarm), and frames and milliseconds per frame per camera process
+        rather than per camera, which keeps CloudWatch at a few metrics however many cameras there are."""
         while not self._closed:
             time.sleep(every_s)
             try:
-                for cid, h in list(self.handles.items()):
-                    if h.status.running:
-                        st, dims = h.status.stats or {}, {"Camera": cid}
-                        self.metrics.put("FramesPerSecond", h.status.fps, dims)
-                        for key, name in (("ms_per_frame", "MsPerFrame"), ("frames_skipped", "FramesSkipped"),
-                                          ("detector_runs", "DetectorRuns")):
-                            if key in st:
-                                self.metrics.put(name, st[key], dims)
+                self.metrics.put("camera_workers_down", self.pool.down())
+                by_process: dict[int, list[WorkerStatus]] = defaultdict(list)
+                for c in list(self.cams.values()):
+                    if c.status.running and c.status.process is not None:
+                        by_process[c.status.process].append(c.status)
+                for i, sts in sorted(by_process.items()):
+                    dims = {"Process": str(i)}
+                    self.metrics.put("FramesPerSecond", sum(s.fps for s in sts) / len(sts), dims)
+                    ms = [s.stats["ms_per_frame"] for s in sts if "ms_per_frame" in (s.stats or {})]
+                    if ms:
+                        self.metrics.put("MsPerFrame", sum(ms) / len(ms), dims)
                 self.metrics.put("AICallsToday", sum(r.count_ai_calls_today() for r in self._all_repos()))
                 self.metrics.flush()
             except Exception:
@@ -361,97 +256,137 @@ class WorkerManager:
         with self._camera_lock(camera_id):
             self._start(camera_id)
 
+    def _watch_vectors(self, watches: list[tuple[str, Watch]]) -> dict[str, list[float]]:
+        """Watch texts as vectors, made here once so camera processes never load the text tower."""
+        wanted = watch_texts([w for _, w in watches])
+        missing = wanted - self._texts.keys()
+        if missing:
+            emb = make_embedder(self.settings)
+            for t in missing:
+                self._texts[t] = emb.text(t).tolist()
+        return {t: self._texts[t] for t in wanted}
+
     def _start(self, camera_id: str) -> None:
-        self._stop(camera_id)
         repo = self._repo(camera_id)
         cam = repo.get_camera(camera_id)
         if cam is None or not cam.enabled:
+            self._stop(camera_id)
             return
-        h = _Handle(None, self.ctx.Queue(maxsize=4), self.ctx.Value("i", 0), self.ctx.Event())
-        old = self.handles.get(camera_id)
-        if old:
-            h.restarts, h.next_restart = old.restarts, old.next_restart
-        h.viewers.value = len(self.subs[camera_id])
         watches, problems = self._watches(camera_id, cam.zones)
-        texts = {}
-        wanted = watch_texts([w for _, w in watches])
-        if wanted:
-            emb = make_embedder(self.settings)
-            texts = {t: emb.text(t).tolist() for t in wanted}
-        h.process = self.ctx.Process(target=run_camera, daemon=True, args=(
-            cam, watches, repo.list_enrollments(), self.settings.model_dump_json(),
-            self.tuning.model_dump_json(), h.in_q, self.out_q, h.viewers, self.scanning, h.stop, texts))
-        h.process.start()
-        h.status = WorkerStatus(running=True, source_status="starting", problems=problems)
-        self.handles[camera_id] = h
+        examples = repo.list_state_examples(cam.id) \
+            if any(c.signal == "zone_state" for _, w in watches for c in w.conditions) else []
+        if cam.last_frame_at is not None:  # seen in an earlier run; a new camera's row says offline by default
+            self.health.seed(cam.id, cam.status)
+        process = self.pool.assign(cam, watches, repo.list_enrollments(), self._watch_vectors(watches), examples,
+                                   should_record(repo, cam), len(self.subs[camera_id]))
+        self.cams[camera_id] = _Cam(cam, WorkerStatus(running=True, source_status="starting", problems=problems,
+                                                      health=self.health.state(cam.id), process=process),
+                                    last_frame_at=time.time(), seen=cam.last_frame_at is not None)
 
     def stop(self, camera_id: str) -> None:
         with self._camera_lock(camera_id):
             self._stop(camera_id)
 
     def _stop(self, camera_id: str) -> None:
-        h = self.handles.get(camera_id)
-        if not h or not h.process:
-            return
-        h.wanted = False
-        h.stop.set()
-        h.process.join(5)
-        if h.process.is_alive():
-            h.process.terminate()
-        h.status.running = False
+        self.pool.remove(camera_id)
+        c = self.cams.get(camera_id)
+        if c is not None and c.status.running:
+            c.status.running = False
+            c.status.source_status = "stopped"
+            if self.health.forget(camera_id) not in (None, "live"):  # not watched now: nothing is left open
+                self._resolve_health(self._society(camera_id), camera_id, None, time.time(),
+                                     "The camera was turned off.")
 
     def restart(self, camera_id: str) -> None:
-        if camera_id in self.handles and self.handles[camera_id].status.running:
+        c = self.cams.get(camera_id)
+        if c is not None and c.status.running:
             self.start(camera_id)
 
+    def reload_faces(self, workspace_id: str) -> None:
+        """A society's enrolled staff changed: every camera process watching one of its cameras reloads its face
+        index; no camera restarts."""
+        self.pool.reload(workspace_id, self.repo_for(workspace_id).list_enrollments())
+
     def status(self, camera_id: str) -> WorkerStatus:
-        h = self.handles.get(camera_id)
-        if h and h.process and not h.process.is_alive():
-            h.status.running = False
-        return h.status if h else WorkerStatus()
+        c = self.cams.get(camera_id)
+        if c is None:
+            return WorkerStatus()
+        if c.status.running:
+            c.status.health = self.health.state(camera_id)
+        return c.status
 
     def subscribe(self, camera_id: str) -> Subscription:
         q = Subscription()
         self.subs[camera_id].append(q)
-        h = self.handles.get(camera_id)
-        if h:
-            h.viewers.value += 1
+        self.pool.viewers(camera_id, len(self.subs[camera_id]))
         return q
 
     def unsubscribe(self, camera_id: str, q: Subscription) -> None:
         if q in self.subs[camera_id]:
             self.subs[camera_id].remove(q)
-            h = self.handles.get(camera_id)
-            if h:
-                h.viewers.value = max(0, h.viewers.value - 1)
+            self.pool.viewers(camera_id, len(self.subs[camera_id]))
 
     def push_frame(self, camera_id: str, jpeg: bytes, ts: float) -> None:
-        h = self.handles.get(camera_id)
-        if h:
-            try:
-                h.in_q.put_nowait((jpeg, ts))
-            except queue.Full:
-                pass
+        self.pool.push(camera_id, jpeg, ts)
 
     def _publish(self, camera_id: str, msg: dict) -> None:
         for q in list(self.subs.get(camera_id, [])):
             q.put(msg)
 
     def _supervise(self) -> None:
-        """Restarts camera workers that died, with backoff (5 s, 10 s, 20 s, up to 5 minutes)."""
+        """Starts camera processes that died again, with their cameras, with backoff (pool.WorkerPool.supervise)."""
         while not self._closed:
             time.sleep(self.supervise_every_s)
-            for cid, h in list(self.handles.items()):
-                if not h.wanted or h.process is None or h.process.is_alive() or time.time() < h.next_restart:
-                    continue
-                log.warning("camera %s worker stopped (exit %s); restarting", cid, h.process.exitcode)
-                h.restarts += 1
-                h.next_restart = time.time() + min(300, 5 * 2 ** (h.restarts - 1))
-                try:
-                    self.start(cid)
-                except Exception:
-                    log.exception("restarting camera %s failed", cid)
+            try:
+                self.pool.supervise(restart=self.start)
+            except Exception:
+                log.exception("restarting camera processes failed")
 
+    # health
+    def _watch_health(self) -> None:
+        while not self._closed:
+            time.sleep(self.tuning.health.check_every_s)
+            try:
+                self.check_health()
+                for emb in made_embedders():
+                    getattr(emb, "release_text", lambda _: False)(self.tuning.resources.text_tower_idle_s)
+            except Exception:
+                log.exception("camera health check failed")
+
+    def check_health(self, now: float | None = None) -> None:
+        """Each running camera's health from what its process last reported, so a camera whose process died, or
+        that stopped reporting, goes offline too. A change is written to its row and files or resolves an incident
+        (HealthBook); a live camera's last picture time is written every Tuning health.seen_every_s."""
+        now = time.time() if now is None else now
+        for cid, c in list(self.cams.items()):
+            if not c.status.running or not c.seen or (c.status.source_status == "starting"
+                                                      and now - c.started < self.tuning.health.start_s):
+                continue  # never set up yet, or its process is still starting (loading models) or starting again
+            ws = self._society(cid)
+            state = health_check(c.camera, c.last_frame_at, c.tamper, now, self.tuning.health)
+            changed = self.health.update(ws, cid, state, now)
+            c.status.health = state
+            due = state != "offline" and now - c.seen_written >= self.tuning.health.seen_every_s
+            if c.last_frame_at and (changed or due):
+                c.seen_written = now
+                self.repo_for(ws).set_camera_health(cid, last_frame_at=c.last_frame_at)
+
+    def _health_changed(self, workspace_id: str, camera_id: str, old: str | None, new: str, ts: float) -> None:
+        self._publish(camera_id, {"type": "health", "camera_id": camera_id, "health": new})
+        if old not in (None, "live"):
+            self._resolve_health(workspace_id, camera_id, new, ts, BACK if new == "live" else "")
+
+    def _resolve_health(self, workspace_id: str, camera_id: str, state: str | None, ts: float, note: str) -> None:
+        """Resolves the camera's open incidents of camera health watches that no longer hold for `state` (None: the
+        camera is no longer watched, so all of them)."""
+        repo = self.repo_for(workspace_id)
+        watches = dict(self._watches(camera_id)[0])
+        for inc in incidents_.list_incidents(repo, incidents_.ACTIVE, camera_id):
+            w = watches.get(inc.watch_id)
+            if w is not None and is_health_watch(w) and (state is None or not holds(w, state)):
+                self._incident(lambda: incidents_.resolve(repo, inc.id, ts, note or BACK))
+
+    # messages from the camera processes
     def _listen(self) -> None:
         while not self._closed:
             try:
@@ -465,37 +400,55 @@ class WorkerManager:
             except Exception:  # one bad message must not stop every camera's live view
                 log.exception("handling a %s message failed", msg.get("type"))
 
+    def _from_society(self, msg: dict) -> str | None:
+        """The camera's own society, when the message agrees with it; rows are written only there."""
+        ws = self.camera_ws.get(msg["camera_id"]) or self.home
+        if ws is None or msg.get("workspace_id") not in (None, ws):
+            log.error("a message for camera %s named another society; dropped", msg["camera_id"])
+            return None
+        return ws
+
     def _handle(self, msg: dict) -> None:
         kind = msg.get("type")
-        if kind in ("frame", "overlay", "log"):
+        if kind in ("frame", "overlay"):
             self._publish(msg["camera_id"], msg)
+        elif kind == "events":
+            ws = self._from_society(msg)
+            rows = [r for r in msg["rows"] if r.camera_id == msg["camera_id"]]
+            if ws and rows:
+                self.repo_for(ws).add_events(rows)
+        elif kind == "log":
+            ws = self._from_society(msg)
+            row: EventRow = msg["row"]
+            if ws and msg.get("record", True):
+                self.repo_for(ws).add_events([row])  # a log watch writes a row and never alerts
+            self._publish(msg["camera_id"], {"type": "log", "camera_id": msg["camera_id"], "row": asdict(row)})
         elif kind == "status":
-            h = self.handles.get(msg["camera_id"])
-            if h:
-                h.status.source_status, h.status.loops = msg["source_status"], msg["loops"]
-                h.status.fps, h.status.stats = msg["fps"], msg["stats"]
-                if msg.get("stopped"):
-                    h.status.running, h.wanted = False, False  # ended on its own, not a crash
-            self._publish(msg["camera_id"], msg)
+            self._status(msg)
         elif kind == "candidate":
-            self._on_candidate(msg["pack"])
-        elif kind == "tamper":
-            self._tamper(msg)
+            pack = msg["pack"]
+            if self._from_society({"camera_id": pack.candidate.camera_id, "workspace_id": msg.get("workspace_id")}):
+                self._on_candidate(pack)
+        elif kind == "process":
+            self.processes[msg["index"]] = msg
 
-    def _tamper(self, msg: dict) -> None:
-        """Camera health needs no AI check: a covered, blurred or turned camera is an alert straight away."""
-        text = TAMPER_TEXT.get(msg["kind"], "Something is wrong with the camera picture.")
-        fp = f"tamper|{msg['camera_id']}|{msg['kind']}|{int(msg['ts'] // 600)}"
-        repo = self._repo(msg["camera_id"])
-        if repo.alert_fingerprint_exists(fp, within_s=3600):
+    def _status(self, msg: dict) -> None:
+        c = self.cams.get(msg["camera_id"])
+        if c is None or not c.status.running:
             return
-        row = repo.add_alert(AlertRow(None, msg["camera_id"], None, msg["ts"], "warning", "alert", text, None, None,
-                                           [], None, fp))
-        self._publish(msg["camera_id"], {"type": "alert", "alert": {**asdict(row), "keyframe_url": None}})
-        self.metrics.put("Alerts", 1, {"Status": "tamper"})
-        self._incident(lambda: incidents_.open_or_touch_incident(
-            repo, msg["camera_id"], f"camera_{msg['kind']}", "warning", text, None, msg["ts"],
-            tuning=self.tuning.alerts))
+        st = c.status
+        st.source_status, st.loops, st.fps, st.stats = msg["source_status"], msg["loops"], msg["fps"], msg["stats"]
+        st.last_ts = time.time()
+        if msg.get("error"):
+            st.problems = [*st.problems, msg["error"]]
+        if msg.get("last_frame_at"):
+            c.last_frame_at, c.seen = msg["last_frame_at"], True
+        c.tamper = msg.get("tamper")
+        if msg.get("stopped"):  # a recording ended on its own, not a crash
+            st.running = False
+            self.pool.remove(msg["camera_id"])
+            self.health.forget(msg["camera_id"])
+        self._publish(msg["camera_id"], {k: v for k, v in msg.items() if k != "workspace_id"})
 
     # incidents: repeats of one situation fold into one record and one Telegram message (alerts/incidents.py)
     def _incident(self, fn):
@@ -634,8 +587,7 @@ class WorkerManager:
             repo.delete_camera_events(cam.id)  # a rescan replaces the earlier timeline
             repo.add_events(result.events)
             info.update(state="checking", stats=asdict(result.stats))
-            cam.last_scan = {**asdict(result.stats), "start_epoch": start_epoch, "finished_at": time.time()}
-            repo.update_camera(cam)
+            repo.set_last_scan(cam.id, {**asdict(result.stats), "start_epoch": start_epoch, "finished_at": time.time()})
             self.metrics.put("ScanRealtimeFactor", result.stats.x_realtime)
             self.metrics.put("ScanSecondsPerMinute", result.stats.wall_s / max(result.stats.duration_s / 60, 1e-6))
             dedupe_s = self.settings.alert_dedupe_days * 86400 + max(0.0, time.time() - start_epoch)
@@ -643,7 +595,7 @@ class WorkerManager:
             fresh = [c for c in result.candidates if c.output != "log"
                      and not repo.alert_fingerprint_exists(c.fingerprint, dedupe_s)]
             packs = [file_pack(cam.url, start_epoch, c, result.paths.get(c.track_id, []),
-                               result.poses.get(c.track_id, []), self.tuning.evidence, cam.zones)
+                               result.poses.get(c.track_id, []), self.tuning.evidence, cam.zones, repo.workspace_id)
                      for c in fresh]
             futures = [self.verifiers.submit(self._verify_and_store, p) for p in packs]
             info["alert_ids"] = [i for i in (f.result() for f in futures) if i]
@@ -658,9 +610,10 @@ class WorkerManager:
     def shutdown(self) -> None:
         if self.indexer:
             self.indexer.stop()
-        for cid in list(self.handles):
+        for cid in list(self.cams):
             self.stop(cid)
         self._closed = True
+        self.pool.close()
         if self._scan_pool:
             self._scan_pool.close()
         self.verifiers.shutdown(wait=False, cancel_futures=True)

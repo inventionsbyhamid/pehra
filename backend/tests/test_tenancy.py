@@ -250,3 +250,77 @@ def test_two_processes_starting_together_import_once(tmp_path):
     assert str(kept) in printed and not list(tmp_path.glob("*.importing*"))
     repo = components.make_repo(Settings(session_secret="y", data_dir=tmp_path, _env_file=None), DEFAULT_WORKSPACE)
     assert [c.id for c in repo.list_cameras()] == ["cam_1"]
+def test_faces_never_match_across_societies(societies, tmp_path):
+    """Sunita, enrolled in Green Park, is never named on Lake View's camera, even with both cameras in one camera
+    process sharing the face networks."""
+    import cv2
+    from watchful.components import make_blobs
+    from watchful.ingest.sources import Frame
+    from watchful.pool import CameraJob, PoolWorker
+    from watchful.rules.watch import Condition, Subject, Watch
+    from watchful.tuning import Tuning
+    from watchful.vision.faces import FaceIndex
+    from watchful.vision.models import sample_path
+    from watchful.vision.motion import MotionResult
+    a, b = societies
+    a.add_enrollment(FaceIndex().enroll("per_sunita", "Sunita", cv2.imread(str(sample_path("basketball1.png"))),
+                                        consent=True))
+    s = Settings(session_secret="y", data_dir=tmp_path, _env_file=None)
+    worker = PoolWorker(0, s, Tuning(), [].append, blobs=make_blobs(s))
+    staff = Watch(name="staff seen", subject=Subject(who="known"), conditions=[Condition(signal="present")])
+    cam_a = a.add_camera(Camera(None, "Green Park gate", "webcam", None))
+    cam_b = b.add_camera(Camera(None, "Lake View gate", "webcam", None))
+    later = cv2.imread(str(sample_path("basketball2.png")))
+    try:
+        worker.assign(CameraJob(cam_a, [("w1", staff)], a.list_enrollments()))
+        worker.assign(CameraJob(cam_b, [("w2", staff)], b.list_enrollments()))
+        names = {}
+        for cam in (cam_a, cam_b):
+            pipe = worker.cameras[cam.id].pipe
+            pipe.perceiver.gate.update = lambda image: MotionResult(True, 1.0, [(0, 0, 10, 10)])  # always moving
+            for i in range(4):  # the same picture of Sunita, a second apart, detected and tracked each time
+                tick = pipe.process(Frame(later, 100.0 + i, i)).tick
+            names[cam.workspace_id] = {t.known_name for t in tick.tracks if t.cls == "person"}
+        assert "Sunita" in names[a.workspace_id] and names[b.workspace_id] == {None}
+        faces_a = worker.cameras[cam_a.id].pipe.perceiver.faces
+        faces_b = worker.cameras[cam_b.id].pipe.perceiver.faces
+        assert faces_b.people() == [] and faces_a.detector is faces_b.detector
+        assert worker.models.loads["faces"] == 1  # one set of face networks for both societies
+        worker.reload_faces(b.workspace_id, a.list_enrollments())  # a wrong list is refused by B's index
+        assert faces_b.people() == [] and faces_b.identify(later, (40, 80, 100, 250)) is None
+        worker.reload_faces(a.workspace_id, [])  # forgotten in A
+        assert faces_a.identify(later, (40, 80, 100, 250)) is None
+    finally:
+        worker.close()
+
+
+def test_old_blob_keys_move_under_their_society(societies, tmp_path):
+    """Keys from before societies (camera id or people/ first) move under the society's prefix once, rows and
+    blobs together; another society's rows are not touched."""
+    from watchful.store.blobs import LocalBlobStore
+    from watchful.store.rekey import rekey_society
+    a, b = societies
+    blobs = LocalBlobStore(tmp_path)
+    cam = a.add_camera(Camera(None, "Gate", "stream", "rtsp://x"))
+    kf, face = f"{cam.id}/kf/1.jpg", "people/per_x.jpg"
+    blobs.put(kf, b"keyframe", "image/jpeg")
+    blobs.put(face, b"face", "image/jpeg")
+    a.add_events([EventRow(None, cam.id, 1.0, "enter", 1, "person", None, {}, kf, None, None, None)])
+    alert = a.add_alert(AlertRow(None, cam.id, None, 1.0, "info", "alert", "x", f"{cam.id}/clips/gone.mp4", kf, [],
+                                 None, "fp-old"))
+    a.add_enrollment(Enrollment("per_x", "Staff", [0.5] * 4, thumbnail_key=face))
+    a.add_watch(WatchRow(None, cam.id, "same as", {"name": "x", "subject": {"same_as": {"crop_key": kf}}}, True))
+    other = b.add_camera(Camera(None, "Other", "stream", "rtsp://y"))
+    b.add_events([EventRow(None, other.id, 1.0, "enter", 1, "person", None, {}, f"{other.id}/kf/1.jpg", None, None,
+                           None)])
+    assert rekey_society(a, blobs) == 2  # the clip was already gone; its row moves all the same
+    ws = a.workspace_id
+    assert [e.keyframe_key for e in a.query_events()] == [f"{ws}/{kf}"]
+    got = a.get_alert(alert.id)
+    assert (got.clip_key, got.keyframe_key) == (f"{ws}/{cam.id}/clips/gone.mp4", f"{ws}/{kf}")
+    assert [e.thumbnail_key for e in a.list_enrollments()] == [f"{ws}/{face}"]
+    assert a.list_watches()[0].watch["subject"]["same_as"]["crop_key"] == f"{ws}/{kf}"
+    assert blobs.get(f"{ws}/{kf}") == b"keyframe" and blobs.get(f"{ws}/{face}") == b"face"
+    assert not (tmp_path / "blobs" / kf).exists()
+    assert [e.keyframe_key for e in b.query_events()] == [f"{other.id}/kf/1.jpg"]
+    assert rekey_society(a, blobs) == 0

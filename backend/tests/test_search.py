@@ -39,14 +39,17 @@ class Stub:
         return np.asarray(unit([crop.mean() / 255.0, 0.1, 0.1]), np.float32)
 
 
-def ev(kind, ts, emb, cam="cam1", tid=None, cls=None, key="k.jpg"):
+WS = "ws_search"  # pictures live under their society's prefix; search reads no others
+
+
+def ev(kind, ts, emb, cam="cam1", tid=None, cls=None, key=f"{WS}/k.jpg"):
     return EventRow(None, cam, ts, kind, tid, cls, None, {}, key, None, unit(emb) if emb else None, None)
 
 
 @pytest.fixture
 def world(tmp_path):
-    repo, blobs = SqliteRepository(tmp_path / "w.db"), LocalBlobStore(tmp_path)
-    blobs.put("k.jpg", jpg(np.full((40, 40, 3), 120, np.uint8)), "image/jpeg")
+    repo, blobs = SqliteRepository(tmp_path / "w.db", WS), LocalBlobStore(tmp_path)
+    blobs.put(f"{WS}/k.jpg", jpg(np.full((40, 40, 3), 120, np.uint8)), "image/jpeg")
     repo.add_camera(Camera("cam1", "Gate", "stream", "rtsp://x"))
     repo.add_camera(Camera("cam2", "Kitchen", "stream", "rtsp://y"))
     return repo, blobs
@@ -103,8 +106,8 @@ def test_photo_with_a_face_needs_consent(world):
 def test_photo_finds_the_same_face(world):
     repo, blobs = world
     player = cv2.imread(str(sample_path("basketball2.png")))[60:300, 30:150]
-    blobs.put("p.jpg", jpg(player), "image/jpeg")
-    repo.add_events([ev("track_end", 500, None, tid=9, cls="person", key="p.jpg"),
+    blobs.put(f"{WS}/p.jpg", jpg(player), "image/jpeg")
+    repo.add_events([ev("track_end", 500, None, tid=9, cls="person", key=f"{WS}/p.jpg"),
                      ev("track_end", 600, None, tid=10, cls="person")])
     photo = jpg(cv2.imread(str(sample_path("basketball1.png"))))
     r = search(SearchQuery(photo=photo, consent=True), repo, blobs, Stub(), faces=FaceIndex())
@@ -114,8 +117,8 @@ def test_photo_finds_the_same_face(world):
 def test_enrolled_person_search(world):
     repo, blobs = world
     player = cv2.imread(str(sample_path("basketball2.png")))[60:300, 30:150]
-    blobs.put("p.jpg", jpg(player), "image/jpeg")
-    repo.add_events([ev("track_end", 500, None, tid=9, cls="person", key="p.jpg"),
+    blobs.put(f"{WS}/p.jpg", jpg(player), "image/jpeg")
+    repo.add_events([ev("track_end", 500, None, tid=9, cls="person", key=f"{WS}/p.jpg"),
                      ev("track_end", 600, None, tid=10, cls="person")])
     faces = FaceIndex()
     faces.enroll("per_1", "Player", cv2.imread(str(sample_path("basketball1.png"))), consent=True)
@@ -137,3 +140,16 @@ def test_a_photo_with_a_person_needs_consent_even_without_a_face(world):
     crowd = jpg(cv2.VideoCapture(str(sample_path("vtest.avi"))).read()[1])
     with pytest.raises(ConsentRequired):
         search(SearchQuery(photo=crowd), repo, blobs, Stub(), faces=FaceIndex(), detector=YoloxDetector())
+
+
+def test_search_reads_no_other_societys_pictures(world):
+    repo, blobs = world
+    player = cv2.imread(str(sample_path("basketball2.png")))[60:300, 30:150]
+    blobs.put("ws_other/p.jpg", jpg(player), "image/jpeg")  # a row pointing outside the society, by mistake
+    repo.add_events([ev("track_end", 500, None, tid=9, cls="person", key="ws_other/p.jpg"),
+                     ev("scene", 600, None, key="ws_other/p.jpg")])
+    faces = FaceIndex()
+    faces.enroll("per_1", "Player", cv2.imread(str(sample_path("basketball1.png"))), consent=True)
+    assert search(SearchQuery(person_id="per_1"), repo, blobs, Stub(), faces=faces).results == []
+    assert index_once(repo, blobs, Stub()) == 0
+    assert all(e.embedding is None for e in repo.query_events(kinds=["scene"]) if e.keyframe_key.startswith("ws_other"))

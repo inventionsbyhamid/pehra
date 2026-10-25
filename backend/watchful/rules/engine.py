@@ -282,6 +282,8 @@ class RuleEngine:
 
     @staticmethod
     def _method(w: Watch) -> str | None:
+        if w.conditions and all(c.signal == "camera_health" for c in w.conditions):
+            return "camera"  # the camera's own state, measured by OpenCV: nothing in the picture to check
         if w.subject.who not in ("anyone", "unknown", "known"):
             return "face"
         if w.subject.same_as:

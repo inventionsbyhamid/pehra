@@ -132,6 +132,14 @@ def create_workspace(engine: Engine, name: str, *, id: str | None = None, timezo
     return ws
 
 
+def add_default_watches(s: orm.Session, workspace_id: str) -> None:
+    """The site watches a new society starts with (rules/presets.py DEFAULT_WATCHES), in the caller's transaction."""
+    from watchful.rules.presets import default_watches
+    for w in default_watches():
+        row = WatchRow(None, None, w.name, w.model_dump(mode="json"), True)
+        s.add(m.Watch(id=m.new_id("wat"), workspace_id=workspace_id, camera_id=None, **_watch_columns(row)))
+
+
 def ensure_workspace(engine: Engine, workspace_id: str, name: str, timezone: str = "Asia/Kolkata") -> None:
     """Makes this society unless it exists: the demo seed and the legacy import name theirs explicitly."""
     with orm.Session(engine) as s, s.begin():
@@ -213,15 +221,21 @@ class SqlRepository:
                       dict(st.get("tuning") or {}), st.get("last_scan"), row.workspace_id, row.purpose, row.status,
                       _epoch(row.last_frame_at))
 
-    def _write_camera(self, s: orm.Session, row: m.Camera, cam: Camera) -> None:
+    def _write_camera(self, s: orm.Session, row: m.Camera, cam: Camera, new: bool = False) -> None:
+        """Health, the last picture time and the last scan are the camera processes' to write (set_camera_health,
+        set_last_scan); an edit from an earlier read keeps what they wrote since."""
         row.name, row.purpose, row.kind = cam.name, cam.purpose or "other", KIND_TO_ROW.get(cam.kind, cam.kind)
-        row.status, row.enabled = cam.status, cam.enabled
+        row.enabled = cam.enabled
         stored = self._box.open(row.url_enc)
         unreadable = row.url_enc is not None and stored is None
         if cam.url != stored and not (unreadable and cam.url is None):
             row.url_enc = self._box.seal(cam.url)  # sealed again only when the address itself changed
-        row.last_frame_at = _dt(cam.last_frame_at)
-        row.settings_json = {"tuning": cam.tuning or {}, "last_scan": cam.last_scan, "loop": cam.kind == "demo"}
+        last_scan = cam.last_scan
+        if new:
+            row.status, row.last_frame_at = cam.status, _dt(cam.last_frame_at)
+        else:
+            last_scan = (row.settings_json or {}).get("last_scan")
+        row.settings_json = {"tuning": cam.tuning or {}, "last_scan": last_scan, "loop": cam.kind == "demo"}
         have = {z.id: z for z in s.scalars(select(m.Zone).where(m.Zone.camera_id == row.id, self._mine(m.Zone)))}
         keep = set()
         for position, z in enumerate(cam.zones):
@@ -250,7 +264,7 @@ class SqlRepository:
                            kind=KIND_TO_ROW.get(cam.kind, cam.kind))
             s.add(row)
             s.flush()
-            self._write_camera(s, row, cam)
+            self._write_camera(s, row, cam, new=True)
         return cam
 
     def get_camera(self, camera_id: str) -> Camera | None:
@@ -270,6 +284,18 @@ class SqlRepository:
             row = s.scalar(select(m.Camera).where(m.Camera.id == cam.id, self._mine(m.Camera)))
             if row is not None:
                 self._write_camera(s, row, cam)
+
+    def set_camera_health(self, camera_id: str, status: str | None = None, last_frame_at: float | None = None) -> None:
+        values = {k: v for k, v in (("status", status), ("last_frame_at", _dt(last_frame_at))) if v is not None}
+        if values:
+            with self.tx() as s:
+                s.execute(update(m.Camera).where(m.Camera.id == camera_id, self._mine(m.Camera)).values(**values))
+
+    def set_last_scan(self, camera_id: str, last_scan: dict | None) -> None:
+        with self.tx() as s:
+            row = s.scalar(select(m.Camera).where(m.Camera.id == camera_id, self._mine(m.Camera)).with_for_update())
+            if row is not None:
+                row.settings_json = {**(row.settings_json or {}), "last_scan": last_scan}
 
     def delete_camera(self, camera_id: str) -> None:
         with self.tx() as s:

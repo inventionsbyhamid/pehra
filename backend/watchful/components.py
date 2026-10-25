@@ -51,6 +51,11 @@ def make_embedder(settings: Settings):
     return _embedders[key]
 
 
+def made_embedders() -> list:
+    """The embedders this process has made so far, without making one."""
+    return list(_embedders.values())
+
+
 def make_llm(settings: Settings, repo, task: str = "verify"):
     """The AI for one society, counted against its plan's AI checks a day (read at each call, so a plan change
     applies at once)."""

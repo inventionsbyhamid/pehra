@@ -44,6 +44,9 @@ class StubManager:
     def push_frame(self, camera_id, jpeg, ts):
         pass
 
+    def reload_faces(self, workspace_id):
+        pass
+
     def scan_upload(self, camera_id, workspace_id=None):
         self.scans["scn_1"] = {"state": "scanning", "progress": 0.0, "camera_id": camera_id}
         return "scn_1"

@@ -14,6 +14,7 @@ import numpy as np
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
 from watchful.agent.prompting import parse_json, render
 from watchful.rules.vocab import resolve_classes
+from watchful.store.blobs import in_society
 from watchful.tuning import SignalTuning
 from watchful.vision.detect import COCO
 from watchful.vision.faces import ConsentRequired, FaceIndex
@@ -66,9 +67,9 @@ def _decode(data: bytes | None):
     return cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR) if data else None
 
 
-def _get(blobs, key: str | None) -> bytes | None:
-    """A stored picture, or None when retention already removed it."""
-    if not key:
+def _get(blobs, key: str | None, workspace_id: str | None = None) -> bytes | None:
+    """A stored picture of the searching society, or None when retention already removed it."""
+    if not key or (workspace_id and not in_society(key, workspace_id)):
         return None
     try:
         return blobs.get(key)
@@ -120,17 +121,16 @@ def _hit(e, blobs, score: float, method: str, confirmed: bool = False) -> Search
                      e.id, e.track_id, e.cls)
 
 
-def _faces(rows, blobs, faces: FaceIndex, image=None, person_id: str | None = None) -> list[SearchHit]:
-    probe = type(faces)(cfg=faces.cfg, settings=faces.settings)
-    if person_id:
-        probe.load([e for e in faces.people() if e.person_id == person_id])
-    else:
+def _faces(rows, blobs, faces: FaceIndex, image=None, person_id: str | None = None,
+           workspace_id: str | None = None) -> list[SearchHit]:
+    probe = faces.share([e for e in faces.people() if e.person_id == person_id] if person_id else [])
+    if not person_id:
         probe.enroll("query", "photo", image, consent=True)
     hits = []
     for e in rows:
         if e.kind != "track_end" or e.cls != "person" or not e.keyframe_key:
             continue
-        img = _decode(_get(blobs, e.keyframe_key))
+        img = _decode(_get(blobs, e.keyframe_key, workspace_id))
         m = probe.identify(img, (0, 0, img.shape[1], img.shape[0])) if img is not None else None
         if m:
             hits.append(_hit(e, blobs, m.score, "face", True))
@@ -142,7 +142,7 @@ def _vector(e, repo, blobs, embedder, budget: list[int]):
         return np.asarray(e.embedding, np.float32)
     if budget[0] <= 0 or not e.keyframe_key:
         return None
-    img = _decode(_get(blobs, e.keyframe_key))
+    img = _decode(_get(blobs, e.keyframe_key, getattr(repo, "workspace_id", None)))
     if img is None:
         return None
     budget[0] -= 1
@@ -151,8 +151,9 @@ def _vector(e, repo, blobs, embedder, budget: list[int]):
     return v
 
 
-def _confirm(hits: list[SearchHit], caption: str, blobs, llm: LLM, keys: dict[str, str]) -> list[SearchHit]:
-    images = [b for b in (_get(blobs, keys.get(h.event_id)) for h in hits) if b]
+def _confirm(hits: list[SearchHit], caption: str, blobs, llm: LLM, keys: dict[str, str],
+             workspace_id: str | None = None) -> list[SearchHit]:
+    images = [b for b in (_get(blobs, keys.get(h.event_id), workspace_id) for h in hits) if b]
     if len(images) != len(hits):
         return hits  # a picture is gone; keep the ranking rather than confirm the wrong numbers
     prompt = (f"These {len(images)} pictures from home cameras are numbered from 1 in order. Which of them show "
@@ -173,13 +174,15 @@ def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces:
            detector=None) -> SearchResult:
     if q.text is None and q.photo is None and q.person_id is None:
         raise ValueError("search with words, a photo or an enrolled person")
+    ws = getattr(repo, "workspace_id", None)  # pictures of this society only
     if q.person_id is not None:
         if faces is None or not any(e.person_id == q.person_id for e in faces.people()):
             raise ValueError("that person is not enrolled")
         rows = repo.query_events(camera_id=q.camera_id, kinds=["track_end"], cls="person", since=q.since,
                                  until=q.until, limit=20000)
         query = {"person_id": q.person_id, "camera_id": q.camera_id, "since": q.since, "until": q.until}
-        return SearchResult(query, _faces(rows, blobs, faces, person_id=q.person_id)[:cfg.search_top_n * 2])
+        hits = _faces(rows, blobs, faces, person_id=q.person_id, workspace_id=ws)
+        return SearchResult(query, hits[:cfg.search_top_n * 2])
     now = time.time() if now is None else now
     image = _decode(q.photo) if q.photo is not None else None
     if q.photo is not None and image is None:
@@ -191,7 +194,7 @@ def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces:
         query = {"photo": "face", "camera_id": q.camera_id, "since": q.since, "until": q.until, "classes": ["person"]}
         rows = repo.query_events(camera_id=q.camera_id, kinds=["track_end"], cls="person", since=q.since,
                                  until=q.until, limit=20000)
-        return SearchResult(query, _faces(rows, blobs, faces, image)[:cfg.search_top_n * 2])
+        return SearchResult(query, _faces(rows, blobs, faces, image, workspace_id=ws)[:cfg.search_top_n * 2])
 
     if image is not None:
         if not q.consent and detector is not None and any(d.cls == "person" for d in detector.detect(image)):
@@ -255,5 +258,5 @@ def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces:
     if llm is not None and hits and query.get("looks_like"):
         keys = {e.id: e.keyframe_key for _, e in scored if e.keyframe_key}
         top, rest = hits[:cfg.search_top_n], hits[cfg.search_top_n:]
-        hits = _confirm(top, query["looks_like"], blobs, llm, keys) + rest
+        hits = _confirm(top, query["looks_like"], blobs, llm, keys, ws) + rest
     return SearchResult(query, hits, problem)

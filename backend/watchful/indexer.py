@@ -6,6 +6,8 @@ import time
 import cv2
 import numpy as np
 
+from watchful.store.blobs import in_society
+
 log = logging.getLogger("watchful.indexer")
 INDEX_KINDS = ["scene", "track_end"]
 
@@ -22,9 +24,11 @@ def reset_if_model_changed(repo, model: str) -> bool:
 
 
 def index_once(repo, blobs, embedder, kinds: list[str] = INDEX_KINDS, limit: int = 64) -> int:
+    """Embeds up to `limit` of one society's newest unindexed moments, reading only pictures under its own key
+    prefix."""
     done = 0
     for e in repo.events_missing_embedding(kinds, limit):
-        if not e.keyframe_key:
+        if not in_society(e.keyframe_key, repo.workspace_id):
             continue
         try:
             img = cv2.imdecode(np.frombuffer(blobs.get(e.keyframe_key), np.uint8), cv2.IMREAD_COLOR)
@@ -62,12 +66,15 @@ class Indexer:
             try:
                 if self._embedder is None:
                     self._embedder = self.factory()
-                for repo in self.repos():
+                repos = list(self.repos())
+                for repo in repos:
                     if self.model and repo.workspace_id not in self._checked:
                         reset_if_model_changed(repo, self.model)
                         self._checked.add(repo.workspace_id)
-                    while not self.busy() and index_once(repo, self.blobs, self._embedder) and not self._stop.is_set():
-                        pass
+                # a batch per society in turn, so a busy society never keeps another's search behind
+                busy = repos
+                while busy and not self.busy() and not self._stop.is_set():
+                    busy = [r for r in busy if index_once(r, self.blobs, self._embedder)]
             except Exception:
                 log.exception("indexing failed")
                 time.sleep(30)

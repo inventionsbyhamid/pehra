@@ -9,6 +9,7 @@ import numpy as np
 from watchful.agent.tools import ToolContext
 from watchful.ingest.sources import Frame
 from watchful.rules.engine import Candidate
+from watchful.store.blobs import SocietyBlobs
 from watchful.tuning import EvidenceTuning
 from watchful.vision.reason import Tick
 
@@ -24,6 +25,7 @@ class EvidencePack:
     boxes: list[tuple[float, Box]]  # in the frames' pixels
     poses: list[dict] = field(default_factory=list)
     zones: list[tuple[str, list]] = field(default_factory=list)  # name and normalized polygon
+    workspace_id: str | None = None  # the camera's society; the AI check reads only its pictures and rows
 
 
 def _jpeg(image: np.ndarray, width: int) -> tuple[bytes, float]:
@@ -35,8 +37,9 @@ def _jpeg(image: np.ndarray, width: int) -> tuple[bytes, float]:
 
 
 class EvidenceBuffer:
-    def __init__(self, cfg: EvidenceTuning = EvidenceTuning(), zones: list | None = None):
-        self.cfg = cfg
+    def __init__(self, cfg: EvidenceTuning = EvidenceTuning(), zones: list | None = None,
+                 workspace_id: str | None = None):
+        self.cfg, self.workspace_id = cfg, workspace_id
         self.zones = [(z.name, z.polygon) for z in zones or []]
         self.frames: deque[tuple[float, bytes]] = deque()
         self.paths: dict[int, deque] = {}
@@ -66,11 +69,12 @@ class EvidenceBuffer:
         frames = [(ts, j) for ts, j in self.frames if c.ts - self.cfg.before_s <= ts <= c.ts + self.cfg.after_s]
         k = self.scale
         boxes = [(ts, (b[0] * k, b[1] * k, b[2] * k, b[3] * k)) for ts, b in self.paths.get(c.track_id, [])]
-        return EvidencePack(c, frames, boxes, list(self.poses.get(c.track_id, [])), self.zones)
+        return EvidencePack(c, frames, boxes, list(self.poses.get(c.track_id, [])), self.zones, self.workspace_id)
 
 
 def file_pack(path: str, start_epoch: float, c: Candidate, path_boxes: list[tuple[float, Box]],
-              poses: list[dict], cfg: EvidenceTuning = EvidenceTuning(), zones: list | None = None) -> EvidencePack:
+              poses: list[dict], cfg: EvidenceTuning = EvidenceTuning(), zones: list | None = None,
+              workspace_id: str | None = None) -> EvidencePack:
     """Evidence for a candidate found in a recording, read back from the file."""
     cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG)
     frames, scale = [], 1.0
@@ -86,7 +90,7 @@ def file_pack(path: str, start_epoch: float, c: Candidate, path_boxes: list[tupl
         t += 1 / cfg.fps
     cap.release()
     return EvidencePack(c, frames, [(ts, tuple(v * scale for v in b)) for ts, b in path_boxes], poses,
-                        [(z.name, z.polygon) for z in zones or []])
+                        [(z.name, z.polygon) for z in zones or []], workspace_id)
 
 
 def _nearest(items: list, ts: float):
@@ -109,6 +113,11 @@ def overlay(jpeg: bytes, zones: list[tuple[str, list]], box: Box | None) -> byte
 
 
 def evidence_context(pack: EvidencePack, repo, blobs) -> ToolContext:
+    """The AI check's tools for one candidate, bound to the camera's society: its repository and its pictures."""
+    if pack.workspace_id and pack.workspace_id != repo.workspace_id:
+        raise ValueError("an evidence pack is checked with its own society's repository")
+    if pack.workspace_id:
+        blobs = SocietyBlobs(blobs, pack.workspace_id)
     frames = pack.frames
 
     def drawn(ts: float, jpeg: bytes) -> bytes:

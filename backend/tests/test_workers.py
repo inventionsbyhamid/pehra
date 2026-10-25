@@ -110,9 +110,10 @@ def test_crashed_camera_is_restarted_and_bad_watches_are_skipped(manager, clip20
     m.start(cam.id)
     assert wait(lambda: m.status(cam.id).source_status == "live", 30)
     assert "old zone" in " ".join(m.status(cam.id).problems)
-    first = m.handles[cam.id].process.pid
-    m.handles[cam.id].process.kill()
-    assert wait(lambda: m.handles[cam.id].process.pid != first and m.status(cam.id).running, 30)
+    slot = m.pool.slots[m.status(cam.id).process]
+    first = slot.process.pid
+    slot.process.kill()
+    assert wait(lambda: slot.process.pid != first and slot.process.is_alive() and m.status(cam.id).running, 30)
 
 
 def test_rescanning_an_upload_replaces_its_timeline(manager, clip20, tmp_path):
@@ -131,11 +132,3 @@ def test_rescanning_an_upload_replaces_its_timeline(manager, clip20, tmp_path):
     assert wait(lambda: m.scan(second)["state"] == "done", 120)
     assert len(repo.query_events(camera_id=cam.id, limit=10000)) == events
     assert len(repo.list_alerts(cam.id, 500)) == alerts and m.scan(second)["alert_ids"] == []
-
-
-def test_tamper_becomes_an_alert(manager):
-    m, repo = manager
-    # a recent moment: the retention janitor, which starts with the manager, deletes alerts from long ago
-    m._handle({"type": "tamper", "camera_id": "camT", "ts": time.time(), "kind": "covered", "detail": "flat"})
-    a = repo.list_alerts("camT")[0]
-    assert a.status == "alert" and "covered" in a.summary and a.severity == "warning"

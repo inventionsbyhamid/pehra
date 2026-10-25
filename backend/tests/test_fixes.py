@@ -84,11 +84,13 @@ def test_enrolment_photo_kept_by_retention_and_removed_on_delete(tmp_path):
     pid = c.post("/api/people", data={"name": "P", "consent": "true"}, files={"photo": ("p.jpg", photo)}).json()["person_id"]
     old = time.time() - 30 * 86400
     import os
-    os.utime(tmp_path / "blobs" / "people" / f"{pid}.jpg", (old, old))
-    blobs.delete_older_than(7)
-    assert blobs.get(f"people/{pid}.jpg")
+    from watchful.workers import run_retention
+    photo_path = tmp_path / "blobs" / SOCIETY / "people" / f"{pid}.jpg"  # under the society's prefix
+    os.utime(photo_path, (old, old))
+    run_retention(app.state.ctx.settings, app.state.ctx.repo_for(SOCIETY), blobs)
+    assert blobs.get(f"{SOCIETY}/people/{pid}.jpg")
     c.delete(f"/api/people/{pid}")
-    assert not (tmp_path / "blobs" / "people" / f"{pid}.jpg").exists()
+    assert not photo_path.exists()
 
 
 def test_upload_clip_is_cut_at_the_alert_moment(tmp_path, monkeypatch):
@@ -118,18 +120,19 @@ def test_retention_keeps_demo_cameras_and_enrolment_photos(tmp_path):
     demo = repo.add_camera(Camera(None, "Plaza", "demo", "x.mp4"))
     live = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://x"))
     old = time.time() - 30 * 86400
+    ws = repo.workspace_id
     for cam in (demo, live):
         repo.add_events([EventRow(None, cam.id, old, "enter", 1, "person", "z", {}, None, None, None, None)])
         repo.add_alert(AlertRow(None, cam.id, None, old, "info", "alert", "x", None, None, [], None, f"f{cam.id}"))
-        blobs.put(f"{cam.id}/kf/1.jpg", b"x", "image/jpeg")
-    blobs.put("people/p1.jpg", b"x", "image/jpeg")
+        blobs.put(f"{ws}/{cam.id}/kf/1.jpg", b"x", "image/jpeg")
+    blobs.put(f"{ws}/people/p1.jpg", b"x", "image/jpeg")
     for f in (tmp_path / "blobs").rglob("*.jpg"):
         os.utime(f, (old, old))
     run_retention(s, repo, blobs)
     assert repo.query_events(camera_id=live.id) == [] and repo.list_alerts(live.id) == []
     assert repo.query_events(camera_id=demo.id) and repo.list_alerts(demo.id)
-    assert blobs.get(f"{demo.id}/kf/1.jpg") and blobs.get("people/p1.jpg")
-    assert not (tmp_path / "blobs" / live.id / "kf" / "1.jpg").exists()
+    assert blobs.get(f"{ws}/{demo.id}/kf/1.jpg") and blobs.get(f"{ws}/people/p1.jpg")
+    assert not (tmp_path / "blobs" / ws / live.id / "kf" / "1.jpg").exists()
 
 
 def test_saving_zones_turns_off_watches_that_lost_their_zone(tmp_path):

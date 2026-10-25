@@ -5,9 +5,9 @@ import numpy as np
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
-from watchful.api.common import LIVE_KINDS
 from watchful.auth.deps import CurrentMember, require_role
 from watchful.billing.limits import staff_allowed, staff_refusal, workspace_of
+from watchful.store.blobs import in_society, society_key
 from watchful.store.db import new_id
 from watchful.vision.faces import NoFaceFound
 
@@ -19,11 +19,6 @@ def mount(app: FastAPI, ctx) -> None:
 def make_router(ctx) -> APIRouter:
     router = APIRouter()
     manager = ctx.manager
-
-    def restart_cameras(repo) -> None:
-        for cam in repo.list_cameras():
-            if cam.kind in LIVE_KINDS:
-                manager.restart(cam.id)
 
     @router.get("/api/people")
     def people(member: CurrentMember = Depends(require_role("supervisor"))):
@@ -51,7 +46,7 @@ def make_router(ctx) -> APIRouter:
         if image is None:
             raise HTTPException(400, "That picture can't be read.")
         person_id = new_id("per")
-        key = f"people/{person_id}.jpg"
+        key = society_key(ws, "people", f"{person_id}.jpg")
         faces = await run_in_threadpool(ctx.faces_for, ws)
         try:
             enrolled = faces.enroll(person_id, name, image, consent=True, thumbnail_key=key)
@@ -60,20 +55,22 @@ def make_router(ctx) -> APIRouter:
         ctx.blobs.put(key, data, "image/jpeg")
         repo.add_enrollment(enrolled)
         ctx.db.audit(ws, member.user.id, "person.enroll", {"person": person_id, "name": name})
-        await run_in_threadpool(restart_cameras, repo)  # restarts join processes; keep the loop free
+        await run_in_threadpool(manager.reload_faces, ws)  # every camera process with this society's cameras
         return {"person_id": person_id, "name": name}
 
     @router.delete("/api/people/{person_id}")
     def forget(person_id: str, member: CurrentMember = Depends(require_role("admin"))):
         ws = member.workspace.id
         repo = ctx.repo_for(ws)
-        if not any(e.person_id == person_id for e in repo.list_enrollments()):
+        enrolled = next((e for e in repo.list_enrollments() if e.person_id == person_id), None)
+        if enrolled is None:
             raise HTTPException(404, "No such person.")
         repo.delete_enrollment(person_id)
         ctx.forget_faces(ws)
-        ctx.blobs.delete(f"people/{person_id}.jpg")
+        if in_society(enrolled.thumbnail_key, ws):
+            ctx.blobs.delete(enrolled.thumbnail_key)
         ctx.db.audit(ws, member.user.id, "person.forget", {"person": person_id})
-        restart_cameras(repo)
+        manager.reload_faces(ws)  # gone from every camera process, no restarts
         return {"ok": True}
 
     return router

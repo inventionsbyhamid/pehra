@@ -163,8 +163,7 @@ def mount(app: FastAPI, ctx) -> None:
         finally:
             incoming.cancel()
             stopping.cancel()
-            if hub.leave(cam.id, sender):
-                await run_in_threadpool(manager.stop, cam.id)  # nobody is sending this camera any more
+            hub.leave(cam.id, sender)  # the camera keeps running: with no pictures it goes offline (health.py)
 
     @app.websocket("/ws/cameras/{camera_id}/push")
     async def push(ws: WebSocket, camera_id: str):

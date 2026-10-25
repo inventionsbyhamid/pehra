@@ -426,7 +426,7 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub "${Prefix}-camera-workers"
-      AlarmDescription: A camera worker process stayed down, or the app stopped reporting, for 10 minutes; cameras are not watched
+      AlarmDescription: A camera process stayed down, or the app stopped reporting, for 10 minutes; its cameras are not watched
       Namespace: Watchful
       MetricName: camera_workers_down
       Statistic: Maximum
@@ -463,12 +463,12 @@ Resources:
       DashboardBody: !Sub |
         {"widgets": [
           {"type": "metric", "x": 0, "y": 0, "width": 12, "height": 6, "properties": {
-            "title": "Frames analysed per second, by camera", "region": "${AWS::Region}", "view": "timeSeries",
-            "metrics": [[{"expression": "SEARCH('{Watchful,Camera} MetricName=\"FramesPerSecond\"', 'Average', 300)", "id": "fps"}]],
+            "title": "Frames analysed per second per camera, by camera process", "region": "${AWS::Region}", "view": "timeSeries",
+            "metrics": [[{"expression": "SEARCH('{Watchful,Process} MetricName=\"FramesPerSecond\"', 'Average', 300)", "id": "fps"}]],
             "yAxis": {"left": {"min": 0}}}},
           {"type": "metric", "x": 12, "y": 0, "width": 12, "height": 6, "properties": {
-            "title": "Analysis ms per frame, by camera", "region": "${AWS::Region}", "view": "timeSeries",
-            "metrics": [[{"expression": "SEARCH('{Watchful,Camera} MetricName=\"MsPerFrame\"', 'Average', 300)", "id": "ms"}]],
+            "title": "Analysis ms per frame, by camera process", "region": "${AWS::Region}", "view": "timeSeries",
+            "metrics": [[{"expression": "SEARCH('{Watchful,Process} MetricName=\"MsPerFrame\"', 'Average', 300)", "id": "ms"}]],
             "yAxis": {"left": {"min": 0}}}},
           {"type": "metric", "x": 0, "y": 6, "width": 12, "height": 6, "properties": {
             "title": "Alerts by outcome, per hour", "region": "${AWS::Region}", "view": "timeSeries", "stacked": true,

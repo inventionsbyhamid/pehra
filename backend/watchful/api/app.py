@@ -106,8 +106,8 @@ def create_app(settings: Settings | None = None, llm=None, manager=None, provide
         app.state.plans.start()  # cameras beyond a society's plan are switched off before any starts
         for ws in ctx.workspace_ids():
             for cam in ctx.repo_for(ws).list_cameras():
-                if cam.enabled and cam.kind in LIVE_KINDS - {"webcam"}:
-                    ctx.manager.start(cam.id, ws)
+                if cam.enabled and cam.kind in LIVE_KINDS:  # a camera that sends its own pictures too, so it can
+                    ctx.manager.start(cam.id, ws)  # go offline when its device does not come back
         if jobs:
             from watchful.worker import InAppWorker
             app.state.jobs = InAppWorker(settings, ctx.tuning)

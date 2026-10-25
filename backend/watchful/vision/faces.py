@@ -46,6 +46,18 @@ class FaceIndex:
                                                   cfg.detect_score)
         self.recognizer = cv2.FaceRecognizerSF.create(str(model_path("sface", settings)), "")
         self._people: dict[str, Enrollment] = {}
+        self.workspace_id: str | None = None
+
+    def share(self, enrollments: list[Enrollment] | None = None, workspace_id: str | None = None) -> "FaceIndex":
+        """Another index on the same two networks with its own people: a camera process keeps one per society it
+        watches, so a face enrolled in one society is never named on another's camera. With `workspace_id` it
+        refuses anyone enrolled in another society."""
+        other = object.__new__(type(self))
+        other.cfg, other.settings, other.threshold = self.cfg, self.settings, self.threshold
+        other.detector, other.recognizer = self.detector, self.recognizer
+        other.workspace_id, other._people = workspace_id, {}
+        other.load(enrollments or [])
+        return other
 
     def has_face(self, image: np.ndarray) -> bool:
         return len(self._faces(image)) > 0
@@ -74,7 +86,8 @@ class FaceIndex:
         return e
 
     def load(self, enrollments: list[Enrollment]) -> None:
-        self._people = {e.person_id: e for e in enrollments}
+        ws = getattr(self, "workspace_id", None)
+        self._people = {e.person_id: e for e in enrollments if not ws or e.workspace_id in (None, ws)}
 
     def remove(self, person_id: str) -> None:
         self._people.pop(person_id, None)

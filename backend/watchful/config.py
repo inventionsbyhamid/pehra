@@ -65,7 +65,8 @@ class Settings(BaseSettings):
     alert_dedupe_days: float = 14
     scan_workers: int = 0
     scan_pool_at_start: bool = True  # start and warm the scan workers with the app, not on the first upload
-    camera_threads: int = 2  # OpenCV threads per live camera process
+    camera_processes: int = 0  # live cameras share this many processes, assigned round robin; 0: one per CPU
+    camera_threads: int = 1  # OpenCV threads per camera process; one process per CPU already fills them
     scan_overlap_s: float = 2.0
     ai_parallel: int = 6
 

@@ -43,7 +43,10 @@ def alert_json(blobs, a) -> dict:
 
 
 def camera_json(manager, cam: Camera) -> dict:
+    """`status` is the camera worker's state; `health` (live, offline, covered, moved or blurred) the camera's own,
+    as the app judges it now, else as last written to its row; None for a camera that never sent a picture."""
     st = manager.status(cam.id)
-    return {**asdict(cam), "url": redact_url(cam.url),
+    seen = cam.status if cam.last_frame_at is not None else None
+    return {**asdict(cam), "url": redact_url(cam.url), "health": getattr(st, "health", None) or seen,
             "status": {"running": st.running, "source": st.source_status, "fps": round(st.fps, 1),
                        "loops": st.loops, "stats": st.stats, "problems": st.problems}}

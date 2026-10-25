@@ -290,5 +290,21 @@
       "cooldown_s": 600,
       "verify": "Does this look like $text?"
     }
+  },
+  "camera_problem": {
+    "description": "A camera is covered or offline (every society starts with this one, for all its cameras)",
+    "watch": {
+      "name": "A camera is covered or offline",
+      "scope": "site",
+      "conditions": [
+        {
+          "signal": "camera_health",
+          "op": "in",
+          "value": ["covered", "offline"]
+        }
+      ],
+      "severity": "warning",
+      "cooldown_s": 600
+    }
   }
 }

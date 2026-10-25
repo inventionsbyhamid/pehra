@@ -1,4 +1,6 @@
+import ctypes
 import threading
+import time
 from typing import Protocol
 
 import cv2
@@ -33,7 +35,20 @@ class OnnxEmbedder:
                                               cv2.dnn.ENGINE_AUTO)
         self._text_net = None
         self._tokenizer = None
+        self._text_used = 0.0
         self._lock = threading.Lock()  # one network, shared by the indexer, searches and scans
+
+    def release_text(self, idle_s: float = 0.0) -> bool:
+        """Drops the text tower (about 1.5 GB once run) when unused for idle_s; the next text loads it again."""
+        with self._lock:
+            if self._text_net is None or time.monotonic() - self._text_used < idle_s:
+                return False
+            self._text_net = self._tokenizer = None
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except (OSError, AttributeError):
+            pass
+        return True
 
     def image(self, crop: np.ndarray) -> np.ndarray:
         s = self.spec
@@ -50,6 +65,7 @@ class OnnxEmbedder:
             return self._text(query, s)
 
     def _text(self, query: str, s) -> np.ndarray:
+        self._text_used = time.monotonic()
         if self._text_net is None:
             self._text_net = cv2.dnn.readNetFromONNX(str(embedder_path(self.name, "text.onnx", self.settings)),
                                                      cv2.dnn.ENGINE_AUTO)

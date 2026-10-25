@@ -138,7 +138,7 @@ NAMESPACE = "Watchful"
 MODEL = "anthropic.claude-haiku-5-5"
 # metrics the alarms read that the app does not put yet, with what will put them; a strict xfail below fails the
 # moment one appears in the code, so its entry is removed and the main check covers it
-PENDING_METRICS = {"camera_workers_down": "the camera pool's supervisor"}
+PENDING_METRICS: dict[str, str] = {}
 PENDING_MODULES: dict[str, str] = {}
 
 

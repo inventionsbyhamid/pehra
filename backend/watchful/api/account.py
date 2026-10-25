@@ -26,6 +26,7 @@ from watchful.billing.limits import effective_plan
 from watchful.brand import BRAND
 from watchful.db import models as m
 from watchful.ratelimit import TooManyTries, client_key
+from watchful.store.sql import add_default_watches
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +106,7 @@ def add_workspace(s, user_id: str, name: str, timezone: str, **fields) -> m.Work
     s.flush()  # no relationship orders the two inserts
     s.add(m.Member(workspace_id=ws.id, user_id=user_id, role="owner"))
     s.add(m.Audit(workspace_id=ws.id, actor=user_id, action="workspace.create", data={"name": ws.name}))
+    add_default_watches(s, ws.id)
     return ws
 
 

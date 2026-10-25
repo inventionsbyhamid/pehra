@@ -32,15 +32,15 @@ def world(tmp_path):
     ctx = app.state.ctx
     repo = ctx.repo_for(B)
     cam = repo.add_camera(Camera(None, "Lake gate", "stream", "rtsp://lake", [Zone("z1", "gate", [(0, 0), (1, 1)])]))
-    event = EventRow(None, cam.id, time.time(), "enter", 7, "person", "gate", {}, f"{cam.id}/kf/7.jpg", [0.1], None,
-                     None)
+    event = EventRow(None, cam.id, time.time(), "enter", 7, "person", "gate", {}, f"{B}/{cam.id}/kf/7.jpg", [0.1],
+                     None, None)
     repo.add_events([event])
     watch = repo.add_watch(WatchRow(None, cam.id, "someone at the gate", {"name": "x"}, True))
     alert = repo.add_alert(AlertRow(None, cam.id, watch.id, time.time(), "critical", "alert", "Lake alert",
-                                    f"{cam.id}/clips/a.mp4", f"{cam.id}/kf/7.jpg", [], None, "fp-b", 7))
-    repo.add_enrollment(Enrollment("per_lake", "Lake staff", [0.5] * 128, thumbnail_key="people/per_lake.jpg"))
-    example = repo.add_state_example(cam.id, "z1", "open", f"{cam.id}/zones/z1/day/1.jpg")
-    for key in (f"{cam.id}/kf/7.jpg", "people/per_lake.jpg", f"{B}/x/1.jpg"):
+                                    f"{B}/{cam.id}/clips/a.mp4", f"{B}/{cam.id}/kf/7.jpg", [], None, "fp-b", 7))
+    repo.add_enrollment(Enrollment("per_lake", "Lake staff", [0.5] * 128, thumbnail_key=f"{B}/people/per_lake.jpg"))
+    example = repo.add_state_example(cam.id, "z1", "open", f"{B}/{cam.id}/states/z1/1_day.jpg")
+    for key in (f"{B}/{cam.id}/kf/7.jpg", f"{B}/people/per_lake.jpg", f"{B}/x/1.jpg", f"{cam.id}/kf/old.jpg"):
         ctx.blobs.put(key, b"\xff\xd8 picture", "image/jpeg")
     manager.scans["scn_lake"] = {"state": "done", "progress": 1.0, "camera_id": cam.id}
     incident = open_or_touch_incident(repo, cam.id, watch.id, "critical", "Lake incident", None, time.time())
@@ -52,7 +52,7 @@ def world(tmp_path):
         bina = tx.scalar(select(m.User.id).where(m.User.email == "bina@example.com"))
     ids = {"camera_id": cam.id, "watch_id": watch.id, "alert_id": alert.id, "scan_id": "scn_lake",
            "person_id": "per_lake", "user_id": bina, "invite_id": invite["id"], "token": invite["id"],
-           "key": f"{cam.id}/kf/7.jpg", "zone_id": "z1", "example_id": example, "incident_id": incident.id,
+           "key": f"{B}/{cam.id}/kf/7.jpg", "zone_id": "z1", "example_id": example, "incident_id": incident.id,
            "link_id": link.id}
     return app, a, b, ids, event
 
@@ -121,7 +121,7 @@ def test_every_route_is_scoped(world):
 def test_blob_from_another_society_is_refused(world):
     app, a, b, ids, _ = world
     blobs = app.state.ctx.blobs
-    for key in (ids["key"], "people/per_lake.jpg", f"{B}/x/1.jpg"):
+    for key in (ids["key"], f"{B}/people/per_lake.jpg", f"{B}/x/1.jpg"):
         url = blobs.url(key)
         assert url.startswith("/api/blobs/") and "s=" in url
         assert b.get(url).status_code == 200 and b.get(url).content == b"\xff\xd8 picture"
@@ -131,11 +131,13 @@ def test_blob_from_another_society_is_refused(world):
         assert b.get(url.replace("s=", "s=x")).status_code == 404  # tampered
     expired = blobs.signer.url(ids["key"], now=time.time() - 2 * blobs.signer.ttl_s)
     assert b.get(expired).status_code == 404
-    other = blobs.signer.url(f"{ids['camera_id']}/kf/8.jpg")
+    other = blobs.signer.url(f"{B}/{ids['camera_id']}/kf/8.jpg")
     assert b.get(other.replace("kf/8.jpg", "kf/7.jpg")).status_code == 404  # a signature is for one key
     alerts = b.get("/api/alerts").json()
     assert alerts[0]["keyframe_url"].startswith("/api/blobs/") and b.get(alerts[0]["keyframe_url"]).status_code == 200
     assert json.dumps(a.get("/api/alerts").json()) == "[]"
+    # a key outside the society's prefix is served to no one, even under the society's own camera id
+    assert b.get(blobs.url(f"{ids['camera_id']}/kf/old.jpg")).status_code == 404
 
 
 def test_a_watch_never_points_at_another_societys_picture(world):
@@ -145,7 +147,7 @@ def test_a_watch_never_points_at_another_societys_picture(world):
     app, a, _, ids, event = world
     repo = app.state.ctx.repo_for(A)
     cam = repo.add_camera(Camera(None, "Green gate", "stream", "rtsp://green"))
-    mine = EventRow(None, cam.id, time.time(), "enter", 3, "person", None, {}, f"{cam.id}/kf/3.jpg", [0.2], [0.3],
+    mine = EventRow(None, cam.id, time.time(), "enter", 3, "person", None, {}, f"{A}/{cam.id}/kf/3.jpg", [0.2], [0.3],
                     None)
     repo.add_events([mine])
     theirs = {"event_id": event.id, "crop_key": ids["key"], "embedding": [0.1], "expires_at": time.time() + 3600}

@@ -43,12 +43,14 @@ def annotate(image: np.ndarray, camera: Camera, tick: Tick) -> np.ndarray:
 
 
 class CameraPipeline:
-    """Perceiver then Reasoner for a live source; events go to the repository."""
+    """Perceiver then Reasoner for a live source; events go to `repo` (anything with add_events: in a camera process,
+    a sink that sends them to the app, which writes them through the camera's own society). A camera process passes
+    the detector and pose models it shares between its cameras."""
 
     def __init__(self, camera: Camera, repo: Repository, blobs: BlobStore, faces: FaceIndex | None,
-                 settings: Settings, tuning: Tuning, needs: Needs, embedder=None):
+                 settings: Settings, tuning: Tuning, needs: Needs, embedder=None, detector=None, pose=None):
         self.camera, self.repo = camera, repo
-        self.perceiver = Perceiver(camera, settings, tuning, blobs, faces, needs, embedder)
+        self.perceiver = Perceiver(camera, settings, tuning, blobs, faces, needs, embedder, detector, pose)
         self.reasoner = Reasoner(camera, tuning, postures=needs.pose or needs.posture)
 
     def set_needs(self, needs: Needs) -> None:

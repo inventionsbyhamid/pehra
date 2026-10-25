@@ -4,6 +4,7 @@ from fastapi.responses import RedirectResponse
 
 from watchful.api.common import alert_json, alert_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
+from watchful.store.blobs import society_key
 from watchful.vision.scan import cut_clip
 
 
@@ -57,7 +58,7 @@ def make_router(ctx) -> APIRouter:
     def clip(alert_id: str, member: CurrentMember = Depends(current_member)):
         r = repo(member)
         a = alert_or_404(r, alert_id)
-        key = a.clip_key or f"{a.camera_id}/clips/{a.fingerprint}.mp4"
+        key = a.clip_key or society_key(member.workspace.id, a.camera_id, "clips", f"{a.fingerprint}.mp4")
         try:
             ctx.blobs.get(key)
         except (OSError, KeyError):

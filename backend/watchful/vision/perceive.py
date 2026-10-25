@@ -7,7 +7,7 @@ import numpy as np
 from watchful.components import make_detector, make_pose
 from watchful.config import Settings
 from watchful.ingest.sources import Frame
-from watchful.store.blobs import BlobStore
+from watchful.store.blobs import BlobStore, society_key
 from watchful.store.db import Camera
 from watchful.tuning import Tuning
 from watchful.vision.appearance import signature
@@ -164,7 +164,7 @@ class Perceiver:
         if ts - self._last_scene < every:
             return None
         self._last_scene = ts
-        key = f"{self.camera.id}/scene/{int(ts * 1000)}.jpg"
+        key = society_key(self.camera.workspace_id, self.camera.id, "scene", f"{int(ts * 1000)}.jpg")
         ok, jpg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, self.t.perceive.jpeg_quality])
         if not ok:
             return None
@@ -247,7 +247,7 @@ class Perceiver:
         if c.size == 0:
             return
         m.keyframe_ts = ts
-        key = f"{self.camera.id}/kf/{t.id}_{int(ts * 1000)}.jpg"
+        key = society_key(self.camera.workspace_id, self.camera.id, "kf", f"{t.id}_{int(ts * 1000)}.jpg")
         ok, jpg = cv2.imencode(".jpg", c, [cv2.IMWRITE_JPEG_QUALITY, self.t.perceive.jpeg_quality])
         if ok:
             self.blobs.put(key, jpg.tobytes(), "image/jpeg")
