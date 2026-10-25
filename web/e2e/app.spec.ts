@@ -289,7 +289,7 @@ test("settings, people and the printable notice", async ({ page }) => {
   await check(page, "21-people");
 });
 
-test("signed out, the incident link asks to sign in and comes back", async ({ page }) => {
+test("signed out, the incident link asks to sign in first", async ({ page }) => {
   await page.goto("/incidents/inc_from_telegram");
   await expect(page.getByRole("heading", { name: `Sign in to ${BRAND.name}` })).toBeVisible();
   await check(page, "22-signed-out");
