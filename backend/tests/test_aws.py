@@ -38,7 +38,7 @@ def aws(monkeypatch):
 
 
 def settings(tmp_path, **kw):
-    return Settings(demo_password="x", session_secret="y", data_dir=tmp_path, aws_region=REGION,
+    return Settings(session_secret="y", data_dir=tmp_path, aws_region=REGION,
                     s3_bucket="wf-test", _env_file=None, **kw)
 
 
@@ -940,6 +940,22 @@ def test_instance_settings_force_rtsp_over_tcp_for_systemd_and_shell(tmp_path):
         got = subprocess.run(["bash", "-c", f'set -a; . "$1"; printf %s "${name}"', "-", env_file],
                              capture_output=True, text=True, check=True).stdout
         assert got == plain, line  # what systemd reads (quotes removed) is what the shell reads
+
+
+def test_every_required_setting_reaches_the_instance():
+    """A required setting with no default must come from the stack's file or be generated into SSM by deploy.sh;
+    nothing on AWS asks for the old demo password."""
+    from watchful.config import Settings
+    deploy = (DEPLOY / "deploy.sh").read_text()
+    generated = set(re.search(r'^GENERATED="([^"]*)"', deploy, re.M).group(1).split())
+    required = {name.upper() for name, field in Settings.model_fields.items() if field.is_required()}
+    assert required and required <= generated | stack_decided(), required - generated - stack_decided()
+    assert {"SESSION_SECRET", "DATA_KEY"} <= required
+    params = (DEPLOY / "params.env.example").read_text()
+    assert all(re.search(rf"^{name}=$", params, re.M) for name in generated)
+    for path in DEPLOY.rglob("*"):
+        if path.is_file() and path.suffix not in (".mp4", ".pyc"):
+            assert "DEMO_PASSWORD" not in path.read_text() and "DEMO_USER" not in path.read_text(), path
 
 
 def test_deploy_refuses_names_the_stack_sets(fake_aws, tmp_path):
