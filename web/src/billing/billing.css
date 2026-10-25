@@ -1,0 +1,315 @@
+/* The billing panel. Its own rules, scoped to .bp, with the app's colour names and the site's values as fallbacks, so
+   it looks the same wherever it is mounted. No gradients; the brand colour for actions; red only for a problem. */
+.bp {
+  --bp-ink: var(--ink, #15201d);
+  --bp-ink-2: var(--ink-2, #43514e);
+  --bp-ink-3: var(--ink-3, #56655f);
+  --bp-line: var(--line, #cdd6d2);
+  --bp-card: var(--card, #fff);
+  --bp-tint: var(--tint, #eaefec);
+  --bp-brand: var(--brand, #1f3a5f);
+  --bp-alert: var(--alert, #ad3127);
+  --bp-alert-soft: var(--alert-soft, #f8e9e7);
+  display: grid;
+  gap: 1rem;
+  max-width: 44rem;
+  color: var(--bp-ink);
+  line-height: 1.5;
+}
+
+.bp-title {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.bp-sub {
+  margin: 0 0 0.25rem;
+  font-size: 1.15rem;
+}
+
+.bp-card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  border: 1px solid var(--bp-line);
+  border-radius: 12px;
+  background: var(--bp-card);
+}
+
+.bp-label {
+  margin: 0;
+  color: var(--bp-ink-3);
+  font-size: 0.9rem;
+}
+
+.bp-plan {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.bp-meta,
+.bp-hint {
+  margin: 0;
+  color: var(--bp-ink-2);
+}
+
+.bp-hint {
+  font-size: 0.9rem;
+}
+
+.bp-hint a,
+.bp-meta a {
+  color: var(--bp-brand);
+}
+
+.bp-note,
+.bp-error {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+}
+
+.bp-note {
+  background: var(--bp-tint);
+}
+
+.bp-error {
+  background: var(--bp-alert-soft);
+  color: var(--bp-alert);
+}
+
+.bp-card > .bp-error {
+  padding: 0;
+  background: none;
+}
+
+.bp-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem 1.5rem;
+  margin: 0.25rem 0 0;
+}
+
+.bp-facts div {
+  min-width: 0;
+}
+
+.bp-facts dt {
+  color: var(--bp-ink-3);
+  font-size: 0.9rem;
+}
+
+.bp-facts dd {
+  margin: 0.1rem 0 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.bp-meter {
+  display: block;
+  height: 6px;
+  margin-top: 0.4rem;
+  border-radius: 3px;
+  background: var(--bp-tint);
+  overflow: hidden;
+}
+
+.bp-meter span {
+  display: block;
+  height: 100%;
+  background: var(--bp-brand);
+}
+
+.bp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.bp-btn {
+  min-height: 2.75rem;
+  padding: 0 1.25rem;
+  border: 1px solid var(--bp-brand);
+  border-radius: 8px;
+  background: var(--bp-brand);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  justify-self: start;
+}
+
+.bp-btn-line {
+  background: transparent;
+  color: var(--bp-brand);
+}
+
+.bp-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.bp-btn:focus-visible,
+.bp-toggle:focus-visible,
+.bp-stepper button:focus-visible,
+.bp-stepper input:focus-visible {
+  outline: 3px solid var(--bp-brand);
+  outline-offset: 2px;
+}
+
+.bp-change {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--bp-line);
+}
+
+.bp-period {
+  display: inline-flex;
+  justify-self: start;
+  padding: 3px;
+  border: 1px solid var(--bp-line);
+  border-radius: 999px;
+}
+
+.bp-toggle {
+  min-height: 2.25rem;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bp-ink-2);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.bp-toggle[aria-pressed="true"] {
+  background: var(--bp-brand);
+  color: #fff;
+}
+
+.bp-stepper {
+  display: inline-flex;
+  justify-self: start;
+  align-items: stretch;
+  border: 1px solid var(--bp-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.bp-stepper button {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  border: 0;
+  background: var(--bp-tint);
+  color: var(--bp-ink);
+  cursor: pointer;
+}
+
+.bp-stepper button:disabled {
+  color: var(--bp-ink-3);
+  cursor: default;
+}
+
+.bp-stepper input {
+  width: 4.5rem;
+  min-height: 2.75rem;
+  border: 0;
+  background: var(--bp-card);
+  color: var(--bp-ink);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.bp-stepper input::-webkit-inner-spin-button,
+.bp-stepper input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.bp-total {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.bp-unit {
+  color: var(--bp-ink-3);
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.bp-foot {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.bp-currency {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.bp-currency .cur-usd {
+  margin: 0;
+}
+
+.bp .cur-switch {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--bp-line);
+  border-radius: 999px;
+  background: var(--bp-card);
+}
+
+.bp .cur-switch button {
+  min-width: 2.75rem;
+  min-height: 2.25rem;
+  padding: 0 0.8rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bp-ink-2);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.bp .cur-switch button[aria-pressed="true"] {
+  background: var(--bp-brand);
+  color: #fff;
+}
+
+.bp .visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* rupees unless the viewer picked dollars (the site's currency switch marks <html>) */
+html:not([data-currency="usd"]) .bp .cur-usd,
+html[data-currency="usd"] .bp .cur-inr {
+  display: none !important;
+}
+
+@media (max-width: 30rem) {
+  .bp-card {
+    padding: 1rem;
+  }
+
+  .bp-actions .bp-btn {
+    flex: 1 1 100%;
+  }
+}
