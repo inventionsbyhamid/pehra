@@ -1,0 +1,69 @@
+{
+  "currency": "INR",
+  "prices_include_tax": false,
+  "merchant_of_record": "Polar",
+  "usd_inr": {
+    "rate": 94.9432,
+    "date": "2026-10-23",
+    "source": "Reserve Bank of India reference rate, rupees for one US dollar",
+    "source_url": "https://www.rbi.org.in/scripts/ReferenceRateArchive.aspx",
+    "checked": "2026-10-25",
+    "use": "Approximate dollar amounts shown to visitors outside India. Charges are always in rupees."
+  },
+  "default_plan": "free",
+  "billing_unit": "watched_camera",
+  "features": {
+    "control_room": "Control room with camera health",
+    "any_watch": "Any watch in plain words",
+    "telegram": "Graded alerts on Telegram",
+    "gate_ledger": "Gate log of every vehicle",
+    "staff_register": "Staff register from consented faces",
+    "daily_summary": "Daily summary at 9 AM",
+    "custom_retention": "Retention to suit your rules",
+    "setup_help": "Help connecting your cameras"
+  },
+  "plans": [
+    {
+      "id": "free",
+      "name": "Free",
+      "summary": "Try it on two cameras.",
+      "price_month_inr": 0,
+      "price_year_inr": null,
+      "per_camera": false,
+      "contact": false,
+      "limits": { "watched_cameras": 2, "min_cameras": null, "retention_days": 7 },
+      "features": ["control_room", "any_watch", "telegram"]
+    },
+    {
+      "id": "society",
+      "name": "Society",
+      "summary": "The cameras that matter, usually 6 to 12.",
+      "price_month_inr": 699,
+      "price_year_inr": 6990,
+      "per_camera": true,
+      "contact": false,
+      "limits": { "watched_cameras": 49, "min_cameras": null, "retention_days": 30 },
+      "features": ["control_room", "any_watch", "telegram", "gate_ledger", "staff_register", "daily_summary"]
+    },
+    {
+      "id": "large",
+      "name": "Large sites",
+      "summary": "Malls, schools and townships.",
+      "price_month_inr": null,
+      "price_year_inr": null,
+      "per_camera": true,
+      "contact": true,
+      "limits": { "watched_cameras": null, "min_cameras": 50, "retention_days": null },
+      "features": [
+        "control_room",
+        "any_watch",
+        "telegram",
+        "gate_ledger",
+        "staff_register",
+        "daily_summary",
+        "custom_retention",
+        "setup_help"
+      ]
+    }
+  ]
+}
