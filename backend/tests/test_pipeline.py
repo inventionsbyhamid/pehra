@@ -15,7 +15,7 @@ from watchful.vision.zones import Zone
 
 @pytest.fixture
 def setup(tmp_path):
-    settings = Settings(demo_password="x", session_secret="y", _env_file=None)
+    settings = Settings(session_secret="y", _env_file=None)
     cam = Camera("cam1", "Plaza", "file", None, [Zone("z1", "left", [(0, 0), (0.5, 0), (0.5, 1), (0, 1)])])
     repo = SqliteRepository(tmp_path / "w.db")
     blobs = LocalBlobStore(tmp_path)

@@ -10,7 +10,7 @@ from watchful.store.db import SqliteRepository
 
 
 def settings(**kw):
-    return Settings(demo_password="x", session_secret="y", openrouter_api_key="k", _env_file=None, **kw)
+    return Settings(session_secret="y", openrouter_api_key="k", _env_file=None, **kw)
 
 
 def test_openrouter_request_shape():

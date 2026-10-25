@@ -82,7 +82,7 @@ def main() -> None:
     os.chdir(ROOT)
     if not Path(a.scan_clip).exists():
         subprocess.run(["bash", "eval/make_speed_clip.sh"], check=True)
-    settings = Settings(demo_password="x", session_secret="y", _env_file=None)
+    settings = Settings(session_secret="y", _env_file=None)
     tmp = Path("data/bench")
     tmp.mkdir(parents=True, exist_ok=True)
     out = {"label": a.label, "machine": machine(), "detector": settings.detector, "dnn_engine": settings.dnn_engine,

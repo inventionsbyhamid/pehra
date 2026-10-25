@@ -414,7 +414,7 @@ def test_slow_tier_runs_the_detector_without_motion(tmp_path):
             self.calls += 1
             return []
 
-    settings = Settings(demo_password="x", session_secret="y", _env_file=None)
+    settings = Settings(session_secret="y", _env_file=None)
     img = np.full((240, 320, 3), 90, np.uint8)
     counts = {}
     for slow in (False, True):

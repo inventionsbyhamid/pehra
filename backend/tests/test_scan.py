@@ -21,7 +21,7 @@ LEFT = Zone("z1", "left", [(0, 0), (0.5, 0), (0.5, 1), (0, 1)])
 
 @pytest.fixture(scope="module")
 def settings():
-    return Settings(demo_password="x", session_secret="y", _env_file=None)
+    return Settings(session_secret="y", _env_file=None)
 
 
 @pytest.fixture(scope="module")

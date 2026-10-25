@@ -8,7 +8,7 @@ from watchful.tuning import Tuning
 
 
 def settings(**kw):
-    return Settings(demo_password="x", session_secret="y", _env_file=None, **kw)
+    return Settings(session_secret="y", _env_file=None, **kw)
 
 
 def test_every_kind_lists_its_choices():

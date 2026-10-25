@@ -65,7 +65,7 @@ def test_people_are_embedded_from_their_current_crop_every_few_seconds(tmp_path)
 
     det = StubDetector()
     det.boxes = [(100.0, 100.0, 60.0, 150.0)]
-    s = Settings(demo_password="x", session_secret="y", data_dir=tmp_path, _env_file=None)
+    s = Settings(session_secret="y", data_dir=tmp_path, _env_file=None)
     p = Perceiver(Camera("cam", "c", "stream", None), s, Tuning(), LocalBlobStore(tmp_path), None,
                   Needs(classes={"person"}, embed=True), embedder=Emb(), detector=det)
     for i in range(50):  # 10 s at 5 fps with the person moving a little

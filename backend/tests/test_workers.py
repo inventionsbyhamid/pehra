@@ -30,7 +30,7 @@ def clip20():
 
 @pytest.fixture
 def manager(tmp_path):
-    s = Settings(demo_password="x", session_secret="y", data_dir=tmp_path, demo_realtime=False, index_embeddings=False, scan_pool_at_start=False,
+    s = Settings(session_secret="y", data_dir=tmp_path, demo_realtime=False, index_embeddings=False, scan_pool_at_start=False,
                  _env_file=None)
     repo = society_repo(s)
     m = WorkerManager(s, Tuning(), repo, make_blobs(s), llm=FakeLLM([ALERT] * 200))
