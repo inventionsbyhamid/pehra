@@ -9,6 +9,7 @@ from watchful.agent.tools import TERMINAL, TOOLS, ToolContext, describe_tools, r
 from watchful.rules.engine import Candidate
 
 MAX_IMAGES = 6
+GRADES = ("critical", "warning", "info")
 SCHEMA = {"type": "object", "properties": {"tool": {"type": "string", "enum": list(TOOLS) + list(TERMINAL)},
                                            "args": {"type": "object"}, "why": {"type": "string"}},
           "required": ["tool", "args", "why"]}
@@ -29,6 +30,8 @@ class Verdict:
     status: Literal["alert", "dismissed", "awaiting_human", "unverified"]
     summary: str
     trace: list[TraceStep] = field(default_factory=list)
+    severity: str | None = None  # the agent's grade of a real moment: critical, warning or info
+    reason: str = ""  # why that grade
 
 
 def _fallback(c: Candidate, trace: list[TraceStep], why: str) -> Verdict:
@@ -47,7 +50,7 @@ def _opening(c: Candidate, ctx: ToolContext) -> tuple[str, list[str]]:
             pass
     refs += [ctx.add_image(f) for f in ctx.frames(c.ts - 1.0, c.ts + 1.0, 2)]
     crops = len([k for k in c.keyframe_keys])
-    lines = [f"Watch: {c.watch_name}", f"Question: {c.verify or 'Is this really happening?'}",
+    lines = [f"Watch: {c.watch_name} (severity {c.severity})", f"Question: {c.verify or 'Is this really happening?'}",
              "OpenCV saw: " + ("; ".join(c.evidence.get("reasons", [])) or "a match"),
              f"Signals: {c.evidence.get('signals', {})}",
              "The flagged moment is time 0; tool times are seconds before (negative) or after it.",
@@ -92,6 +95,9 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
             summary = plain(str(args.get("summary") or args.get("reason") or args.get("question") or why))
             trace.append(TraceStep(n, tool, args, why, "", int((time.monotonic() - t0) * 1000)))
             status = {"raise_alert": "alert", "dismiss": "dismissed", "ask_human": "awaiting_human"}[tool]
+            grade = str(args.get("severity") or "").strip().lower()
+            if tool == "raise_alert" and grade in GRADES:
+                return Verdict(status, summary, trace, grade, plain(str(args.get("reason") or "")))
             return Verdict(status, summary, trace)
         result = run_tool(ctx, tool, args)
         trace.append(TraceStep(n, tool, args, why, result.text, int((time.monotonic() - t0) * 1000)))

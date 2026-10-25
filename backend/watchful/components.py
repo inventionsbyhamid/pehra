@@ -9,6 +9,7 @@ from watchful.tuning import Tuning
 def load_all() -> None:
     """Import every module that registers parts."""
     import watchful.agent.llm  # noqa: F401
+    import watchful.alerts.telegram  # noqa: F401
     import watchful.metrics  # noqa: F401
     import watchful.notify  # noqa: F401
     import watchful.store.blobs  # noqa: F401
@@ -111,6 +112,15 @@ def make_metrics(settings: Settings):
 def make_notifier(settings: Settings):
     load_all()
     return build("notify", settings.notify, topic_arn=settings.sns_topic_arn, region=settings.aws_region)
+
+
+def make_alert_channel(settings: Settings, tuning: Tuning | None = None):
+    """Where incidents go (ALERT_CHANNEL); without TELEGRAM_BOT_TOKEN the log channel stands in."""
+    load_all()
+    name = settings.alert_channel
+    if name == "telegram" and not settings.telegram_bot_token:
+        name = "log"
+    return build("alerts", name, settings=settings, tuning=tuning or Tuning())
 
 
 def make_ocr(settings: Settings, tuning: Tuning):

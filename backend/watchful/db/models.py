@@ -352,10 +352,13 @@ class Incident(Base):
     reason: Mapped[str] = mapped_column(default="")
     keyframe_key: Mapped[str | None]
     clip_key: Mapped[str | None]
-    ack_by: Mapped[str | None]
+    ack_by: Mapped[str | None]  # the name of whoever last acknowledged it or closed it as a false alarm
     ack_at: Mapped[datetime | None]
     telegram_message_id: Mapped[str | None]
     agent_json: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    picture_key: Mapped[str | None]  # a frame of the moment, kept private; Telegram's still is cut from it, blurred
+    picture_box: Mapped[list[Any] | None] = mapped_column(json_type(none_as_null=True))  # x, y, w, h in its pixels
+    closed_at: Mapped[datetime | None]
 
 
 class VehiclePassage(Base):
@@ -442,6 +445,24 @@ class TelegramLink(Base):
     connected_at: Mapped[datetime | None]
     code_hash: Mapped[str | None] = mapped_column(unique=True)
     code_expires_at: Mapped[datetime | None]
+
+
+class TelegramMessage(Base):
+    """A message the bot posted in a linked group about an incident: the incident's own message (a still, edited as
+    the incident changes) or a reminder posted when a critical one stays unacknowledged."""
+    __tablename__ = "telegram_messages"
+    __table_args__ = (UniqueConstraint("chat_id", "message_id", name="uq_telegram_messages_chat_message"),
+                      Index("ix_telegram_messages_ws_incident", "workspace_id", "incident_id"))
+    id: Mapped[str] = id_column("tgm")
+    workspace_id: Mapped[str] = workspace_fk()
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"))
+    chat_id: Mapped[str]
+    message_id: Mapped[str]
+    kind: Mapped[str] = mapped_column(default="incident")  # incident or reminder
+    photo: Mapped[bool] = mapped_column(default=False)
+    shown: Mapped[str] = mapped_column(default="")  # the incident status and a hash of the text and buttons last sent
+    sent_at: Mapped[datetime] = mapped_column(default=utcnow)
+    edited_at: Mapped[datetime | None]
 
 
 class PersonLabel(Base):

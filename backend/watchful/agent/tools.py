@@ -129,7 +129,8 @@ TOOLS: dict[str, tuple[str, Callable]] = {
                      pose_history),
 }
 TERMINAL = {
-    "raise_alert": "raise_alert(summary): it is real; tell the owner",
+    "raise_alert": "raise_alert(summary, severity, reason): it is real; tell the owner. severity is critical (someone "
+                   "may be in danger now), warning (needs a look soon) or info (for the record); reason says why",
     "dismiss": "dismiss(reason): it is not what the watch asks for",
     "ask_human": "ask_human(question): a person should decide before anyone is contacted",
 }

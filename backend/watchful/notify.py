@@ -1,4 +1,5 @@
 import logging
+import secrets
 import time
 from typing import Protocol
 
@@ -30,6 +31,36 @@ class SnsNotifier:
 
     def send(self, subject: str, body: str) -> None:
         self.client.publish(TopicArn=self.topic_arn, Subject=subject[:100], Message=body)
+
+
+class AlertChannel(Protocol):
+    """Where incidents go: Telegram (alerts/telegram.py) or the log that stands in without a bot token. `buttons` are
+    rows of (text, action) pairs; an action is "ack:<incident id>", "false:<incident id>" or a link."""
+    live: bool  # reaches people
+
+    def send(self, chat_id: str, text: str, photo: bytes | None = None, buttons: list | None = None,
+             reply_to: str | None = None) -> str: ...
+    def edit(self, chat_id: str, message_id: str, text: str, buttons: list | None = None,
+             photo: bool = False) -> None: ...
+
+
+@register("alerts", "log")
+class LogChannel:
+    """Stands in for Telegram when no bot token is set: each message is logged, and the app says Telegram is not
+    connected."""
+    live = False
+
+    def __init__(self, name: str = "log", **_):
+        pass
+
+    def send(self, chat_id: str, text: str, photo: bytes | None = None, buttons: list | None = None,
+             reply_to: str | None = None) -> str:
+        log.info("alert to %s: %s", chat_id, text.replace("\n", " | "))
+        return f"log_{secrets.token_hex(8)}"
+
+    def edit(self, chat_id: str, message_id: str, text: str, buttons: list | None = None,
+             photo: bool = False) -> None:
+        log.info("alert %s in %s now reads: %s", message_id, chat_id, text.replace("\n", " | "))
 
 
 class ApprovalNotifier:

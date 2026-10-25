@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.exc import OperationalError
 
+from watchful import jobs as jobs_module
 from watchful.config import Settings
 from watchful.db.models import Job, utcnow
 from watchful.db.session import make_engine, migrate
@@ -231,3 +232,4 @@ def test_worker_command_runs_due_jobs(queue, settings, tmp_path):
                          capture_output=True, text=True, timeout=120)
     assert out.returncode == 0, out.stderr[-2000:]
     assert get(queue, job.id).status == "done"
+    assert jobs_module.HANDLER_MODULES == ("watchful.alerts.telegram", "watchful.alerts.summary")

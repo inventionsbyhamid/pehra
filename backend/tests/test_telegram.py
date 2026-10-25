@@ -1,0 +1,274 @@
+"""Telegram: linking a group with a one time code, taps that count only from the incident's own society, a false
+alarm that closes for everyone, stills with faces of people who are not enrolled blurred, and the bot's limits."""
+import logging
+from datetime import timedelta
+
+import cv2
+import httpx
+import numpy as np
+import pytest
+from sqlalchemy import select
+
+from telegram_fakes import T0, TOKEN, make_env
+from watchful import components
+from watchful.alerts import incidents as inc_
+from watchful.alerts.crops import blurred_crop, frame_still
+from watchful.alerts.incidents import Actor, open_or_touch_incident
+from watchful.alerts.telegram import (TelegramBot, TelegramChannel, TelegramError, buttons, caption, connect_code,
+                                      handle_update, linked_groups)
+from watchful.config import Settings
+from watchful.db import models as m
+from watchful.notify import LogChannel
+from watchful.tuning import CropTuning
+from watchful.vision.faces import FaceIndex
+from watchful.vision.models import sample_path
+
+
+@pytest.fixture
+def env(tmp_path):
+    return make_env(tmp_path)
+
+
+def at(seconds: float):
+    return T0 + timedelta(seconds=seconds)
+
+
+def connect(env, code: str, chat_id: int, title="Guards", now=T0):
+    return handle_update(env.a, env.repo_for, {"message": {"chat": {"id": chat_id, "type": "supergroup",
+                                                                    "title": title},
+                                                           "from": {"id": 7, "first_name": "Asha"},
+                                                           "text": f"/connect@SocietyBot {code}"}}, now)
+
+
+def audit(env, action: str) -> list[m.Audit]:
+    with env.a.tx() as s:
+        return list(s.scalars(select(m.Audit).where(m.Audit.action == action).order_by(m.Audit.ts)))
+
+
+def test_connect_with_code(env):
+    code, expires = connect_code(env.a, env.a.workspace_id, T0)
+    assert len(code) == 8 and expires == T0 + timedelta(minutes=30)
+    with env.a.tx() as s:
+        assert s.scalar(select(m.TelegramLink.code_hash)) != code  # only the hash is kept
+
+    reply = connect(env, code.lower(), -1001, "Green Park guards", at(60))
+    assert reply == {"method": "sendMessage", "chat_id": "-1001",
+                     "text": "Connected to Green Park. Alerts will come to this group."}
+    assert [(g.chat_id, g.title) for g in linked_groups(env.a, env.a.workspace_id)] == [("-1001", "Green Park guards")]
+    assert audit(env, "telegram.connect")[0].workspace_id == env.a.workspace_id
+
+    assert "not valid" in connect(env, code, -1002)["text"]  # used once
+    assert linked_groups(env.a, env.a.workspace_id)[0].chat_id == "-1001"
+    late, _ = connect_code(env.a, env.a.workspace_id, T0)
+    assert "not valid" in connect(env, late, -1003, now=at(31 * 60))["text"]  # expired
+    assert "not valid" in connect(env, "WRONG123", -1004)["text"]
+    assert "followed by the code" in connect(env, "", -1005)["text"]
+
+    theirs, _ = connect_code(env.a, env.b.workspace_id, T0)
+    assert "another society" in connect(env, theirs, -1001)["text"]  # one group belongs to one society
+    assert linked_groups(env.a, env.b.workspace_id) == []
+    again, _ = connect_code(env.a, env.a.workspace_id, T0)
+    assert connect(env, again, -1001)["text"] == "This group is already connected."
+
+    removed = {"my_chat_member": {"chat": {"id": -1001}, "new_chat_member": {"status": "kicked"}}}
+    assert handle_update(env.a, env.repo_for, removed, at(90)) is None
+    assert linked_groups(env.a, env.a.workspace_id) == []
+
+
+def posted(env, chat_id: int, now=T0) -> tuple[m.Incident, str]:
+    inc = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None, now)
+    env.run(now)
+    with env.a.tx() as s:
+        msg = s.scalar(select(m.TelegramMessage).where(m.TelegramMessage.incident_id == inc.id,
+                                                       m.TelegramMessage.chat_id == str(chat_id)))
+    return inc, msg.message_id
+
+
+def test_tap_from_unlinked_chat_is_refused(env):
+    """Review Focus 4: a tap counts only from a chat linked to the incident's own society."""
+    env.link(env.a, -1001)
+    env.link(env.b, -2002, "Lake View guards")
+    inc, message_id = posted(env, -1001)
+
+    for chat in (-9999, -2002):  # a stranger's chat, and the other society's group
+        answer = env.tap(chat, message_id, f"false:{inc.id}", now=at(5))
+        assert answer["method"] == "answerCallbackQuery" and answer["show_alert"] is True
+    assert "not connected" in env.tap(-9999, message_id, f"false:{inc.id}")["text"]
+    assert "does not belong" in env.tap(-2002, message_id, f"ack:{inc.id}")["text"]
+    assert "does not belong" in env.tap(-1001, 999, f"ack:{inc.id}")["text"]  # not the bot's message about it
+    assert "not known" in env.tap(-1001, message_id, "delete:all")["text"]
+    after = inc_.get_incident(env.a, inc.id)
+    assert (after.status, after.ack_by) == ("open", None)
+    assert audit(env, "incident.false_alarm") == [] and audit(env, "incident.acknowledge") == []
+
+    assert env.tap(-1001, message_id, f"ack:{inc.id}", now=at(9))["text"] == "Acknowledged. Thank you."
+    assert inc_.get_incident(env.a, inc.id).status == "acknowledged"
+    assert env.tap(-1001, message_id, f"ack:{inc.id}", user=(43, "Kiran"))["text"] == \
+        "Already acknowledged by Ravi."
+
+
+def test_false_alarm_closes_for_everyone_and_is_labelled(env):
+    """Review Focus 4: the society's two supervisors each have a group; a guard taps False alarm in one."""
+    env.link(env.a, -1001, "Guards")
+    env.link(env.a, -1002, "Committee")
+    inc, message_id = posted(env, -1001)
+    assert len(env.fake.of("sendMessage")) == 2
+
+    assert env.tap(-1001, message_id, f"false:{inc.id}", now=at(20))["text"] == "Closed as a false alarm."
+    env.run(at(20))
+    closed = inc_.get_incident(env.a, inc.id)
+    assert (closed.status, closed.ack_by, closed.ack_at, closed.closed_at) == ("false_alarm", "Ravi", at(20), at(20))
+    edits = env.fake.of("editMessageText")
+    assert sorted(c[2]["chat_id"] for c in edits) == ["-1001", "-1002"]  # closed in both groups
+    for _, _, data in edits:
+        assert "Closed as a false alarm by Ravi at 10:00 PM." in data["text"]
+        assert not any("callback_data" in b for row in data["reply_markup"]["inline_keyboard"] for b in row)
+    label = audit(env, "incident.false_alarm")[0]
+    assert (label.actor, label.ts, label.data["name"], label.data["via"], label.data["watch"], label.data["chat"]) == \
+        ("telegram:42", at(20), "Ravi", "telegram", "wat_pool", "-1001")
+    assert inc_.precision_by_watch(env.a)["wat_pool"]["false_alarm"] == 1
+    assert inc_.precision_by_watch(env.a)["wat_pool"]["precision"] == 0.0
+
+    with env.a.tx() as s:
+        committee = s.scalar(select(m.TelegramMessage.message_id).where(m.TelegramMessage.chat_id == "-1002"))
+    assert env.tap(-1002, committee, f"ack:{inc.id}", user=(44, "Meera"))["text"] == "This alert is already closed."
+    again = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None,
+                                   at(60))
+    for minute in range(1, 6):
+        env.run(at(60 * minute))
+    assert again.id == inc.id and inc_.get_incident(env.a, inc.id).status == "false_alarm"
+    assert len(env.fake.of("sendMessage", "sendPhoto")) == 2  # the same situation stays quiet, and no reminders
+
+
+def test_buttons_and_caption_link_to_the_clip_behind_sign_in(env):
+    inc = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None, T0)
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("Asia/Kolkata")
+    rows = buttons(inc, "https://society.example.com")
+    assert rows == [[("Acknowledge", f"ack:{inc.id}"), ("False alarm", f"false:{inc.id}")],
+                    [("Open the clip", f"https://society.example.com/incidents/{inc.id}")]]
+    assert all(len(a.encode()) <= 64 for row in rows[:1] for _, a in row)  # Telegram's callback data limit
+    text = caption(inc, "Pool", tz, "https://society.example.com")
+    assert text == "Critical, Pool, 10:00 PM\nSomeone is in the pool.\nNot acknowledged yet."
+    assert caption(inc, "Pool", tz, "http://localhost:8000").endswith(
+        f"Clip: http://localhost:8000/incidents/{inc.id}")
+    assert buttons(inc, "http://localhost:8000") == rows[:1]
+
+
+def faces_index() -> FaceIndex:
+    index = FaceIndex()
+    index.enroll("stf_1", "Player", cv2.imread(str(sample_path("basketball1.png"))), consent=True)
+    return index
+
+
+def found_faces(image) -> list[tuple[int, int, int, int]]:
+    probe = FaceIndex()
+    h, w = image.shape[:2]
+    probe.detector.setInputSize((w, h))
+    _, faces = probe.detector.detect(image)
+    return [tuple(int(v) for v in f[:4]) for f in ([] if faces is None else faces)]
+
+
+def sharpness(image, box) -> float:
+    x, y, w, h = box
+    return float(cv2.Laplacian(cv2.cvtColor(image[y:y + h, x:x + w], cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
+
+
+def test_crop_blurs_non_enrolled_faces():
+    player = cv2.imread(str(sample_path("basketball2.png")))
+    stranger = cv2.imread(str(sample_path("messi5.jpg")))
+    h = player.shape[0]
+    stranger = cv2.resize(stranger, (round(stranger.shape[1] * h / stranger.shape[0]), h))
+    frame = np.hstack([player, stranger])
+    faces = found_faces(frame)
+    mine = [f for f in faces if f[0] < player.shape[1]]
+    theirs = [f for f in faces if f[0] >= player.shape[1]]
+    assert mine and theirs
+
+    whole = CropTuning(max_side=4000)
+    out = cv2.imdecode(np.frombuffer(blurred_crop(frame, None, faces_index(), cfg=whole), np.uint8), cv2.IMREAD_COLOR)
+    assert out.shape == frame.shape
+    enrolled = max(mine, key=lambda f: f[2] * f[3])  # the enrolled player stays recognisable
+    assert sharpness(out, enrolled) > 0.6 * sharpness(frame, enrolled)
+    for box in theirs:
+        assert sharpness(out, box) < 0.25 * sharpness(frame, box)
+
+    nobody = FaceIndex()  # nobody enrolled: every face is blurred
+    out = cv2.imdecode(np.frombuffer(blurred_crop(frame, None, nobody, cfg=whole), np.uint8), cv2.IMREAD_COLOR)
+    assert all(sharpness(out, box) < 0.25 * sharpness(frame, box) for box in faces)
+
+    turned = np.random.default_rng(1).integers(0, 255, (400, 300, 3), np.uint8)  # a person facing away: no face
+    out = cv2.imdecode(np.frombuffer(blurred_crop(turned, None, nobody, heads=[(50, 20, 200, 360)]), np.uint8),
+                       cv2.IMREAD_COLOR)
+    assert sharpness(out, (60, 30, 180, 90)) < 0.1 * sharpness(turned, (60, 30, 180, 90))
+    assert sharpness(out, (60, 250, 180, 100)) > 0.5 * sharpness(turned, (60, 250, 180, 100))
+
+    jpeg, box = frame_still(cv2.imencode(".jpg", frame)[1].tobytes(), (600, 100, 100, 200))
+    still = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    assert still.shape[1] < frame.shape[1] and box[2:] == [100, 200]
+
+
+def test_telegram_gets_the_blurred_still(env):
+    env.link(env.a, -1001)
+    frame = cv2.imread(str(sample_path("messi5.jpg")))
+    env.blobs.put("pool/frame.jpg", cv2.imencode(".jpg", frame)[1].tobytes(), "image/jpeg")
+    face = max(found_faces(frame), key=lambda f: f[2] * f[3])
+    inc = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None, T0,
+                                 picture_key="pool/frame.jpg", picture_box=[float(v) for v in face])
+    env.run(T0)
+    photo = env.fake.of("sendPhoto")[0][2]["photo"]
+    still = cv2.imdecode(np.frombuffer(photo, np.uint8), cv2.IMREAD_COLOR)
+    assert found_faces(still) == []  # the stranger's face does not leave the app
+    assert inc_.get_incident(env.a, inc.id).telegram_message_id == "101"
+
+
+def test_the_token_is_never_printed(env, caplog):
+    caplog.set_level(logging.DEBUG)
+    env.link(env.a, -1001)
+    env.fake.replies["sendMessage"] = [httpx.Response(400, json={"ok": False, "error_code": 400,
+                                                                 "description": "Bad Request: wrong chat"})]
+    open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "x", None, T0)
+    env.fake.clock = T0
+    env.worker.run_once(now=T0)
+    with env.a.tx() as s:
+        job = s.scalar(select(m.Job).where(m.Job.kind == "telegram.sync"))
+    assert job.status == "queued" and "wrong chat" in job.error and TOKEN not in job.error
+
+    def refuse(request):
+        raise httpx.ConnectError(f"cannot reach {request.url}")
+    bot = TelegramBot(TOKEN, transport=httpx.MockTransport(refuse))
+    with pytest.raises(TelegramError) as e:
+        bot.get_me()
+    assert TOKEN not in str(e.value) and e.value.__cause__ is None and e.value.__suppress_context__
+    assert TOKEN not in repr(bot) and TOKEN not in caplog.text
+    assert TOKEN in env.fake.urls[0]  # it was used, in the address only
+
+
+def test_a_busy_group_defers_and_429_waits_for_retry_after(env):
+    env.link(env.a, -1001)
+    env.fake.replies["sendMessage"] = [httpx.Response(429, json={
+        "ok": False, "error_code": 429, "description": "Too Many Requests: retry after 7",
+        "parameters": {"retry_after": 7}})]
+    inc = open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "x", None, T0)
+    env.run(T0)
+    with env.a.tx() as s:
+        job = s.scalar(select(m.Job).where(m.Job.kind == "telegram.sync"))
+        assert (job.status, job.attempts, job.run_after) == ("queued", 0, at(7))
+    env.run(at(6))
+    assert len(env.fake.of("sendMessage")) == 1
+    env.run(at(7))
+    assert len(env.fake.of("sendMessage")) == 2 and inc_.get_incident(env.a, inc.id).telegram_message_id
+
+
+def test_without_a_token_the_log_channel_stands_in(tmp_path, caplog):
+    settings = Settings(_env_file=None, session_secret="s", demo_password="d", data_dir=tmp_path)
+    assert isinstance(components.make_alert_channel(settings), LogChannel)
+    with_token = settings.model_copy(update={"telegram_bot_token": TOKEN})
+    channel = components.make_alert_channel(with_token)
+    assert isinstance(channel, TelegramChannel) and TOKEN not in repr(channel.bot)
+
+    env = make_env(tmp_path / "e")
+    caplog.set_level(logging.INFO, "watchful.telegram")
+    open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "Someone is in the pool.", None, T0)
+    env.run(T0)
+    assert env.fake.calls == [] and "Telegram is not connected" in caplog.text and "Someone is in the pool" in caplog.text
