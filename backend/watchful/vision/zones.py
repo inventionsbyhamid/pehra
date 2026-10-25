@@ -93,23 +93,31 @@ class LineTracker:
         self._side: dict[tuple[int, str], int] = {}
         self._last: dict[int, tuple[float, float]] = {}
 
-    def _swapped(self, t: Track, foot, before_look: dict) -> bool:
-        """The tracker swapped ids: this track jumped onto the spot where another one stood a look ago."""
+    def _swapped(self, t: Track, foot, before_look: dict, now: dict) -> bool:
+        """The tracker swapped ids: this track jumped onto the spot where another one stood a look ago, and that
+        one moved onto this track's old spot or is gone. Someone just standing near the line is not a swap."""
         last = before_look.get(t.id)
         size = max(t.box[2], t.box[3], 1.0)
+        near = self.cfg.line_swap_near * size
         if last is None or np.hypot(foot[0] - last[0], foot[1] - last[1]) <= self.cfg.line_max_jump * size:
             return False
-        return any(np.hypot(foot[0] - p[0], foot[1] - p[1]) <= self.cfg.line_swap_near * size
-                   for tid, p in before_look.items() if tid != t.id)
+        for tid, p in before_look.items():
+            if tid == t.id or np.hypot(foot[0] - p[0], foot[1] - p[1]) > near:
+                continue
+            other = now.get(tid)
+            if other is None or np.hypot(other[0] - last[0], other[1] - last[1]) <= near:
+                return True
+        return False
 
     def update(self, tracks: list[Track], ended: list[Track], ts: float,
                frame_size: tuple[int, int]) -> list[ZoneEvent]:
         events = []
         before_look = dict(self._last)
+        now = {t.id: foot_point(t.box) for t in tracks}
         for t in tracks:
-            foot = foot_point(t.box)
+            foot = now[t.id]
             margin = self.cfg.line_hysteresis * max(t.box[3], 1.0)
-            swapped = self._swapped(t, foot, before_look)
+            swapped = self._swapped(t, foot, before_look, now)
             self._last[t.id] = foot
             for line in self.lines:
                 dist, along = line_position(line, foot, frame_size)

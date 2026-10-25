@@ -86,9 +86,15 @@ def make_router(ctx) -> APIRouter:
         camera_or_404(r, camera_id)
         return [asdict(x) for x in r.list_watches(camera_id)]
 
-    def restart_where_it_runs(r, watch: Watch, home_camera_id: str) -> None:
+    def restart_where_it_runs(r, watch: Watch | WatchRow, home_camera_id: str) -> None:
+        """A watch's cameras; for a stored row, from its own scope columns, so a row that no longer parses can
+        still be switched off."""
         for c in r.list_cameras():
-            if c.kind in LIVE_KINDS and watch.applies_to(c.id, home_camera_id):
+            if isinstance(watch, Watch):
+                runs = watch.applies_to(c.id, home_camera_id)
+            else:
+                runs = c.id == home_camera_id or (watch.scope == "site" and c.id not in watch.excluded_cameras)
+            if c.kind in LIVE_KINDS and runs:
                 manager.restart(c.id)
 
     def save_watch(member: CurrentMember, cam: Camera, text: str, watch: Watch, shown: dict | None = None) -> WatchRow:
@@ -150,7 +156,7 @@ def make_router(ctx) -> APIRouter:
         row.enabled = enabled
         r.update_watch(row)
         ctx.db.audit(member.workspace.id, member.user.id, "watch.toggle", {"watch": row.id, "enabled": enabled})
-        restart_where_it_runs(r, Watch.model_validate(row.watch), row.camera_id)
+        restart_where_it_runs(r, row, row.camera_id)
         return asdict(row)
 
     def alert_sighting(r, alert_id: str):

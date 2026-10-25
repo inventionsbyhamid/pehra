@@ -1,6 +1,7 @@
 """Plain words to a watch. The AI composes the generic building blocks; code then checks every part: the
 catalog, spellings of zones and lines, setup tasks, coverage tiers and the privacy rule (no age, no children),
 so nothing the catalog cannot express is saved as a watch that silently never fires."""
+import copy
 import json
 import re
 from dataclasses import dataclass, field
@@ -97,17 +98,36 @@ def _age_pattern() -> re.Pattern:
     return re.compile(r"\b(?:(?:a|an|the|some|any)\s+)?(" + "|".join(re.escape(t) for t in terms) + r")\b", re.I)
 
 
+def place_phrases(names) -> list[str]:
+    """The drawn names that hold an age word and are still only a place: a phrase with other words in it (kids play
+    area, children's park). A bare age word (Kids, child) is never one, so it can't hide an age."""
+    out = []
+    for name in names:
+        name = (name or "").strip()
+        if not name or not _age_pattern().search(name):
+            continue  # nothing in it could be read as an age, so nothing to exempt
+        rest = re.sub(r"['\u2019]s\b", " ", _age_pattern().sub(" ", name))
+        if re.search(r"[^\W\d_]{2,}", rest):
+            out.append(name)
+    return out
+
+
+def bare_age_name(name: str) -> bool:
+    """A zone or line named only by an age word says who, not where; it is refused."""
+    return mentions_age(name) and not place_phrases([name])
+
+
 def _mask(text: str, names=()) -> tuple[str, list[str]]:
-    """Drawn place names (a kids play area) and job titles (a delivery boy) swapped for markers, so their words are
-    never read as an age; _unmask puts them back."""
+    """Whole place phrases (a kids play area) and job titles (a delivery boy) swapped for markers, so their words
+    are never read as an age; _unmask puts them back. Only whole phrases, never part of a word."""
     found: list[str] = []
 
     def keep(m: re.Match) -> str:
         found.append(m.group(0))
         return f"\x00{len(found) - 1}\x00"
 
-    for phrase in sorted({n for n in (*names, *_words()["not_age_phrases"]) if n and n.strip()}, key=len, reverse=True):
-        text = re.sub(re.escape(phrase), keep, text, flags=re.I)
+    for phrase in sorted({*place_phrases(names), *_words()["not_age_phrases"]}, key=len, reverse=True):
+        text = re.sub(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", keep, text, flags=re.I)
     return text, found
 
 
@@ -143,22 +163,30 @@ def _clause(c: dict | object) -> str:
     return str(params.get("text") or signal)
 
 
+LOOK_KEYS = ("text", "not_text")  # what looks_like and zone_looks_like compare pictures with
+
+
 def _strip_age(w: dict, names=()) -> tuple[dict | None, list[str]]:
-    """Removes every part of an AI written watch that is about age or children. A watch whose subject was
-    picked by age, or that has nothing left, is dropped. Drawn place names are only places."""
+    """Removes every part of a watch that is about age or children, and says what went. A watch whose subject was
+    picked by age, or with nothing left, is dropped. Whole place phrases are only places, except in what a
+    picture is compared with: "a child" is never a place."""
     removed, kept = [], []
     for c in w.get("conditions") or []:
-        if mentions_age(json.dumps(c.get("params") or {}), names) or mentions_age(c.get("value"), names):
+        params = c.get("params") or {}
+        looks = [str(params[k]) for k in LOOK_KEYS if params.get(k)]
+        rest = {k: v for k, v in params.items() if k not in LOOK_KEYS}
+        if any(mentions_age(t) for t in looks) or mentions_age(json.dumps(rest), names) \
+                or mentions_age(c.get("value"), names):
             removed.append(_clause(c))
         else:
             kept.append(c)
     subject = w.get("subject") or {}
-    lost_subject = mentions_age(subject.get("looks_like"), names)
+    lost_subject = mentions_age(subject.get("looks_like"))
     if lost_subject:
         removed.append(subject.pop("looks_like"))
     w["conditions"] = kept
-    if lost_subject or not kept:
-        return None, removed or [w.get("name", "")]
+    if lost_subject or (removed and not kept):
+        return None, removed
     for key in ("name", "verify"):
         if mentions_age(w.get(key), names):
             removed.append(w[key])
@@ -391,7 +419,11 @@ def check_watch(spec: dict, text: str, ctx: CompileContext, coverage=(), cannot=
     """A watch a client sends to be saved (usually the one its card showed), checked again here exactly like the
     AI's: privacy, catalog, names and kinds, contradictions, output rules; coverage tiers and setup are worked out
     again rather than trusted. Raises Invalid with plain problems."""
-    if mentions_age(json.dumps(spec), ctx.place_names):
+    names = ctx.place_names
+    _, removed = _strip_age(copy.deepcopy(spec), names)
+    rest = {k: v for k, v in spec.items() if k not in ("name", "verify", "conditions", "subject")}
+    subject = {k: v for k, v in (spec.get("subject") or {}).items() if k != "looks_like"}
+    if removed or mentions_age(json.dumps([rest, subject]), names):
         raise Invalid(["no watch may be about anyone's age"])
     try:
         return _build({"watch": spec, "coverage": list(coverage), "cannot": list(cannot)}, text, ctx, from_ai=False)

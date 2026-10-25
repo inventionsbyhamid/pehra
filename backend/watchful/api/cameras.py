@@ -17,6 +17,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from watchful.agent.compiler import bare_age_name
 from watchful.api.common import LIVE_KINDS, camera_json, camera_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
 from watchful.ingest import nvr
@@ -152,6 +153,10 @@ def make_router(ctx) -> APIRouter:
         if body.purpose is not None:
             cam.purpose = _purpose(body.purpose)
         if body.zones is not None:
+            bare = next((z["name"] for z in body.zones if bare_age_name(str(z.get("name") or ""))), None)
+            if bare:
+                raise HTTPException(400, f"Name the place, not who uses it: {bare} could be read as an age. "
+                                         "For example, kids play area.")
             cam.zones = [Zone(z.get("id") or new_id("zone"), z["name"], [tuple(p) for p in z["polygon"]],
                               z.get("kind") or "area") for z in body.zones]
             if cam.kind == "demo":

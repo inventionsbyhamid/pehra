@@ -484,11 +484,15 @@ def vanished_in_zone(ctx, cond, track):
 
 
 def _company(me, other, cfg) -> bool:
-    """Near on screen and at about the same depth: box heights far apart mean one is much nearer the camera."""
+    """Right next to each other on screen is company whatever the box sizes (a swimmer's head and shoulders beside a
+    standing lifeguard). Further apart, box heights far apart mean different depths, so not company."""
     h1, h2 = max(me.box[3], 1.0), max(other.box[3], 1.0)
+    gap = math.dist(foot_point(me.box), foot_point(other.box))
+    if gap <= cfg.alone_distance * min(h1, h2):
+        return True
     if max(h1, h2) / min(h1, h2) > cfg.alone_depth_ratio:
         return False
-    return math.dist(foot_point(me.box), foot_point(other.box)) <= cfg.alone_distance * (h1 + h2) / 2
+    return gap <= cfg.alone_distance * (h1 + h2) / 2
 
 
 @signal("alone", "track", "bool",

@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import pytest
 
-from watchful.agent.compiler import CompileContext, compile_watch, mentions_age
+from watchful.agent.compiler import CompileContext, Invalid, bare_age_name, check_watch, compile_watch, mentions_age
 from watchful.agent.llm import FakeLLM
 from watchful.rules import signals
 from watchful.rules.backtest import backtest
@@ -380,7 +380,7 @@ def test_alone_is_judged_with_both_heights_and_depth():
     t0 = at(21)
     w = W(Condition(signal="alone", zones=["water"]), cooldown_s=600)
     me = TrackState(1, "person", (140.0, 90.0, 40.0, 60.0), t0, t0, zones_inside={"water": t0})
-    far_back = TrackState(2, "person", (200.0, 120.0, 12.0, 20.0), t0, t0)  # near on screen, far in depth
+    far_back = TrackState(2, "person", (244.0, 120.0, 12.0, 20.0), t0, t0)  # a few boxes off, far in depth
     beside = TrackState(3, "person", (190.0, 95.0, 38.0, 58.0), t0, t0)  # the same size, close by
     for others, alone in (([far_back], True), ([beside], False)):
         tick = Tick(t0, (320, 240), True, [me, *others], [])
@@ -499,3 +499,94 @@ def test_watch_routes_check_everything_again_and_restart_where_needed(tmp_path):
     assert len(list((tmp_path / "blobs").rglob("*_day.jpg"))) == 1
     assert c.delete(f"/api/cameras/{pool}").status_code == 200
     assert list((tmp_path / "blobs").rglob("*_day.jpg")) == []
+
+
+# fix round 2
+
+def test_a_bare_age_word_as_a_zone_name_never_hides_an_age():
+    assert mentions_age("children near the water", ["child"]) and mentions_age("kids near the gate", ["Kids"])
+    assert not mentions_age("someone in the kids play area", ["kids play area"])
+    assert not mentions_age("someone in the children's park", ["children's park"])
+    assert mentions_age("a child in the children's park", ["children's park"])
+    assert bare_age_name("Kids") and bare_age_name("child") and bare_age_name("the kids")
+    assert not bare_age_name("kids play area") and not bare_age_name("gate")
+    spec = W(Condition(signal="looks_like", params={"text": "kids"}), Condition(signal="in_zone", zones=["Kids"]),
+             classes=("person",)).model_dump()
+    spec["name"] = "Kids alone at the pool"
+    with pytest.raises(Invalid):
+        check_watch(spec, "kids alone at the pool", CompileContext(zones={"Kids": "area"}))
+    spec["name"] = "Someone at the pool"
+    with pytest.raises(Invalid):  # what a picture is compared with is never a place
+        check_watch(spec, "someone at the pool", CompileContext(zones={"Kids": "area"}))
+    play = W(Condition(signal="looks_like", params={"text": "someone in the kids play area"}),
+             classes=("person",)).model_dump()
+    with pytest.raises(Invalid):
+        check_watch(play, "x", CompileContext(zones={"kids play area": "area"}))
+
+
+def test_a_child_zone_name_does_not_let_a_child_watch_through():
+    ctx = CompileContext(zones={"child": "area", "water": "water"})
+    ai = reply({"name": "A child near the water", "subject": {"classes": ["person"]}, "verify": "Is a child there?",
+                "conditions": [{"signal": "in_zone", "zones": ["water"]},
+                               {"signal": "looks_like", "params": {"text": "a child", "not_text": "an adult"}}]})
+    r = compile_watch("a child near the water", ctx, FakeLLM([ai]))
+    assert r.cannot and any(mentions_age(c.clause) for c in r.cannot)
+    assert r.watch is not None and [c.signal for c in r.watch.conditions] == ["in_zone"]
+    assert not mentions_age(r.watch.name) and not mentions_age(r.watch.verify)
+
+
+class _Box:
+    def __init__(self, i, x, w=50.0, h=150.0):
+        self.id, self.cls, self.box, self.last_ts = i, "person", (x - w / 2, 400.0 - h, w, h), 0.0
+
+
+def test_a_real_crossing_beside_someone_standing_at_the_line_counts():
+    lt = LineTracker([LINE], Tuning().zones)
+    ev = lt.update([_Box(1, 450, 120, 80), _Box(2, 540)], [], 0, (1000, 500))
+    ev += lt.update([_Box(1, 550, 120, 80), _Box(2, 540)], [], 0.5, (1000, 500))
+    assert [(e.track_id, e.direction) for e in ev] == [(1, "in")]
+    alone = LineTracker([LINE], Tuning().zones)
+    ev = alone.update([_Box(1, 450, 120, 80)], [], 0, (1000, 500))
+    assert [(e.track_id, e.direction) for e in ev + alone.update([_Box(1, 550, 120, 80)], [], 0.5, (1000, 500))] == \
+        [(1, "in")]
+
+
+def test_jumping_onto_the_spot_of_someone_who_just_went_is_a_swap():
+    lt = LineTracker([LINE], Tuning().zones)
+    ev = lt.update([_Box(1, 440), _Box(2, 560)], [], 0, (1000, 500))
+    ev += lt.update([_Box(1, 560)], [_Box(2, 560)], 0.5, (1000, 500))
+    assert ev == []
+
+
+def test_a_swimmer_beside_a_standing_lifeguard_is_not_alone():
+    t0 = at(15)
+    w = W(Condition(signal="alone", zones=["water"]), cooldown_s=600)
+    swimmer = TrackState(1, "person", (150.0, 120.0, 30.0, 30.0), t0, t0, zones_inside={"water": t0})
+    lifeguard = TrackState(2, "person", (190.0, 0.0, 50.0, 150.0), t0, t0)
+    tick = Tick(t0, (320, 240), True, [swimmer, lifeguard], [])
+    assert RuleEngine([("w", w)], [WATER], Tuning(), TZ).on_tick("cam", tick, t0) == []
+    tick = Tick(t0 + 1, (320, 240), True, [swimmer], [])
+    assert len(RuleEngine([("w", w)], [WATER], Tuning(), TZ).on_tick("cam", tick, t0 + 1)) == 1
+
+
+def test_a_watch_that_no_longer_parses_can_still_be_switched_off(tmp_path):
+    from accounts import SOCIETY, browser
+    from test_api import StubManager
+    from watchful.api import create_app
+    from watchful.config import Settings
+    from watchful.store.db import WatchRow
+
+    manager = StubManager()
+    app = create_app(Settings(session_secret="s" * 32, data_dir=tmp_path, _env_file=None), llm=FakeLLM([]),
+                     manager=manager)
+    c = browser(app)
+    cam = c.post("/api/cameras", json={"name": "Gate", "kind": "stream", "url": "rtsp://y"}).json()["id"]
+    repo = app.state.ctx.repo_for(SOCIETY)
+    row = repo.add_watch(WatchRow(None, cam, "an old watch", {"name": "old", "conditions": [{"signal": "gone"}]}))
+    manager.started.clear()
+    r = c.patch(f"/api/watches/{row.id}", json={"enabled": False})
+    assert r.status_code == 200 and r.json()["enabled"] is False and manager.started == [cam]
+    assert [w.enabled for w in repo.list_watches(cam)] == [False]
+    bad = c.patch(f"/api/cameras/{cam}", json={"zones": [{"id": "z", "name": "Kids", "polygon": [[0, 0], [1, 0],
+                                                                                                    [1, 1]]}]})
+    assert bad.status_code == 400 and "place" in bad.json()["detail"]

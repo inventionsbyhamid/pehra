@@ -110,8 +110,8 @@ class SignalTuning(_Section):
     search_top_n: int = 12  # best matches the AI double checks
     search_dedupe_s: float = 10.0  # scene matches closer than this on one camera count once
     search_embed_on_demand: int = 24  # unindexed moments embedded during a search; the rest wait for the indexer
-    alone_distance: float = 3.0  # mean body heights of the two; anyone of the same class closer is company
-    alone_depth_ratio: float = 1.6  # box heights this far apart are at different depths, so not company
+    alone_distance: float = 3.0  # body heights: closer than this many of the smaller box is always company, and up to
+    alone_depth_ratio: float = 1.6  # this many of the mean box is company unless heights this far apart (other depth)
     alert_cooldown_floor_s: float = 5.0  # an alert watch never fires again for the same thing sooner than this
     stationary_move: float = 0.25  # box heights the centre may wander and still count as staying put
     parked_rejoin_s: float = 60.0  # a new track on a parked spot within this long takes over its clock
