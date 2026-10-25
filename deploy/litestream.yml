@@ -1,0 +1,15 @@
+# Litestream streams the SQLite database to the bucket under db/, which has no Object Lock retention (the bucket has
+# no default retention; the app locks incident clips one by one). S3_BUCKET and AWS_REGION come from
+# /etc/watchful/watchful.env, credentials from the instance role. A new instance restores from here before the app
+# starts (deploy/remote_setup.sh): litestream restore -config <this file> -if-replica-exists /var/lib/watchful/watchful.db
+dbs:
+  - path: /var/lib/watchful/watchful.db
+    replica:
+      type: s3
+      bucket: ${S3_BUCKET}
+      path: db/watchful
+      region: ${AWS_REGION}
+
+snapshot:
+  interval: 24h
+  retention: 168h

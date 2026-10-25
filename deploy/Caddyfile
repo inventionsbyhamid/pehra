@@ -1,0 +1,44 @@
+# deploy/remote_setup.sh writes this to /etc/caddy/Caddyfile with @DOMAIN@ and @ACME_EMAIL@ filled in. Caddy gets
+# and renews the Let's Encrypt certificate and redirects HTTP to HTTPS. The app sends the Content Security Policy.
+{
+	email @ACME_EMAIL@
+}
+
+@DOMAIN@ {
+	# live views and camera pushes: WebSockets, not compressed, kept open for a while when Caddy reloads
+	handle /ws/* {
+		reverse_proxy 127.0.0.1:8000 {
+			stream_close_delay 5m
+		}
+	}
+	handle {
+		encode zstd gzip
+		reverse_proxy 127.0.0.1:8000
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	# one JSON line per request; CloudWatch counts requests and 5xx from it. Sign in, camera device, invite and
+	# Telegram webhook links carry a token in the path, signed media links one in the query: the log cuts both, and
+	# keeps no cookies, credentials or secret headers
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp ^(/(?:auth/link|cam|ws/cam|telegram/webhook|join|api/invites)/)[^/?]+|(\?).+$ ${1}${2}-
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				request>headers>X-Telegram-Bot-Api-Secret-Token delete
+				request>headers>Sec-Websocket-Protocol delete
+				request>headers>Referer delete
+				resp_headers>Set-Cookie delete
+			}
+		}
+	}
+}

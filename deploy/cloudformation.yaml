@@ -1,34 +1,88 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Watchful, an OpenCV 5 camera agent on AWS Graviton
+Description: AI CCTV control room on AWS Graviton with COOL (OpenCV 5 built for Graviton); deploy/deploy.sh fills the names in from brand.json
 
 Parameters:
   Prefix:
     Type: String
-    Default: watchful
-  AmiId:
+    AllowedPattern: "^[a-z][a-z0-9-]{1,20}$"
+    Description: Names the stack's dashboard, alarms, log groups, budget and the SSM parameter path /<Prefix>/ (deploy.sh passes brand.json's name)
+  BrandName:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9 ]{1,40}$"
+    Description: The product name from brand.json, shown in alarm emails
+  Domain:
+    Type: String
+    AllowedPattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+    Description: The site's host name; its A record points at the Elastic IP
+  CoolAmiId:
     Type: AWS::EC2::Image::Id
-    Description: COOL Marketplace AMI, or Ubuntu 24.04 arm64
+    Description: The COOL Graviton4 AMI for this region (AWS Marketplace prodview-fdvbfiewzuehs; subscribe first)
   InstanceType:
     Type: String
     Default: c8g.xlarge
-  KeyName:
-    Type: AWS::EC2::KeyPair::KeyName
-  SshCidr:
+    AllowedValues: [c8g.large, c8g.xlarge, c8g.2xlarge, c8g.4xlarge]
+    Description: Many cameras need more than c8g.large; the benchmark (eval/) sets the right size
+  RootDeviceName:
     Type: String
-    Description: Your IP as a /32, for SSH
-  CaregiverEmail:
+    Default: /dev/sda1
+    Description: The AMI's root device (Ubuntu AMIs use /dev/sda1)
+  VolumeGb:
+    Type: Number
+    Default: 40
+    MinValue: 20
+    MaxValue: 500
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The VPC for the security group; deploy.sh passes the default VPC unless VPC_ID is set
+  SubnetId:
     Type: String
-    Description: Gets an email when someone approves a serious alert
-  BudgetEmail:
+    Default: ""
+    Description: Optional public subnet of that VPC; empty lets EC2 choose a default subnet
+  AlertEmail:
     Type: String
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    Description: Gets alarm and budget emails (confirm the SNS subscription email once)
   MonthlyBudgetUsd:
     Type: Number
-    Default: 20
+    Default: 60
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-haiku-5-5
+    Description: Foundation model the agent may call, only through its global inference profile global.<id>
+  AppLogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90, 180, 365]
+  AccessLogRetentionDays:
+    Type: Number
+    Default: 90
+    AllowedValues: [30, 90, 180, 365]
+  MaxLockDays:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 3650
+    Description: Longest Object Lock the app may set on an incident clip, in days; above the longest plan's retention
+
+Conditions:
+  HasSubnet: !Not [!Equals [!Ref SubnetId, ""]]
 
 Resources:
+  # Incident clips, stills, keyframes and the database replica. Object Lock is on with no default retention: the app
+  # locks each incident clip until its plan's date, while db/ (Litestream) and releases/ stay unlocked.
   Bucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
+      ObjectLockEnabled: true
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+      VersioningConfiguration:
+        Status: Enabled
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -36,19 +90,88 @@ Resources:
         RestrictPublicBuckets: true
       BucketEncryption:
         ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      # pages read clips and stills through signed links; nothing is uploaded from the browser
+      CorsConfiguration:
+        CorsRules:
+          - Id: signed-reads
+            AllowedOrigins: [!Sub "https://${Domain}"]
+            AllowedMethods: [GET, HEAD]
+            AllowedHeaders: [range]
+            ExposedHeaders: [ETag, Content-Length, Content-Range, Accept-Ranges]
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          # S3 never removes a locked version, so a replaced or deleted clip goes once its lock ends
+          - Id: old-versions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+            ExpiredObjectDeleteMarker: true
+          - Id: unfinished-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+          - Id: releases
+            Status: Enabled
+            Prefix: releases/
+            ExpirationInDays: 30
 
-  Topic:
-    Type: AWS::SNS::Topic
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
     Properties:
-      DisplayName: Watchful
+      Bucket: !Ref Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt Bucket.Arn, !Sub "${Bucket.Arn}/*"]
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
 
-  TopicEmail:
-    Type: AWS::SNS::Subscription
+  AppLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      TopicArn: !Ref Topic
-      Protocol: email
-      Endpoint: !Ref CaregiverEmail
+      LogGroupName: !Sub "/${Prefix}/app"
+      RetentionInDays: !Ref AppLogRetentionDays
+
+  AccessLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/${Prefix}/access"
+      RetentionInDays: !Ref AccessLogRetentionDays
+
+  # Caddy writes one JSON line per request; these count requests and server errors for the 5xx alarm
+  RequestsMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref AccessLogs
+      FilterPattern: "{ $.status > 0 }"
+      MetricTransformations:
+        - MetricNamespace: Watchful
+          MetricName: http_requests
+          MetricValue: "1"
+          Unit: Count
+
+  ServerErrorsMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref AccessLogs
+      FilterPattern: "{ $.status >= 500 }"
+      MetricTransformations:
+        - MetricNamespace: Watchful
+          MetricName: http_5xx
+          MetricValue: "1"
+          Unit: Count
 
   Role:
     Type: AWS::IAM::Role
@@ -57,42 +180,89 @@ Resources:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
-            Principal: { Service: ec2.amazonaws.com }
+            Principal:
+              Service: ec2.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"  # Session Manager, no SSH
       Policies:
-        - PolicyName: watchful
+        - PolicyName: !Ref Prefix
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Effect: Allow
-                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+              - Sid: BucketObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                  - s3:GetObjectRetention
+                  - s3:AbortMultipartUpload
                 Resource: !Sub "${Bucket.Arn}/*"
-              - Effect: Allow
-                Action: s3:ListBucket
+              # a lock the app sets is GOVERNANCE, never COMPLIANCE, and bounded, so a leaked key cannot lock the
+              # bucket's objects for years; writes without a lock (db/, releases/, unlocked pictures) pass
+              - Sid: LockedWrites
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectRetention
+                Resource: !Sub "${Bucket.Arn}/*"
+                Condition:
+                  StringEqualsIfExists:
+                    s3:object-lock-mode: GOVERNANCE
+                  NumericLessThanEqualsIfExists:
+                    s3:object-lock-remaining-retention-days: !Sub "${MaxLockDays}"
+              - Sid: BucketListing
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketVersions
+                  - s3:GetBucketLocation
                 Resource: !GetAtt Bucket.Arn
-              - Effect: Allow
-                Action: [dynamodb:CreateTable, dynamodb:DescribeTable, dynamodb:GetItem, dynamodb:PutItem,
-                         dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:Scan,
-                         dynamodb:BatchWriteItem]
+              - Sid: NeverBypassTheLock
+                Effect: Deny
+                Action: s3:BypassGovernanceRetention
+                Resource: [!GetAtt Bucket.Arn, !Sub "${Bucket.Arn}/*"]
+              # the Converse API is authorised as bedrock:InvokeModel; from Mumbai the model runs only through
+              # its global inference profile, which may route to the model in any region
+              - Sid: BedrockProfile
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.${BedrockModelId}"
+              - Sid: BedrockModelThroughProfile
+                Effect: Allow
+                Action: bedrock:InvokeModel
                 Resource:
-                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-*"
-              - Effect: Allow
-                Action: dynamodb:ListTables
-                Resource: "*"
-              - Effect: Allow
+                  - !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockModelId}"
+                  - !Sub "arn:${AWS::Partition}:bedrock:::foundation-model/${BedrockModelId}"
+                Condition:
+                  StringEquals:
+                    bedrock:InferenceProfileArn: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.${BedrockModelId}"
+              # the app's metrics and the CloudWatch agent's disk and memory metrics share one namespace
+              - Sid: Metrics
+                Effect: Allow
                 Action: cloudwatch:PutMetricData
                 Resource: "*"
-              - Effect: Allow
-                Action: sns:Publish
-                Resource: !Ref Topic
-              - Effect: Allow
-                Action: [bedrock:InvokeModel, bedrock:Converse]
-                Resource: "*"
-              - Effect: Allow
-                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
-                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: Watchful
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: [!GetAtt AppLogs.Arn, !GetAtt AccessLogs.Arn]
+              - Sid: Settings
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Prefix}"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Prefix}/*"
 
   Profile:
     Type: AWS::IAM::InstanceProfile
@@ -102,33 +272,220 @@ Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Watchful web and SSH
+      GroupDescription: Web only (HTTP for the certificate and redirect, HTTPS for the site, sockets and Telegram); no SSH
+      VpcId: !Ref VpcId
       SecurityGroupIngress:
-        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
-        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0 }
-        - { IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref SshCidr }
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: "http"}
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: "https"}
+      SecurityGroupEgress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: "AWS APIs, Telegram, packages, certificates"}
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: "Ubuntu packages, OCSP"}
+        - {IpProtocol: tcp, FromPort: 554, ToPort: 554, CidrIp: 0.0.0.0/0, Description: "RTSP cameras reachable on the internet"}
 
   Instance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: !Ref AmiId
+      ImageId: !Ref CoolAmiId
       InstanceType: !Ref InstanceType
-      KeyName: !Ref KeyName
       IamInstanceProfile: !Ref Profile
-      MetadataOptions:
-        HttpTokens: required  # IMDSv2 only, so a camera URL can't reach the instance's credentials
-        HttpPutResponseHopLimit: 1
+      SubnetId: !If [HasSubnet, !Ref SubnetId, !Ref AWS::NoValue]
       SecurityGroupIds: [!GetAtt SecurityGroup.GroupId]
+      MetadataOptions:
+        HttpTokens: required  # IMDSv2 only, so a camera URL cannot reach the instance's credentials
+        HttpPutResponseHopLimit: 1
+        HttpEndpoint: enabled
       BlockDeviceMappings:
-        - DeviceName: /dev/sda1
-          Ebs: { VolumeSize: 40, VolumeType: gp3, Encrypted: true }
+        - DeviceName: !Ref RootDeviceName
+          Ebs:
+            VolumeSize: !Ref VolumeGb
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      PropagateTagsToVolumeOnCreation: true
+      # the rest of the setup arrives through SSM Run Command (deploy/deploy.sh), so only make sure the agent runs
+      UserData: !Base64 |
+        #!/bin/bash
+        snap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic
+        systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
       Tags:
-        - { Key: Name, Value: !Ref Prefix }
+        - {Key: Name, Value: !Ref Prefix}
 
   Ip:
     Type: AWS::EC2::EIP
     Properties:
+      Domain: vpc
       InstanceId: !Ref Instance
+      Tags:
+        - {Key: Name, Value: !Ref Prefix}
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub "${BrandName} alerts"
+
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  ServerErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${Prefix}-5xx-rate"
+      AlarmDescription: More than 5% of requests failed with a server error, two 5 minute periods running (at least 20 requests)
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 5
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+      Metrics:
+        - Id: errors
+          ReturnData: false
+          MetricStat:
+            Metric: {Namespace: Watchful, MetricName: http_5xx}
+            Period: 300
+            Stat: Sum
+        - Id: requests
+          ReturnData: false
+          MetricStat:
+            Metric: {Namespace: Watchful, MetricName: http_requests}
+            Period: 300
+            Stat: Sum
+        - Id: rate
+          Label: 5xx percent
+          ReturnData: true
+          Expression: "IF(requests >= 20, 100 * FILL(errors, 0) / requests, 0)"
+
+  CpuHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${Prefix}-cpu-high"
+      AlarmDescription: CPU above 85% for 15 minutes; cameras will drop frames and alerts will be late
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - {Name: InstanceId, Value: !Ref Instance}
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: missing
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  DiskHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${Prefix}-disk-high"
+      AlarmDescription: The root disk is more than 85% full (reported by the CloudWatch agent)
+      Namespace: Watchful
+      MetricName: disk_used_percent
+      Dimensions:
+        - {Name: InstanceId, Value: !Ref Instance}
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: missing
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  WorkerDownAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${Prefix}-worker-down"
+      AlarmDescription: The job worker sent no heartbeat for 10 minutes; Telegram sends, summaries and retention are stopped
+      Namespace: Watchful
+      MetricName: worker_up
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  CameraWorkersAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${Prefix}-camera-workers"
+      AlarmDescription: A camera worker process stayed down, or the app stopped reporting, for 10 minutes; cameras are not watched
+      Namespace: Watchful
+      MetricName: camera_workers_down
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  InstanceRecoveryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${Prefix}-instance-recover"
+      AlarmDescription: The host failed its system status check; EC2 recovers the instance onto new hardware
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_System
+      Dimensions:
+        - {Name: InstanceId, Value: !Ref Instance}
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Sub "arn:${AWS::Partition}:automate:${AWS::Region}:ec2:recover"
+        - !Ref AlertTopic
+
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Ref Prefix
+      DashboardBody: !Sub |
+        {"widgets": [
+          {"type": "metric", "x": 0, "y": 0, "width": 12, "height": 6, "properties": {
+            "title": "Frames analysed per second, by camera", "region": "${AWS::Region}", "view": "timeSeries",
+            "metrics": [[{"expression": "SEARCH('{Watchful,Camera} MetricName=\"FramesPerSecond\"', 'Average', 300)", "id": "fps"}]],
+            "yAxis": {"left": {"min": 0}}}},
+          {"type": "metric", "x": 12, "y": 0, "width": 12, "height": 6, "properties": {
+            "title": "Analysis ms per frame, by camera", "region": "${AWS::Region}", "view": "timeSeries",
+            "metrics": [[{"expression": "SEARCH('{Watchful,Camera} MetricName=\"MsPerFrame\"', 'Average', 300)", "id": "ms"}]],
+            "yAxis": {"left": {"min": 0}}}},
+          {"type": "metric", "x": 0, "y": 6, "width": 12, "height": 6, "properties": {
+            "title": "Alerts by outcome, per hour", "region": "${AWS::Region}", "view": "timeSeries", "stacked": true,
+            "metrics": [[{"expression": "SEARCH('{Watchful,Status} MetricName=\"Alerts\"', 'Sum', 3600)", "id": "al"}]]}},
+          {"type": "metric", "x": 12, "y": 6, "width": 12, "height": 6, "properties": {
+            "title": "AI calls today", "region": "${AWS::Region}", "view": "timeSeries", "stat": "Maximum", "period": 300,
+            "metrics": [["Watchful", "AICallsToday", {"label": "AI calls today"}]]}},
+          {"type": "metric", "x": 0, "y": 12, "width": 8, "height": 6, "properties": {
+            "title": "Requests and 5xx", "region": "${AWS::Region}", "view": "timeSeries", "stat": "Sum", "period": 300,
+            "metrics": [["Watchful", "http_requests", {"label": "requests"}], ["Watchful", "http_5xx", {"label": "5xx", "yAxis": "right"}]]}},
+          {"type": "metric", "x": 8, "y": 12, "width": 8, "height": 6, "properties": {
+            "title": "CPU, memory and disk percent", "region": "${AWS::Region}", "view": "timeSeries", "period": 300,
+            "metrics": [["AWS/EC2", "CPUUtilization", "InstanceId", "${Instance}", {"stat": "Average", "label": "CPU"}],
+                        ["Watchful", "mem_used_percent", "InstanceId", "${Instance}", {"stat": "Maximum", "label": "memory"}],
+                        ["Watchful", "disk_used_percent", "InstanceId", "${Instance}", {"stat": "Maximum", "label": "disk"}]],
+            "yAxis": {"left": {"min": 0, "max": 100}}}},
+          {"type": "metric", "x": 16, "y": 12, "width": 8, "height": 6, "properties": {
+            "title": "Job worker heartbeats and camera workers down", "region": "${AWS::Region}", "view": "timeSeries", "period": 300,
+            "metrics": [["Watchful", "worker_up", {"stat": "Sum", "label": "worker heartbeats"}],
+                        ["Watchful", "camera_workers_down", {"stat": "Maximum", "label": "camera workers down", "yAxis": "right"}]]}},
+          {"type": "alarm", "x": 0, "y": 18, "width": 24, "height": 3, "properties": {
+            "title": "Alarms", "alarms": ["${ServerErrorRateAlarm.Arn}", "${CpuHighAlarm.Arn}", "${DiskHighAlarm.Arn}",
+                                          "${WorkerDownAlarm.Arn}", "${CameraWorkersAlarm.Arn}", "${InstanceRecoveryAlarm.Arn}"]}},
+          {"type": "log", "x": 0, "y": 21, "width": 24, "height": 6, "properties": {
+            "title": "Recent errors", "region": "${AWS::Region}", "view": "table",
+            "query": "SOURCE '${AppLogs}' | fields @timestamp, @logStream, @message | filter @message like /(?i)(error|exception|traceback)/ | sort @timestamp desc | limit 50"}}
+        ]}
 
   Budget:
     Type: AWS::Budgets::Budget
@@ -137,14 +494,34 @@ Resources:
         BudgetName: !Sub "${Prefix}-monthly"
         BudgetType: COST
         TimeUnit: MONTHLY
-        BudgetLimit: { Amount: !Ref MonthlyBudgetUsd, Unit: USD }
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
       NotificationsWithSubscribers:
-        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80 }
-          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref BudgetEmail }]
-        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100 }
-          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref BudgetEmail }]
+        - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80}
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlertEmail}]
+        - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 100}
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlertEmail}]
+        - Notification: {NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100}
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlertEmail}]
 
 Outputs:
-  PublicIp: { Value: !Ref Ip }
-  BucketName: { Value: !Ref Bucket }
-  TopicArn: { Value: !Ref Topic }
+  InstanceId:
+    Value: !Ref Instance
+  PublicIp:
+    Value: !Ref Ip
+    Description: Point the domain's A record here
+  BucketName:
+    Value: !Ref Bucket
+  AppLogGroup:
+    Value: !Ref AppLogs
+  AccessLogGroup:
+    Value: !Ref AccessLogs
+  AlertTopicArn:
+    Value: !Ref AlertTopic
+  SsmPrefix:
+    Value: !Sub "/${Prefix}/"
+  BedrockModel:
+    Value: !Sub "global.${BedrockModelId}"
+  DashboardUrl:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${Prefix}"

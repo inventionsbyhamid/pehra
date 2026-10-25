@@ -1,0 +1,22 @@
+# deploy/remote_setup.sh installs Litestream to /usr/local/bin and fills in @APP@
+[Unit]
+Description=Litestream: the database streamed to S3 (db/)
+After=network-online.target watchful-app.service
+Wants=network-online.target
+
+[Service]
+User=watchful
+Group=watchful
+EnvironmentFile=/etc/watchful/watchful.env
+ExecStart=/usr/local/bin/litestream replicate -config @APP@/current/deploy/litestream.yml
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/watchful/litestream.log
+StandardError=append:/var/log/watchful/litestream.log
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

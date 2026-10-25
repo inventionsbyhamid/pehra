@@ -1,0 +1,27 @@
+{
+  "agent": {"run_as_user": "root", "omit_hostname": true,
+            "logfile": "/opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log"},
+  "metrics": {
+    "namespace": "Watchful",
+    "append_dimensions": {"InstanceId": "${aws:InstanceId}"},
+    "aggregation_dimensions": [["InstanceId"]],
+    "metrics_collected": {
+      "disk": {"measurement": ["used_percent"], "resources": ["/"], "drop_device": true, "metrics_collection_interval": 60},
+      "mem": {"measurement": ["used_percent"], "metrics_collection_interval": 60}
+    }
+  },
+  "logs": {
+    "force_flush_interval": 10,
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {"file_path": "/var/log/watchful/app.log", "log_group_name": "@APP_LOG_GROUP@", "log_stream_name": "{instance_id}/app"},
+          {"file_path": "/var/log/watchful/worker.log", "log_group_name": "@APP_LOG_GROUP@", "log_stream_name": "{instance_id}/worker"},
+          {"file_path": "/var/log/watchful/litestream.log", "log_group_name": "@APP_LOG_GROUP@", "log_stream_name": "{instance_id}/litestream"},
+          {"file_path": "/var/log/watchful/deploy.log", "log_group_name": "@APP_LOG_GROUP@", "log_stream_name": "{instance_id}/deploy"},
+          {"file_path": "/var/log/caddy/access.log", "log_group_name": "@ACCESS_LOG_GROUP@", "log_stream_name": "{instance_id}/caddy"}
+        ]
+      }
+    }
+  }
+}

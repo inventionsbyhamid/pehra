@@ -1,0 +1,30 @@
+# deploy/remote_setup.sh fills in @PYTHON@ (COOL's Python) and @APP@
+[Unit]
+Description=Watchful web app, its sockets and its camera worker processes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=watchful
+Group=watchful
+EnvironmentFile=/etc/watchful/watchful.env
+# two malloc arenas instead of 8 per CPU: less memory in processes with many threads, no slower frame
+Environment=MALLOC_ARENA_MAX=2
+WorkingDirectory=@APP@/current
+# settings and secrets from SSM join the environment first; one process, because sessions, live views and the
+# camera pool live in its memory. The camera processes are its children: stopping the unit stops them too.
+ExecStart=@PYTHON@ @APP@/current/deploy/ssm_env.py -- @PYTHON@ -m uvicorn watchful.api:create_app --factory --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
+KillMode=control-group
+Restart=always
+RestartSec=3
+TimeoutStopSec=60
+StandardOutput=append:/var/log/watchful/app.log
+StandardError=append:/var/log/watchful/app.log
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
