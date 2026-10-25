@@ -17,6 +17,8 @@ def load_all() -> None:
     import watchful.vision.detect  # noqa: F401
     import watchful.vision.embed  # noqa: F401
     import watchful.vision.faces  # noqa: F401
+    import watchful.vision.ocr  # noqa: F401
+    import watchful.vision.plates  # noqa: F401
     import watchful.vision.pose  # noqa: F401
 
 
@@ -98,3 +100,23 @@ def make_metrics(settings: Settings):
 def make_notifier(settings: Settings):
     load_all()
     return build("notify", settings.notify, topic_arn=settings.sns_topic_arn, region=settings.aws_region)
+
+
+def make_ocr(settings: Settings, tuning: Tuning):
+    load_all()
+    return build("ocr", settings.ocr, settings=settings, tuning=tuning)
+
+
+_plate_readers: dict[tuple, object] = {}
+
+
+def make_plate_reader(settings: Settings, tuning: Tuning):
+    """One plate reader per models and tuning per process."""
+    from watchful.vision.plates import PlateReader
+    load_all()
+    key = (settings.plate_detector, settings.ocr, str(settings.models_dir), settings.dnn_engine,
+           tuning.plates.model_dump_json())
+    if key not in _plate_readers:
+        detector = build("plate_detector", settings.plate_detector, cfg=tuning.plates, settings=settings)
+        _plate_readers[key] = PlateReader(detector, make_ocr(settings, tuning), tuning.plates)
+    return _plate_readers[key]

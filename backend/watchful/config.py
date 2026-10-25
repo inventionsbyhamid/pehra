@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     pose_model: str = "mediapipe"
     face_model: str = "yunet_sface"
     embedder: str = "siglip2_b32"
+    ocr: str = "ppocr_v3det_v5rec"  # Zoo PP-OCRv3 detection, PP-OCRv5 recognition; ppocr_v3_crnn stays selectable
+    plate_detector: str = "lpd_yunet"  # "none" reads plates from PP-OCR text boxes only
 
     data_dir: Path = Path("data")
     database_url: str | None = None  # default sqlite:///{data_dir}/watchful.db, see `database`

@@ -142,6 +142,40 @@ class ClipTuning(_Section):
     preset: str = "veryfast"
 
 
+class PlateTuning(_Section):
+    max_crops: int = 5
+    detect_side: int = 640  # LPD-YuNet input, longest side, rounded to 64
+    detect_score: float = 0.5
+    detect_nms: float = 0.3
+    max_plates: int = 3  # plate boxes tried per crop, best first
+    outside: float = 0.05  # a plate box may cross the crop's edge by this share of it, no more
+    plate_aspect: tuple[float, float] = (0.8, 8.0)  # width over height of a plausible plate box
+    margin: float = 0.08  # plate quad grown by this share before warping
+    plate_height: int = 96  # warped plate height before its lines are cut
+    two_line_aspect: float = 2.6  # plates narrower than this (width over height) may hold two lines
+    split_band: tuple[float, float] = (0.3, 0.7)  # where the gap between two lines may be, share of height
+    split_gap: float = 0.35  # rows with less text than this share of the busy rows are a gap
+    split_side: float = 0.1  # share of the plate width left out on each side when counting text rows
+    group_overlap: float = 0.5  # text boxes overlapping this share of the shorter height share a row
+    region_margin: float = 0.3  # text rows grown by this share to judge the plate around them
+    reread_margin: float = 0.6  # a plate box whose read needed fixes is grown by this share and read as text rows
+    max_fixes: int = 2  # characters the grammar may change in one read
+    fix_penalty: float = 0.1  # confidence lost per changed character
+    drop_cost: float = 1.5  # a character left out around the plate text, against one changed
+    rank_cost: float = 0.3  # each step away from the most common layout (data/plates.json lengths order)
+    max_cost: float = 2.0  # reads costing more than this are not plates
+    min_share: float = 0.6  # share of the reads' confidence the voted text needs
+    min_char_votes: int = 3  # reads of one length needed to vote character by character
+    grey_chroma: float = 12  # 99th percentile of max minus min channel under this: an IR frame
+    dark_v: float = 60
+    colour_border: float = 0.12  # plate edge share left out when judging its colour
+    colour_s: float = 70  # background saturation from which a plate is coloured, not white
+    white_v: float = 110
+    black_v: float = 80
+    yellow_hue: tuple[float, float] = (12, 40)  # OpenCV hue, 0 to 180
+    green_hue: tuple[float, float] = (40, 90)
+
+
 class Tuning(_Section):
     motion: MotionTuning = MotionTuning()
     detect: DetectTuning = DetectTuning()
@@ -157,6 +191,7 @@ class Tuning(_Section):
     scan: ScanTuning = ScanTuning()
     clips: ClipTuning = ClipTuning()
     evidence: EvidenceTuning = EvidenceTuning()
+    plates: PlateTuning = PlateTuning()
 
 
 def _merge(base: dict, extra: dict) -> dict:
