@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Literal
 
+from watchful.agent.compiler import mentions_age, neutral_text
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
 from watchful.agent.prompting import parse_json, plain, render
 from watchful.agent.tools import TERMINAL, TOOLS, ToolContext, describe_tools, run_tool
@@ -10,6 +11,7 @@ from watchful.rules.engine import Candidate
 
 MAX_IMAGES = 6
 GRADES = ("critical", "warning", "info")
+CANNOT_JUDGE = "cannot judge"
 SCHEMA = {"type": "object", "properties": {"tool": {"type": "string", "enum": list(TOOLS) + list(TERMINAL)},
                                            "args": {"type": "object"}, "why": {"type": "string"}},
           "required": ["tool", "args", "why"]}
@@ -97,6 +99,12 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
         if tool in TERMINAL:
             summary = plain(str(args.get("summary") or args.get("reason") or args.get("question") or why))
             trace.append(TraceStep(n, tool, args, why, "", int((time.monotonic() - t0) * 1000)))
+            if tool == "cannot_judge" or CANNOT_JUDGE in f"{summary} {why}".lower():
+                # it needs an age, which is never judged: a person sees the moment, unchecked, and no age is stated
+                return Verdict("unverified", plain(f"{c.watch_name}: the AI can't judge this, it would need an age."),
+                               trace)
+            if mentions_age(summary):
+                summary = neutral_text(summary)  # the agent never states anyone's age or calls anyone a child
             status = {"raise_alert": "alert", "dismiss": "dismissed", "ask_human": "awaiting_human"}[tool]
             grade = str(args.get("severity") or "").strip().lower()
             if tool == "raise_alert" and grade in GRADES:

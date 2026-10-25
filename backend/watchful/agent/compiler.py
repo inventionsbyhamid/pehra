@@ -94,26 +94,35 @@ def _words() -> dict:
 
 @lru_cache
 def _age_pattern() -> re.Pattern:
-    terms = sorted(_words()["age_terms"], key=len, reverse=True)
-    return re.compile(r"\b(?:(?:a|an|the|some|any)\s+)?(" + "|".join(re.escape(t) for t in terms) + r")\b", re.I)
+    """Age words and phrases (child, a minor, bachcha, school uniform) and ages written as numbers (7-year-old)."""
+    terms = [re.escape(t) for t in sorted(_words()["age_terms"], key=len, reverse=True)]
+    return re.compile(r"\b(?:(?:a|an|the|some|any)\s+)?(" + "|".join(_words()["age_patterns"] + terms) + r")(?!\w)",
+                      re.I)
+
+
+@lru_cache
+def _place_word_pattern() -> re.Pattern:
+    words = sorted(_words()["place_words"], key=len, reverse=True)
+    return re.compile(r"(?<!\w)(" + "|".join(re.escape(w) for w in words) + r")(?!\w)", re.I)
 
 
 def place_phrases(names) -> list[str]:
-    """The drawn names that hold an age word and are still only a place: a phrase with other words in it (kids play
-    area, children's park). A bare age word (Kids, child) is never one, so it can't hide an age."""
+    """The drawn names that hold an age word and are still only a place: the rest of the name holds a place word
+    from data (kids play area, toddler pool, children's park). "small child", "child alone" or "kids only" say who,
+    not where, so they are never places and can't hide an age."""
     out = []
     for name in names:
         name = (name or "").strip()
         if not name or not _age_pattern().search(name):
             continue  # nothing in it could be read as an age, so nothing to exempt
         rest = re.sub(r"['\u2019]s\b", " ", _age_pattern().sub(" ", name))
-        if re.search(r"[^\W\d_]{2,}", rest):
+        if _place_word_pattern().search(rest):
             out.append(name)
     return out
 
 
-def bare_age_name(name: str) -> bool:
-    """A zone or line named only by an age word says who, not where; it is refused."""
+def age_in_name(name: str) -> bool:
+    """A zone or line name with an age word and no place word says who uses it, not where; it is refused."""
     return mentions_age(name) and not place_phrases([name])
 
 
@@ -145,9 +154,19 @@ def _age_phrase(text: str, names=()) -> str | None:
     return m.group(0) if m else None
 
 
+def neutral_text(text: str) -> str:
+    """Words with every age or child word replaced by someone, for text people will read."""
+    return _neutral(text)
+
+
 def _neutral(text: str, names=()) -> str:
     masked, found = _mask(text, names)
-    out = _unmask(re.sub(r"\s{2,}", " ", _age_pattern().sub("someone", masked)).strip(), found)
+
+    def swap(m: re.Match) -> str:  # "a child" becomes someone; "of about 7" or "aged 7" just goes
+        return "" if re.match(r"(?:of|aged)\b", m.group(1), re.I) else "someone"
+
+    out = re.sub(r"\s{2,}", " ", _age_pattern().sub(swap, masked))
+    out = _unmask(re.sub(r"\s+([,.?!])", r"\1", out).strip(), found)
     return out[:1].upper() + out[1:]
 
 

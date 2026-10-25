@@ -133,6 +133,7 @@ TERMINAL = {
                    "may be in danger now), warning (needs a look soon) or info (for the record); reason says why",
     "dismiss": "dismiss(reason): it is not what the watch asks for",
     "ask_human": "ask_human(question): a person should decide before anyone is contacted",
+    "cannot_judge": "cannot_judge(reason): the question needs something no picture may decide, such as anyone's age",
 }
 
 

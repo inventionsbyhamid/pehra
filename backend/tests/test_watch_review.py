@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import pytest
 
-from watchful.agent.compiler import CompileContext, Invalid, bare_age_name, check_watch, compile_watch, mentions_age
+from watchful.agent.compiler import CompileContext, Invalid, age_in_name, check_watch, compile_watch, mentions_age
 from watchful.agent.llm import FakeLLM
 from watchful.rules import signals
 from watchful.rules.backtest import backtest
@@ -508,8 +508,8 @@ def test_a_bare_age_word_as_a_zone_name_never_hides_an_age():
     assert not mentions_age("someone in the kids play area", ["kids play area"])
     assert not mentions_age("someone in the children's park", ["children's park"])
     assert mentions_age("a child in the children's park", ["children's park"])
-    assert bare_age_name("Kids") and bare_age_name("child") and bare_age_name("the kids")
-    assert not bare_age_name("kids play area") and not bare_age_name("gate")
+    assert age_in_name("Kids") and age_in_name("child") and age_in_name("the kids")
+    assert not age_in_name("kids play area") and not age_in_name("gate")
     spec = W(Condition(signal="looks_like", params={"text": "kids"}), Condition(signal="in_zone", zones=["Kids"]),
              classes=("person",)).model_dump()
     spec["name"] = "Kids alone at the pool"
@@ -590,3 +590,88 @@ def test_a_watch_that_no_longer_parses_can_still_be_switched_off(tmp_path):
     bad = c.patch(f"/api/cameras/{cam}", json={"zones": [{"id": "z", "name": "Kids", "polygon": [[0, 0], [1, 0],
                                                                                                     [1, 1]]}]})
     assert bad.status_code == 400 and "place" in bad.json()["detail"]
+
+
+# fix round 3
+
+WHO_NOT_WHERE = ["small child", "child or adult", "child alone", "kids only", "Kids", "child", "the kids"]
+PLACES = ["kids play area", "toddler pool", "baby room", "kid zone", "Children's park", "Children’s park",
+          "girls toilet"]
+
+
+def test_a_name_with_an_age_word_is_a_place_only_with_a_place_word():
+    for name in WHO_NOT_WHERE:
+        assert age_in_name(name), name
+    for name in PLACES:
+        assert not age_in_name(name), name
+        assert not mentions_age(f"someone in the {name} after 10 PM", [name]), name
+        assert mentions_age(f"a toddler in the {name}", [name]), name
+
+
+@pytest.mark.parametrize("zone,name,verify", [
+    ("small child", "Someone at the pool", "Is the person a small child?"),
+    ("child or adult", "Child or adult at the gate", "?"),
+    ("child alone", "Child alone", "?"),
+    ("kids only", "Someone in kids only", "Is it kids only?")])
+def test_a_name_that_says_who_never_hides_an_age(zone, name, verify):
+    spec = W(Condition(signal="in_zone", zones=[zone])).model_dump()
+    spec.update(name=name, verify=verify)
+    with pytest.raises(Invalid):
+        check_watch(spec, name, CompileContext(zones={zone: "area"}))
+
+
+def test_small_child_zone_does_not_compile_into_a_child_watch():
+    ctx = CompileContext(zones={"small child": "area", "water": "water"})
+    ai = reply({"name": "Small child near the water", "subject": {"classes": ["person"]},
+                "conditions": [{"signal": "in_zone", "zones": ["water"]}],
+                "verify": "Is a small child near the water?"})
+    r = compile_watch("small child near the water", ctx, FakeLLM([ai]))
+    assert r.cannot and any(mentions_age(c.clause) for c in r.cannot)
+    assert r.watch is not None and not mentions_age(r.watch.name) and not mentions_age(r.watch.verify)
+
+
+AGE_WORDS = ["a person of about 7", "aged 10", "someone of 8 or 9", "minor", "a minor", "7-year-old", "7 yr old",
+             "7yo", "a 7 years old", "12 y.o.", "under 12", "under-12s",
+             "adolescent", "preschooler", "newborn", "kiddos", "a little one", "schoolgirl", "schoolgirls", "schoolboy",
+             "schoolboys", "schoolkids", "school uniform", "school student", "school students", "bachcha", "bachche",
+             "baccha", "bacche", "bachchi", "ladka", "ladke", "ladki", "munna", "munni"]
+
+
+@pytest.mark.parametrize("words", AGE_WORDS)
+def test_more_age_words_are_caught(words):
+    assert mentions_age(f"tell me when {words} is at the pool"), words
+
+
+@pytest.mark.parametrize("words", ["a student", "college students", "a car parked for under 5 minutes",
+                                   "under 10 seconds", "kept for 7 years", "a miner", "a group of 5 people",
+                                   "of about 10 minutes"])
+def test_ordinary_words_are_not_age(words):
+    assert not mentions_age(words), words
+
+
+@pytest.mark.parametrize("looks", [{"cond": "minor"}, {"cond": "bachcha"}, {"cond": "student in school uniform"},
+                                   {"subject": "a minor"}])
+def test_a_saved_look_about_age_never_reaches_the_image_model(looks):
+    conds = [Condition(signal="in_zone", zones=["water"])]
+    if "cond" in looks:
+        conds.append(Condition(signal="looks_like", params={"text": looks["cond"]}))
+    spec = W(*conds).model_dump()
+    if "subject" in looks:
+        spec["subject"]["looks_like"] = looks["subject"]
+    with pytest.raises(Invalid):
+        check_watch(spec, "someone at the pool", CompileContext(zones={"water": "water"}))
+
+
+def test_the_verifier_never_judges_age(tmp_path):
+    from test_agent import cand, ctx, step
+    from watchful.agent.prompting import render
+    from watchful.agent.verifier import verify
+    prompt = render("verify", tools="")
+    assert "never estimate or state anyone's age" in prompt and "cannot_judge" in prompt
+    v = verify(cand(), ctx(tmp_path), FakeLLM([step("cannot_judge", reason="It needs an age.")]))
+    assert v.status == "unverified" and "age" in v.summary and v.trace[-1].tool == "cannot_judge"
+    v = verify(cand(), ctx(tmp_path / "b"), FakeLLM([step("dismiss", reason="I cannot judge this without an age.")]))
+    assert v.status == "unverified"
+    v = verify(cand(), ctx(tmp_path / "c"), FakeLLM([step("raise_alert", summary="A child of about 7 is in the pool.",
+                                                         severity="critical", reason="alone")]))
+    assert v.status == "alert" and not mentions_age(v.summary) and v.summary == "Someone is in the pool."
