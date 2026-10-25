@@ -414,6 +414,32 @@ class SqlRepository:
             return dict(s.execute(select(m.PersonLabel.group_id, m.PersonLabel.label)
                                   .where(self._mine(m.PersonLabel), m.PersonLabel.camera_id == camera_id)).all())
 
+    # zone state examples, for the zone_state signal
+
+    def add_state_example(self, camera_id: str, zone_id: str, state: str, picture_key: str) -> str:
+        with self.tx() as s:
+            cam = s.get(m.Camera, camera_id)
+            if cam is None or cam.workspace_id != self.workspace_id:
+                raise KeyError(camera_id)
+            row = m.StateExample(workspace_id=self.workspace_id, camera_id=camera_id, zone_id=zone_id,
+                                 state=state.strip().lower(), picture_key=picture_key)
+            s.add(row)
+            s.flush()
+            return row.id
+
+    def list_state_examples(self, camera_id: str) -> list[tuple[str, str, str, str]]:
+        """(example id, zone id, state, picture key) rows of one camera, oldest first."""
+        with self.tx() as s:
+            rows = s.execute(select(m.StateExample.id, m.StateExample.zone_id, m.StateExample.state,
+                                    m.StateExample.picture_key)
+                             .where(self._mine(m.StateExample), m.StateExample.camera_id == camera_id)
+                             .order_by(m.StateExample.created_at, m.StateExample.id)).all()
+        return [(i, z, st, key) for i, z, st, key in rows if key]
+
+    def delete_state_example(self, example_id: str) -> None:
+        with self.tx() as s:
+            s.execute(delete(m.StateExample).where(m.StateExample.id == example_id, self._mine(m.StateExample)))
+
 
 def _as_stored(row: WatchRow) -> WatchRow:
     """The row as stored: columns that follow the watch spec take the spec's values."""

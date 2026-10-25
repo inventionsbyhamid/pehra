@@ -28,6 +28,7 @@ class Needs:
     posture: bool = False  # only people whose box looks like a fall may be happening
     faces: bool = False
     embed: bool = False
+    slow: bool = False  # detect every zones.slow_tick_s even when nothing moves, for parked or left things
 
 
 @dataclass
@@ -103,6 +104,7 @@ class Perceiver:
                        "face_runs": 0, "embeds": 0, "ms_total": 0.0}
         self._since_detect = 0
         self._last_scene = float("-inf")
+        self._last_slow = float("-inf")
         self.set_needs(needs)
 
     def set_needs(self, needs: Needs) -> None:
@@ -126,10 +128,13 @@ class Perceiver:
         tamper = self.tamper.update(image, ts)
         motion = self.gate.update(work)
         observations: list[Observation] = []
-        if motion.moving or self.tracker.tracks:
+        slow = self.needs.slow and ts - self._last_slow >= self.t.zones.slow_tick_s
+        if slow:
+            self._last_slow = ts
+        if motion.moving or self.tracker.tracks or slow:
             tracks = self.tracker.tracks
             due = self._since_detect + 1 >= max(1, self.t.detect.stride)
-            if not tracks or due or self._new_motion(motion.boxes, tracks):
+            if not tracks or due or slow or self._new_motion(motion.boxes, tracks):
                 self.counts["detector_runs"] += 1
                 self._since_detect = 0
                 dets = self.detector.detect(work)

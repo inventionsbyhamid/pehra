@@ -7,7 +7,7 @@ from watchful.tuning import Tuning
 from watchful.vision.falls import FallDetector, PostureEvent
 from watchful.vision.perceive import Observation, Perception
 from watchful.vision.pose import PoseResult
-from watchful.vision.zones import ZoneEvent, ZoneTracker
+from watchful.vision.zones import LineTracker, ZoneEvent, ZoneTracker
 
 
 @dataclass
@@ -28,6 +28,7 @@ class TrackState:
     embedding: np.ndarray | None = None
     keyframe_key: str | None = None
     best_key: str | None = None
+    attributes: dict[str, str] = field(default_factory=dict)  # what readers attached, e.g. plate_text
 
 
 @dataclass
@@ -39,6 +40,7 @@ class Tick:
     events: list[EventRow]
     ended: list[TrackState] = field(default_factory=list)
     pos: float | None = None
+    health: str | None = None  # set when the camera itself is known to be offline
 
 
 @dataclass
@@ -60,6 +62,7 @@ class Reasoner:
     def __init__(self, camera: Camera, tuning: Tuning, postures: bool = True):
         self.camera, self.t, self.postures = camera, tuning, postures
         self.zones = ZoneTracker(camera.zones)
+        self.lines = LineTracker(camera.zones, tuning.zones)
         self.states: dict[int, TrackState] = {}
         self.falls: dict[int, FallDetector] = {}
         self.recent_known: dict[str, tuple[str, np.ndarray, float]] = {}  # person id to (name, clothes, last seen)
@@ -74,16 +77,20 @@ class Reasoner:
             self._apply(s, o)
             (ended if o.ended else active).append(s)
             if o.started:
-                events.append(self._event(s, "track_start", o.ts))
+                events.append(self._event(s, "track_start", o.ts, data={"size": list(p.size)}))
 
         self._carry_names(active, p.ts)
-        zone_events = self.zones.update([_Box(s.track_id, s.cls, s.box, s.last_ts) for s in active],
-                                        [_Box(s.track_id, s.cls, s.box, s.last_ts) for s in ended], p.ts, p.size)
+        boxes = [_Box(s.track_id, s.cls, s.box, s.last_ts) for s in active]
+        gone = [_Box(s.track_id, s.cls, s.box, s.last_ts) for s in ended]
+        zone_events = self.zones.update(boxes, gone, p.ts, p.size) + self.lines.update(boxes, gone, p.ts, p.size)
         for s in active:
             s.zones_inside = self.zones.inside(s.track_id)
         for z in zone_events:
             s = self.states[z.track_id]
-            events.append(self._event(s, z.kind, z.ts, z.zone, {"dwell_s": z.dwell_s} if z.dwell_s is not None else {}))
+            data = {"dwell_s": z.dwell_s} if z.dwell_s is not None else {}
+            if z.direction:
+                data["direction"] = z.direction
+            events.append(self._event(s, z.kind, z.ts, z.zone, data))
 
         if self.postures:
             for s in active:
@@ -96,7 +103,8 @@ class Reasoner:
                     events.append(self._posture_event(s, e))
 
         for s in ended:
-            events.append(self._event(s, "track_end", s.last_ts, data={"duration_s": s.last_ts - s.first_ts}))
+            events.append(self._event(s, "track_end", s.last_ts, data={"duration_s": s.last_ts - s.first_ts,
+                                                                       "zones": sorted(s.zones_inside)}))
             self.states.pop(s.track_id, None)
             self.falls.pop(s.track_id, None)
         if p.tamper:
@@ -136,10 +144,12 @@ class Reasoner:
             value = getattr(o, name)
             if value is not None:
                 setattr(s, name, value)
+        s.attributes.update(getattr(o, "attributes", None) or {})
 
     def _event(self, s: TrackState, kind: str, ts: float, zone: str | None = None, data: dict | None = None) -> EventRow:
         person = s.cls == "person"
-        return EventRow(None, self.camera.id, ts, kind, s.track_id, s.cls, zone, data or {},
+        data = {**(data or {}), "box": [round(float(v), 1) for v in s.box]}
+        return EventRow(None, self.camera.id, ts, kind, s.track_id, s.cls, zone, data,
                         s.best_key or s.keyframe_key, _list(s.signature) if person else None,
                         _list(s.embedding) if person else None, s.known_name)
 

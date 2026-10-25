@@ -1,0 +1,61 @@
+{
+  "pool": {
+    "label": "Pool",
+    "watches": [
+      "someone in the water after pool hours",
+      "someone still in the water for 20 seconds",
+      "someone goes out of sight in the water for 15 seconds",
+      "pool open with nobody at the lifeguard chair",
+      "someone alone in the pool area after 8 PM"
+    ]
+  },
+  "main gate": {
+    "label": "Main gate",
+    "watches": [
+      "log every vehicle in and out",
+      "gate left open after 11 PM",
+      "a delivery person goes past the lobby",
+      "a vehicle waits at the gate for more than 5 minutes"
+    ]
+  },
+  "service gate": {
+    "label": "Service gate",
+    "watches": [
+      "log staff arriving and leaving",
+      "someone not on the staff list enters the service gate after 10 PM",
+      "service gate left open after 10 PM"
+    ]
+  },
+  "parking": {
+    "label": "Parking",
+    "watches": [
+      "a car parked in the fire lane for 10 minutes",
+      "someone going from car to car at night",
+      "a vehicle parked in a visitor bay for more than 4 hours"
+    ]
+  },
+  "lobby": {
+    "label": "Lobby",
+    "watches": [
+      "someone waits in the lobby for more than 10 minutes at night",
+      "a bag left behind in the lobby for 5 minutes",
+      "lobby door left open after 11 PM"
+    ]
+  },
+  "perimeter": {
+    "label": "Perimeter",
+    "watches": [
+      "someone climbing the wall",
+      "someone near the wall after 10 PM",
+      "someone carrying a ladder near the wall"
+    ]
+  },
+  "other": {
+    "label": "Other",
+    "watches": [
+      "camera covered, blurred or moved",
+      "someone in this area after 11 PM",
+      "a fall"
+    ]
+  }
+}

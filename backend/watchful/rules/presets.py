@@ -10,6 +10,16 @@ def _presets() -> dict:
     return json.loads((DATA / "presets.json").read_text())
 
 
+@lru_cache
+def purposes() -> dict:
+    """Camera purposes and the plain watch texts each suggests; only data, no code depends on a purpose."""
+    return json.loads((DATA / "purposes.json").read_text())
+
+
+def suggestions(purpose: str | None) -> list[str]:
+    return list(purposes().get((purpose or "").strip().lower(), {}).get("watches", []))
+
+
 def preset_names() -> list[str]:
     return list(_presets())
 

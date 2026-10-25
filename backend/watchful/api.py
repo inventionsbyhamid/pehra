@@ -21,17 +21,19 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.websockets import WebSocketDisconnect
 
 from watchful.agent.ask import AskContext, ask, people_groups
-from watchful.agent.compiler import compile_watch
+from watchful.agent.compiler import card, compile_watch, context_for, mentions_age
 from watchful.components import make_blobs, make_detector, make_embedder, make_faces, make_llm, make_repo
 from watchful.config import Settings, get_settings
 from watchful.rules.engine import validate
-from watchful.rules.presets import describe, preset
+from watchful.rules.backtest import backtest
+from watchful.rules.presets import describe, preset, purposes
 from watchful.rules.watch import SameAs, Watch
 from watchful.search import SearchQuery, search
 from watchful.store.db import DEFAULT_WORKSPACE, Camera, WatchRow, new_id
 from watchful.tuning import load_tuning
 from watchful.vision.faces import ConsentRequired, Enrollment, NoFaceFound
 from watchful.vision.scan import cut_clip
+from watchful.rules.zonestate import example_key, is_night
 from watchful.vision.zones import Zone
 
 COOKIE = "watchful_session"
@@ -141,6 +143,12 @@ class WatchIn(BaseModel):
     text: str | None = None
     preset: str | None = None
     fill: dict = {}
+    watch: dict | None = None  # a watch already shown on the card by preview, saved as shown
+    coverage: list[dict] = []
+    setup: list[str] = []
+    cannot: list[dict] = []
+    scope: str | None = None  # "camera" or "site", overrides what the words said
+    excluded_cameras: list[str] | None = None
 
 
 class AskIn(BaseModel):
@@ -244,8 +252,8 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
         if body.name is not None:
             cam.name = body.name
         if body.zones is not None:
-            cam.zones = [Zone(z.get("id") or new_id("zone"), z["name"], [tuple(p) for p in z["polygon"]])
-                         for z in body.zones]
+            cam.zones = [Zone(z.get("id") or new_id("zone"), z["name"], [tuple(p) for p in z["polygon"]],
+                              z.get("kind") or "area") for z in body.zones]
             if cam.kind == "demo":
                 w.repo.delete_camera_events(cam.id)  # the next loop records the timeline with the new zones
         if body.enabled is not None:
@@ -259,7 +267,7 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
             names = {z.name for z in cam.zones}
             for row in w.repo.list_watches(cam.id):
                 watch = Watch.model_validate(row.watch)
-                if row.enabled and validate(watch, names):
+                if row.enabled and watch.scope == "camera" and validate(watch, names):
                     row.enabled = False  # it points at a zone that no longer exists
                     w.repo.update_watch(row)
                     disabled.append(watch.name)
@@ -270,7 +278,10 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
     @app.get("/api/cameras/{camera_id}/frame", dependencies=auth)
     def camera_frame(camera_id: str, request: Request):
         w = _w(request)
-        cam = _camera(w, camera_id)
+        return Response(_frame(w, _camera(w, camera_id)), media_type="image/jpeg")
+
+    def _frame(w: State, cam: Camera) -> bytes:
+        camera_id = cam.id
         image = None
         if cam.kind in ("file", "demo") and cam.url:
             cap = cv2.VideoCapture(cam.url)
@@ -284,12 +295,47 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
                 while time.time() < deadline:
                     msg = sub.get(1.0)
                     if msg and msg.get("type") == "frame":
-                        return Response(msg["jpeg"], media_type="image/jpeg")
+                        return msg["jpeg"]
             finally:
                 w.manager.unsubscribe(camera_id, sub)
         if image is None:
             raise HTTPException(404, "No picture from this camera yet.")
-        return Response(cv2.imencode(".jpg", image)[1].tobytes(), media_type="image/jpeg")
+        return cv2.imencode(".jpg", image)[1].tobytes()
+
+    @app.post("/api/cameras/{camera_id}/zones/{zone_id}/examples", dependencies=auth)
+    def add_state_example(camera_id: str, zone_id: str, request: Request, state: str = Form(...),
+                          file: UploadFile | None = File(None)):
+        """A picture of a zone in a named state (gate open), from an upload or the camera's picture right now."""
+        w = _w(request)
+        cam = _camera(w, camera_id)
+        if not any(z.id == zone_id and not z.is_line for z in cam.zones):
+            raise HTTPException(404, "No such zone on this camera.")
+        if not state.strip():
+            raise HTTPException(400, "Name the state, for example open or closed.")
+        data = file.file.read() if file is not None else _frame(w, cam)
+        image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            raise HTTPException(400, "That picture can't be read.")
+        period = "night" if is_night(image, w.tuning.zones) else "day"
+        key = example_key(cam.id, zone_id, period, time.time())
+        w.blobs.put(key, cv2.imencode(".jpg", image)[1].tobytes(), "image/jpeg")
+        example_id = w.repo.add_state_example(cam.id, zone_id, state, key)
+        if cam.kind in LIVE_KINDS:
+            w.manager.restart(cam.id)
+        return {"id": example_id, "zone_id": zone_id, "state": state.strip().lower(), "period": period,
+                "url": w.blobs.url(key)}
+
+    @app.get("/api/cameras/{camera_id}/examples", dependencies=auth)
+    def state_examples(camera_id: str, request: Request):
+        w = _w(request)
+        cam = _camera(w, camera_id)
+        return [{"id": i, "zone_id": z, "state": st, "url": w.blobs.url(key)}
+                for i, z, st, key in w.repo.list_state_examples(cam.id)]
+
+    @app.delete("/api/examples/{example_id}", dependencies=auth)
+    def delete_state_example(example_id: str, request: Request):
+        _w(request).repo.delete_state_example(example_id)
+        return {"ok": True}
 
     @app.post("/api/cameras/{camera_id}/scan", dependencies=auth)
     def rescan(camera_id: str, request: Request):
@@ -343,34 +389,75 @@ def create_app(settings: Settings | None = None, llm=None, manager=None) -> Fast
     def presets():
         return describe()
 
+    @app.get("/api/purposes", dependencies=auth)
+    def camera_purposes():
+        return purposes()
+
+    def _scoped(watch: Watch, body: WatchIn) -> Watch:
+        if body.scope in ("camera", "site"):
+            watch.scope = body.scope
+        if body.excluded_cameras is not None:
+            watch.excluded_cameras = list(body.excluded_cameras)
+        return watch
+
+    @app.post("/api/cameras/{camera_id}/watches/preview", dependencies=auth)
+    def preview_watch(camera_id: str, body: WatchIn, request: Request):
+        """The watch card: what it will and won't watch, setup tasks, and how often it would have fired."""
+        w = _w(request)
+        cam = _camera(w, camera_id)
+        r = compile_watch(body.text or "", context_for(w.repo, cam), w.compile_llm)
+        out = {**card(r), "backtest": None}
+        if r.watch is not None:
+            watch = _scoped(r.watch, body)
+            ids = [c.id for c in w.repo.list_cameras() if watch.applies_to(c.id, cam.id)]
+            out["watch"] = watch.model_dump()
+            out["backtest"] = asdict(backtest(watch, w.repo, ids, tz=w.settings.timezone, tuning=w.tuning))
+        return out
+
     @app.get("/api/cameras/{camera_id}/watches", dependencies=auth)
     def watches(camera_id: str, request: Request):
         return [asdict(x) for x in _w(request).repo.list_watches(camera_id)]
 
-    def _save_watch(w: State, cam: Camera, text: str, watch: Watch) -> WatchRow:
-        row = w.repo.add_watch(WatchRow(None, cam.id, text, watch.model_dump(), True))
-        if cam.kind in LIVE_KINDS:
-            w.manager.restart(cam.id)
+    def _save_watch(w: State, cam: Camera, text: str, watch: Watch, shown: dict | None = None) -> WatchRow:
+        shown = shown or {}
+        row = w.repo.add_watch(WatchRow(None, cam.id, text, watch.model_dump(), True,
+                                        coverage=shown.get("coverage", []), setup=shown.get("setup", []),
+                                        cannot=shown.get("cannot", [])))
+        for c in (w.repo.list_cameras() if watch.scope == "site" else [cam]):
+            if c.kind in LIVE_KINDS and watch.applies_to(c.id, cam.id):
+                w.manager.restart(c.id)
         return row
 
     @app.post("/api/cameras/{camera_id}/watches", dependencies=auth)
     def add_watch(camera_id: str, body: WatchIn, request: Request):
         w = _w(request)
         cam = _camera(w, camera_id)
+        shown: dict = {}
         if body.preset:
             try:
                 watch = preset(body.preset, **body.fill)
             except (KeyError, ValueError) as e:
                 raise HTTPException(400, f"That preset can't be used: {e}")
             text = body.preset
+        elif body.watch is not None:
+            try:
+                watch = Watch.model_validate(body.watch)
+            except ValueError as e:
+                raise HTTPException(400, f"That watch can't be saved: {str(e).splitlines()[0]}")
+            unknown = [p for p in validate(watch, set()) if p.startswith("unknown signal")]
+            if unknown or mentions_age(json.dumps(body.watch)):
+                raise HTTPException(400, "That watch can't be saved: " + ("; ".join(unknown) or
+                                                                         "no watch may be about anyone's age."))
+            text = body.text or watch.name
+            shown = {"coverage": body.coverage, "setup": body.setup, "cannot": body.cannot}
         else:
-            people = {e.person_id: e.name for e in w.repo.list_enrollments()}
-            result = compile_watch(body.text or "", [z.name for z in cam.zones], w.compile_llm, people)
+            result = compile_watch(body.text or "", context_for(w.repo, cam), w.compile_llm)
+            shown = card(result)
             if result.watch is None:
-                return {"watch": None, "problem": result.problem}
+                return shown
             watch, text = result.watch, body.text or ""
-        row = _save_watch(w, cam, text, watch)
-        return {"id": row.id, "watch": row.watch, "problem": None}
+        row = _save_watch(w, cam, text, _scoped(watch, body), shown)
+        return {**shown, "id": row.id, "watch": row.watch, "problem": None}
 
     @app.patch("/api/watches/{watch_id}", dependencies=auth)
     def toggle_watch(watch_id: str, request: Request, enabled: bool = Body(..., embed=True)):

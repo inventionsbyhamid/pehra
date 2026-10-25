@@ -40,10 +40,10 @@ class Subject(_Model):
 class Condition(_Model):
     signal: str
     zones: list[str] = []
-    op: Literal[">=", "<=", "==", "is"] = ">="
-    value: float | bool | str = True
+    op: Literal[">=", "<=", "==", "is", "!=", "contains", "in"] = ">="
+    value: float | bool | str | list[str] = True
     weight: float = 1.0
-    params: dict = {}
+    params: dict = {}  # signal settings; params.hold_s holds any condition true for that many seconds
 
 
 class Watch(_Model):
@@ -59,3 +59,27 @@ class Watch(_Model):
     cooldown_s: float = 120
     repeat: bool = False  # keep firing every cooldown while true; by default once each time it becomes true
     expires_at: float | None = None
+    scope: Literal["camera", "site"] = "camera"  # a site watch runs on every camera, also ones added later
+    excluded_cameras: list[str] = []
+    output: Literal["alert", "log"] = "alert"  # a log writes a row (time, camera, reasons) and never alerts
+
+    def applies_to(self, camera_id: str, home_camera_id: str | None) -> bool:
+        if self.scope == "site":
+            return camera_id not in self.excluded_cameras
+        return camera_id == home_camera_id
+
+
+def select_watches(rows, camera_id: str) -> list[tuple[str, Watch]]:
+    """The enabled watches that run on a camera: its own and every site watch that does not exclude it.
+    Rows that no longer parse are left out; the worker reports them."""
+    out = []
+    for row in rows:
+        if not row.enabled:
+            continue
+        try:
+            w = Watch.model_validate(row.watch)
+        except ValueError:
+            continue
+        if w.applies_to(camera_id, row.camera_id):
+            out.append((row.id, w))
+    return out

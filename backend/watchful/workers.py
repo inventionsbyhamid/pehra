@@ -21,8 +21,9 @@ from watchful.evidence import EvidenceBuffer, EvidencePack, evidence_context, fi
 from watchful.ingest.clips import ClipRecorder
 from watchful.ingest.sources import FileSource, PushSource, StreamSource
 from watchful.notify import ApprovalNotifier
-from watchful.rules.engine import RuleEngine, needs_for, validate
+from watchful.rules.engine import RuleEngine, log_row, needs_for, validate
 from watchful.rules.watch import Watch
+from watchful.rules.zonestate import load_states
 from watchful.store.db import AlertRow, Camera
 from watchful.tuning import Tuning, load_tuning
 from watchful.vision.embed import TextCache, watch_texts
@@ -105,7 +106,10 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
         faces.load(enrollments)
     embedder = TextCache(make_embedder(settings), texts or {}) if needs.embed else None
     pipe = CameraPipeline(camera, repo, blobs, faces, settings, tuning, needs, embedder)
-    engine = RuleEngine(watches, camera.zones, tuning, settings.timezone, camera.kind, embedder)
+    states = None
+    if any(c.signal == "zone_state" for _, w in watches for c in w.conditions):
+        states = load_states(repo.list_state_examples(camera.id), blobs.get, camera.zones, tuning.zones, embedder)
+    engine = RuleEngine(watches, camera.zones, tuning, settings.timezone, camera.kind, embedder, states)
     source = _source(camera, settings)
     webcam = isinstance(source, PushSource)
     clips = ClipRecorder(blobs, max(settings.display_fps, settings.analysis_fps), tuning.clips)
@@ -172,6 +176,12 @@ def run_camera(camera: Camera, watches: list[tuple[str, Watch]], enrollments: li
                 send({"type": "tamper", "camera_id": camera.id, "ts": e.ts, "kind": e.kind[len("tamper_"):],
                       "detail": e.data.get("detail", "")})
         for c in engine.on_tick(camera.id, result.tick, now=frame.ts, image=frame.image):
+            if c.output == "log":
+                row = log_row(c)
+                if recording:
+                    repo.add_events([row])  # a log watch writes a row and never alerts
+                send({"type": "log", "camera_id": camera.id, "row": asdict(row)})
+                continue
             c.clip_key = f"{camera.id}/clips/{c.fingerprint}.mp4"
             clips.request(c.ts, c.clip_key)
             pending.append((frame.ts + tuning.evidence.after_s, c))
@@ -424,7 +434,7 @@ class WorkerManager:
 
     def _handle(self, msg: dict) -> None:
         kind = msg.get("type")
-        if kind in ("frame", "overlay"):
+        if kind in ("frame", "overlay", "log"):
             self._publish(msg["camera_id"], msg)
         elif kind == "status":
             h = self.handles.get(msg["camera_id"])
@@ -536,7 +546,9 @@ class WorkerManager:
             self.metrics.put("ScanRealtimeFactor", result.stats.x_realtime)
             self.metrics.put("ScanSecondsPerMinute", result.stats.wall_s / max(result.stats.duration_s / 60, 1e-6))
             dedupe_s = self.settings.alert_dedupe_days * 86400 + max(0.0, time.time() - start_epoch)
-            fresh = [c for c in result.candidates if not self.repo.alert_fingerprint_exists(c.fingerprint, dedupe_s)]
+            self.repo.add_events([log_row(c) for c in result.candidates if c.output == "log"])
+            fresh = [c for c in result.candidates if c.output != "log"
+                     and not self.repo.alert_fingerprint_exists(c.fingerprint, dedupe_s)]
             packs = [file_pack(cam.url, start_epoch, c, result.paths.get(c.track_id, []),
                                result.poses.get(c.track_id, []), self.tuning.evidence, cam.zones)
                      for c in fresh]

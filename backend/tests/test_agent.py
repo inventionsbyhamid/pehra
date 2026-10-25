@@ -26,12 +26,12 @@ def test_compiler_happy_path():
     assert r.problem is None and r.watch.conditions[0].signal == "entered"
     assert "car" in r.watch.subject.classes and "truck" in r.watch.subject.classes
     prompt = llm.calls[0][0]
-    assert all(name in prompt for name in REGISTRY) and "parking lot" in prompt
+    assert all(name in prompt for name in REGISTRY if not name.startswith("_")) and "parking lot" in prompt
 
 
-def test_compiler_unknown_zone_is_a_problem():
-    r = compile_watch("car enters the garage", ["parking lot"], FakeLLM([watch_json("garage"), watch_json("garage")]))
-    assert r.watch is None and "garage" in r.problem
+def test_compiler_unknown_zone_is_a_setup_task():
+    r = compile_watch("car enters the garage", ["parking lot"], FakeLLM([watch_json("garage")]))
+    assert r.watch is not None and any("garage" in s for s in r.setup)
 
 
 def test_compiler_survives_a_cut_off_reply_and_drops_doubled_appearance():

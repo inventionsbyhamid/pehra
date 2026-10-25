@@ -1,20 +1,26 @@
 import hashlib
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from watchful.rules.signals import REGISTRY, SignalContext, SignalValue, Sighting, TrackHistory
 from watchful.rules.watch import Condition, Watch
+from watchful.rules.zonestate import correlation, edge_picture
+from watchful.store.db import EventRow
 from watchful.tuning import Tuning
 from watchful.vision.appearance import same_person
 from watchful.vision.detect import COCO
 from watchful.vision.perceive import Needs
 from watchful.vision.reason import Tick, TrackState
+from watchful.vision.track import iou
 from watchful.vision.zones import Zone
 
 FILE_KINDS = {"file", "demo"}
 POSITION_BUCKET_S = 5.0
 SIGHTING_MEMORY_S = 7200.0
+HEALTH_EVENTS = {"tamper_covered": "covered", "tamper_blurred": "blurred", "tamper_moved": "moved",
+                 "tamper_restored": "live"}
 
 
 @dataclass
@@ -30,6 +36,7 @@ class Candidate:
     watch_name: str = ""
     verify: str = ""
     clip_key: str | None = None
+    output: str = "alert"
 
 
 @dataclass
@@ -40,9 +47,20 @@ class _Result:
     signals: dict = field(default_factory=dict)
 
 
+def _norm(v) -> str:
+    return str(v).strip().lower()
+
+
 def compare(value, op: str, target) -> bool:
     if op in ("==", "is"):
-        return str(value).lower() == str(target).lower() if isinstance(target, str) else value == target
+        return _norm(value) == _norm(target) if isinstance(target, str) else value == target
+    if op == "!=":
+        return not compare(value, "==", target)
+    if op == "contains":
+        return _norm(target) in _norm(value)
+    if op == "in":
+        options = target if isinstance(target, list) else str(target).split(",")
+        return _norm(value) in {_norm(o) for o in options}
     try:
         v, t = float(value), float(target)
     except (TypeError, ValueError):
@@ -51,11 +69,15 @@ def compare(value, op: str, target) -> bool:
 
 
 def validate(w: Watch, zone_names: set[str]) -> list[str]:
+    """Lines are zones of kind line, so a line name counts as a zone name here."""
     problems = []
     for c in w.conditions:
         if c.signal not in REGISTRY:
             problems.append(f"unknown signal: {c.signal}")
         problems += [f"unknown zone: {z}" for z in c.zones if z not in zone_names]
+        line = c.params.get("line")
+        if line and line not in zone_names:
+            problems.append(f"unknown line: {line}")
     problems += [f"unknown zone: {z}" for z in w.zones if z not in zone_names]
     problems += [f"unknown class: {c}" for c in w.subject.classes if c not in COCO]
     return problems
@@ -77,12 +99,30 @@ def needs_for(watches: list[Watch]) -> Needs:
                 needs.posture |= "posture" in spec.needs
                 needs.faces |= "faces" in spec.needs
                 needs.embed |= "embed" in spec.needs
+                needs.slow |= "slow" in spec.needs
     return needs
+
+
+def log_row(c: Candidate) -> EventRow:
+    """What a log watch writes instead of an alert: one event row the logs and backtests can read."""
+    return EventRow(None, c.camera_id, c.ts, "watch_log", c.track_id, None, None,
+                    {"watch_id": c.watch_id, "watch": c.watch_name, "reasons": c.evidence.get("reasons", []),
+                     "signals": c.evidence.get("signals", {})},
+                    c.keyframe_keys[0] if c.keyframe_keys else None, None, None, None)
+
+
+@dataclass
+class _Parked:
+    cls: str
+    box: tuple
+    since: float
+    seen: float
+    template: np.ndarray | None
 
 
 class RuleEngine:
     def __init__(self, watches: list[tuple[str, Watch]], zones: list[Zone], tuning: Tuning, tz: str,
-                 camera_kind: str = "stream", embedder=None):
+                 camera_kind: str = "stream", embedder=None, states=None):
         names = {z.name for z in zones}
         for _, w in watches:
             problems = validate(w, names)
@@ -96,9 +136,18 @@ class RuleEngine:
         self.state: dict[str, dict] = {}
         self.last_fired: dict[tuple, float] = {}
         self.armed: dict[tuple, bool] = {}
+        self.states = states
+        self.health = "live"
+        self.parked: list[_Parked] = []
+        self.watch_stationary = any(c.signal == "stationary_s" for _, w in watches for c in w.conditions)
+        self._last_slow = float("-inf")
 
     def on_tick(self, camera_id: str, tick: Tick, now: float, image=None) -> list[Candidate]:
-        self._remember(tick)
+        slow = tick.ts - self._last_slow >= self.tuning.zones.slow_tick_s
+        if slow:
+            self._last_slow = tick.ts
+        self._health(tick)
+        self._remember(tick, image, slow)
         out = []
         for wid, w in self.watches:
             if w.expires_at and now > w.expires_at:
@@ -106,22 +155,51 @@ class RuleEngine:
             if w.time_window and not w.time_window.contains(tick.ts, self.tz):
                 continue
             subjects = [s for s in tick.tracks if self._matches(w, s, now, tick)]
+            state = self.state.setdefault(wid, {})
             ctx = SignalContext(camera_id, self.zones, tick, self.tuning.signals, self.history, self.sightings,
-                                subjects, self.embedder, image, self.state.setdefault(wid, {}),
-                                self.tuning.appearance.same)
-            scene = [(c, REGISTRY[c.signal].fn(ctx, c, None)) for c in w.conditions
+                                subjects, self.embedder, image, state, self.tuning.appearance.same, slow,
+                                self.health, self.states, list(w.subject.classes))
+            holds = state.setdefault("_holds", {})
+            scene = [self._eval(ctx, holds, i, c, None) for i, c in enumerate(w.conditions)
                      if REGISTRY[c.signal].level == "scene"]
-            per_track = [c for c in w.conditions if REGISTRY[c.signal].level == "track"]
+            per_track = [(i, c) for i, c in enumerate(w.conditions) if REGISTRY[c.signal].level == "track"]
             if not per_track:
                 r = self._combine(w, scene)
                 if self._fires(wid, None, w, tick.ts, r.passed):
                     out.append(self._candidate(wid, w, camera_id, tick, None, r))
                 continue
             for s in subjects:
-                r = self._combine(w, scene + [(c, REGISTRY[c.signal].fn(ctx, c, s)) for c in per_track])
+                r = self._combine(w, scene + [self._eval(ctx, holds, i, c, s) for i, c in per_track])
                 if self._fires(wid, s.track_id, w, tick.ts, r.passed):
                     out.append(self._candidate(wid, w, camera_id, tick, s, r))
         return out
+
+    @staticmethod
+    def _eval(ctx: SignalContext, holds: dict, index: int, c: Condition, s: TrackState | None):
+        """A signal's value and whether its condition passes; params.hold_s keeps it true for that long first."""
+        spec = REGISTRY[c.signal]
+        v = spec.fn(ctx, c, s)
+        ok = compare(v.value, c.op, c.value)
+        hold = float(c.params.get("hold_s") or 0) if not spec.own_hold else 0.0
+        if hold > 0:
+            key = (index, s.track_id if s else None)
+            if not ok:
+                holds.pop(key, None)
+            else:
+                since = holds.setdefault(key, ctx.tick.ts)
+                ok = ctx.tick.ts - since >= hold
+                if ok and v.reason:
+                    v = SignalValue(v.value, f"{v.reason} for {ctx.tick.ts - since:.0f} s")
+        return c, v, ok
+
+    def _health(self, tick: Tick) -> None:
+        for e in tick.events:
+            if e.kind in HEALTH_EVENTS:
+                self.health = HEALTH_EVENTS[e.kind]
+        if tick.health:
+            self.health = tick.health
+        elif self.health == "offline":
+            self.health = "live"  # frames are arriving again
 
     def _matches(self, w: Watch, s: TrackState, now: float, tick: Tick) -> bool:
         sub = w.subject
@@ -187,8 +265,8 @@ class RuleEngine:
         return None
 
     @staticmethod
-    def _combine(w: Watch, values: list[tuple[Condition, SignalValue]]) -> _Result:
-        passed = [(c, v) for c, v in values if compare(v.value, c.op, c.value)]
+    def _combine(w: Watch, values: list[tuple[Condition, SignalValue, bool]]) -> _Result:
+        passed = [(c, v) for c, v, ok in values if ok]
         score = sum(c.weight for c, _ in passed)
         if w.combine == "all":
             ok = len(passed) == len(values)
@@ -197,7 +275,7 @@ class RuleEngine:
         else:
             ok = score >= w.threshold
         return _Result(ok, score, [v.reason for _, v in passed if v.reason],
-                       {c.signal: v.value for c, v in values})
+                       {c.signal: v.value for c, v, _ in values})
 
     def _fires(self, wid: str, track_id: int | None, w: Watch, ts: float, passed: bool) -> bool:
         """Fires when a watch becomes true; it re-arms once it is false again (a second fall, a second visit).
@@ -227,23 +305,70 @@ class RuleEngine:
         evidence = {"signals": r.signals, "reasons": r.reasons, "score": r.score}
         if self._method(w):
             evidence["method"] = self._method(w)
-        return Candidate(wid, camera_id, tick.ts, s.track_id if s else None, w.severity, evidence, keys,
-                         hashlib.sha1(basis.encode()).hexdigest(), w.name, w.verify)
+        severity = "info" if w.output == "log" else w.severity
+        return Candidate(wid, camera_id, tick.ts, s.track_id if s else None, severity, evidence, keys,
+                         hashlib.sha1(basis.encode()).hexdigest(), w.name, w.verify, output=w.output)
 
-    def _remember(self, tick: Tick) -> None:
+    def _settle(self, s: TrackState, h: TrackHistory, tick: Tick, image, slow: bool, new: bool) -> None:
+        """Where a box settled and since when, for stationary_s; a new track on a remembered parked spot takes
+        over that spot's clock, and the slow tier keeps a parked spot alive while its picture still matches."""
+        cfg = self.tuning.signals
+        cx, cy = s.box[0] + s.box[2] / 2, s.box[1] + s.box[3] / 2
+        if new:
+            spot = max((p for p in self.parked if p.cls == s.cls and tick.ts - p.seen <= cfg.parked_rejoin_s
+                        and iou(p.box, s.box) >= cfg.parked_rejoin_iou), key=lambda p: iou(p.box, s.box), default=None)
+            if spot is not None:
+                self.parked.remove(spot)
+                h.anchor = (spot.since, cx, cy)
+        if h.anchor is None or math.hypot(cx - h.anchor[1], cy - h.anchor[2]) > cfg.stationary_move * max(s.box[3], 1):
+            h.anchor, h.template = (tick.ts, cx, cy), None
+        if slow and image is not None:
+            h.template = self._spot_picture(image, s.box)
+
+    def _spot_picture(self, image, box) -> np.ndarray | None:
+        x, y, w, h = (int(v) for v in box)
+        crop = image[max(0, y):y + h, max(0, x):x + w]
+        return edge_picture(crop, self.tuning.zones) if crop.size else None
+
+    def _keep_parked(self, image, slow: bool, ts: float) -> None:
+        cfg = self.tuning.signals
+        keep = []
+        for p in self.parked:
+            if slow and image is not None and p.template is not None:
+                now = self._spot_picture(image, p.box)
+                if now is not None and correlation(p.template, now) >= cfg.parked_template_match:
+                    p.seen = ts
+                elif now is not None:
+                    continue  # the spot looks different now: whatever was parked has gone
+            if ts - p.seen <= cfg.parked_rejoin_s:
+                keep.append(p)
+        self.parked = keep
+
+    def _remember(self, tick: Tick, image=None, slow: bool = False) -> None:
         for s in tick.tracks:
+            new = s.track_id not in self.history
             h = self.history.setdefault(s.track_id, TrackHistory())
             h.boxes.append((tick.ts, s.box))
             h.zones.append((tick.ts, frozenset(s.zones_inside)))
             if s.fresh_pose and s.pose is not None:
                 h.poses.append((tick.ts, s.pose))
             h.last_ts = tick.ts
+            if self.watch_stationary:
+                self._settle(s, h, tick, image, slow, new)
         for s in tick.ended:
-            self.history.pop(s.track_id, None)
+            h = self.history.pop(s.track_id, None)
+            if h is not None and h.anchor is not None and self.watch_stationary:
+                self.parked.append(_Parked(s.cls, s.box, h.anchor[0], s.last_ts, h.template))
             for key in [k for k in self.last_fired if k[1] == s.track_id]:
                 self.last_fired.pop(key, None)
                 self.armed.pop(key, None)
+            for st in self.state.values():
+                holds = st.get("_holds") or {}
+                for key in [k for k in holds if k[1] == s.track_id]:
+                    holds.pop(key)
             if s.cls == "person" and s.signature is not None:
                 self.sightings.append(Sighting(s.track_id, s.first_ts, s.last_ts, s.signature,
                                                s.known_person_id is not None))
         self.sightings = [x for x in self.sightings if tick.ts - x.last_ts <= SIGHTING_MEMORY_S]
+        if self.parked:
+            self._keep_parked(image, slow, tick.ts)

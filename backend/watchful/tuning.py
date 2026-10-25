@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class _Section(BaseModel):
@@ -108,6 +108,47 @@ class SignalTuning(_Section):
     search_top_n: int = 12  # best matches the AI double checks
     search_dedupe_s: float = 10.0  # scene matches closer than this on one camera count once
     search_embed_on_demand: int = 24  # unindexed moments embedded during a search; the rest wait for the indexer
+    alone_distance: float = 3.0  # body heights; anyone of the same class closer than this is company
+    stationary_move: float = 0.25  # box heights the centre may wander and still count as staying put
+    parked_rejoin_s: float = 60.0  # a new track on a parked spot within this long takes over its clock
+    parked_rejoin_iou: float = 0.5
+    parked_template_match: float = 0.5  # edge picture correlation that says the parked thing is still there
+    still_every_s: float = 0.5
+    still_flow: float = 0.03  # body heights per second of optical flow inside the box under which it is still
+    still_drift: float = 0.05  # body heights per second the box centre may drift and still be still
+    still_percentile: float = 75  # of the flow inside the box, so moving arms or legs count as movement
+    still_pad: float = 0.25  # share of the box added around it for the flow
+    still_width: int = 96
+    still_gap_s: float = 3.0  # a longer gap between checks starts the still clock again
+    vanish_hold_s: float = 30.0  # seconds out of sight before a vanish counts, unless the watch says
+    vanish_hold_by_kind: dict[str, float] = {"water": 15.0}
+    vanish_near: float = 2.0  # body heights; someone appearing this close to the spot is the same one back
+    vanish_edge: float = 0.05  # share of the frame; tracks ending this close to an edge walked out of view
+
+
+class ZoneTuning(_Section):
+    slow_tick_s: float = Field(5.0, ge=2, le=10)  # zone checks that run even when nothing moves
+    line_hysteresis: float = 0.1  # share of the box height a foot point must clear a line by to change side
+    line_extend: float = 0.1  # share of a line's length a crossing may land beyond either end
+    state_size: int = 64  # zone pictures are compared at this size
+    state_pre_blur: float = 1.0  # before CLAHE, so it does not lift sensor noise into edges
+    state_blur: float = 2.0  # after, so a gate a few pixels off still matches
+    state_clahe_clip: float = 2.0
+    state_clahe_tiles: int = 4
+    state_edge_weight: float = 0.5  # edge picture against the image model, when there is one
+    state_margin: float = 0.05  # how much nearer one state's examples must be than the next state's
+    state_min_score: float = 0.3
+    night_saturation: float = 20  # mean saturation of a small copy under which a picture is night (IR)
+    night_probe_width: int = 32
+
+
+class BacktestTuning(_Section):
+    step_s: float = 1.0  # replay ticks between events while something is in view
+    page_s: float = 3600.0
+    page_limit: int = 5000
+    min_page_s: float = 60.0
+    max_examples: int = 5
+    max_track_s: float = 3600.0  # a track with no end in the index is closed after this
 
 
 class PerceiveTuning(_Section):
@@ -192,6 +233,8 @@ class Tuning(_Section):
     clips: ClipTuning = ClipTuning()
     evidence: EvidenceTuning = EvidenceTuning()
     plates: PlateTuning = PlateTuning()
+    zones: ZoneTuning = ZoneTuning()
+    backtest: BacktestTuning = BacktestTuning()
 
 
 def _merge(base: dict, extra: dict) -> dict:
