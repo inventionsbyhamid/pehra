@@ -1,6 +1,7 @@
 """Stills for alerts that leave the app (Telegram): the moment around the flagged box, with the face of everyone who
 is not an enrolled, consenting staff member blurred. YuNet finds the faces and SFace says whether a face is enrolled
-(the society's FaceIndex); in doubt a face is blurred. A person box whose face cannot be found has its head blurred."""
+(the society's FaceIndex); in doubt a face is blurred. A person whose face cannot be found has the head blurred where
+MediaPipe pose puts it, or the whole person when pose cannot tell."""
 import threading
 
 import cv2
@@ -9,6 +10,7 @@ import numpy as np
 from watchful.tuning import CropTuning
 
 Box = tuple[float, float, float, float]  # x, y, w, h in the frame's pixels
+HEAD_LANDMARKS = 11  # MediaPipe pose: nose, eyes (inner, centre, outer), ears, mouth corners
 
 
 def _region(shape, box: Box | None, margin: float) -> tuple[int, int, int, int]:
@@ -61,27 +63,72 @@ def _faces(image: np.ndarray, index, cfg: CropTuning) -> list[tuple[Box, bool]]:
     return out
 
 
-def blurred_crop(frame: np.ndarray, box: Box | None, enrolled_faces, heads: list[Box] = (),
-                 cfg: CropTuning = CropTuning()) -> bytes:
+def _iou(a: Box, b: Box) -> float:
+    ix = max(0.0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = a[2] * a[3] + b[2] * b[3] - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _pose_head(image: np.ndarray, box: Box, pose, cfg: CropTuning) -> tuple[float, float, float, float] | None:
+    """Where a person's head is from pose landmarks (nose, eyes, ears, mouth), lying or upright; None when the pose
+    model finds too few of them. A wide box is tried turned (the pose model's own way) and upright (as a square box
+    around it), keeping the surer result: someone running with arms out is wide but upright."""
+    if pose is None:
+        return None
+    x, y, w, h = box
+    side = max(w, h)
+    tries = [box] + ([(x + w / 2 - side / 2, y + h / 2 - side / 2, side, side)] if w != h else [])
+    results = []
+    for b in tries:
+        try:
+            r = pose.estimate(image, b)
+        except cv2.error:
+            r = None
+        if r is not None and r.landmarks is not None:
+            results.append(r)
+    if not results:
+        return None
+    found = max(results, key=lambda r: r.confidence)
+    head = found.landmarks[:HEAD_LANDMARKS]
+    seen = head[head[:, 3] >= cfg.pose_visible, :2]
+    if len(seen) < 2:
+        return None
+    cx, cy = seen.mean(axis=0)
+    spread = max(float(np.ptp(seen[:, 0])), float(np.ptp(seen[:, 1])), 1.0)
+    half = max(spread * cfg.head_grow, cfg.head_min * max(box[2], box[3])) / 2
+    return cx - half, cy - half, cx + half, cy + half
+
+
+def blurred_crop(frame: np.ndarray, box: Box | None, enrolled_faces, persons: list[Box] = (),
+                 cfg: CropTuning = CropTuning(), pose=None, detector=None) -> bytes:
     """A JPEG of the frame around `box` (the whole frame when None), every face blurred unless `enrolled_faces` (a
-    FaceIndex loaded with the society's enrolled staff) recognises it, and the head of each person box in `heads`
-    blurred unless an enrolled face is in it."""
+    FaceIndex loaded with the society's enrolled staff) recognises it. Each person, from `persons` (boxes in the
+    frame's pixels) and from the person `detector` run on the still, whose face is not found at all has the head
+    blurred where `pose` places it, or the whole box when it cannot: a face from above, in profile, small, lying or
+    under infrared light is often not found, and in doubt nothing is left sharp."""
     x0, y0, x1, y1 = _region(frame.shape, box, cfg.margin)
     image = frame[y0:y1, x0:x1].copy()
     k = min(1.0, cfg.max_side / max(image.shape[:2]))
     if k < 1.0:
         image = cv2.resize(image, (round(image.shape[1] * k), round(image.shape[0] * k)), interpolation=cv2.INTER_AREA)
     faces = _faces(image, enrolled_faces, cfg)
+    people = [((px - x0) * k, (py - y0) * k, pw * k, ph * k) for px, py, pw, ph in persons]
+    if detector is not None:
+        for d in detector.detect(image):
+            if d.cls == "person" and all(_iou(d.box, p) < cfg.person_overlap for p in people):
+                people.append(d.box)
+    original = image.copy()  # pose reads the picture before any blur
     for (fx, fy, fw, fh), known in faces:
         if not known:
             gx, gy = cfg.face_grow * fw, cfg.face_grow * fh
             _blur(image, int(fx - gx), int(fy - gy), int(fx + fw + gx), int(fy + fh + gy), cfg.blur_cells)
-    for hx, hy, hw, hh in heads:
-        hx, hy, hw, hh = (hx - x0) * k, (hy - y0) * k, hw * k, hh * cfg.head_share * k
-        enrolled_here = any(known and hx <= fx + fw / 2 <= hx + hw and hy <= fy + fh / 2 <= hy + hh
-                            for (fx, fy, fw, fh), known in faces)
-        if not enrolled_here:
-            _blur(image, int(hx), int(hy), int(hx + hw), int(hy + hh), cfg.blur_cells)
+    for px, py, pw, ph in people:
+        if any(px <= fx + fw / 2 <= px + pw and py <= fy + fh / 2 <= py + ph for (fx, fy, fw, fh), _ in faces):
+            continue  # its face was found: blurred above, or an enrolled one kept
+        head = _pose_head(original, (px, py, pw, ph), pose, cfg) or (px, py, px + pw, py + ph)
+        _blur(image, *(int(v) for v in head), cfg.blur_cells)
     ok, jpg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, cfg.jpeg_quality])
     if not ok:
         raise ValueError("the still could not be encoded")
@@ -103,15 +150,15 @@ def frame_still(jpeg: bytes, box: Box | None, cfg: CropTuning = CropTuning()) ->
 
 
 class StillMaker:
-    """One face detector and recognizer for the whole process (memory must not grow with the number of societies),
-    used by one still at a time, since a still changes the detector's input size and threshold; each society brings
-    its own enrolled faces."""
+    """One face detector and recognizer, pose model and person detector for the whole process (memory must not grow
+    with the number of societies), used by one still at a time, since a still changes the face detector's input size
+    and threshold; each society brings its own enrolled faces."""
 
-    def __init__(self, index):
-        self.index, self._lock = index, threading.Lock()
+    def __init__(self, index, pose=None, detector=None):
+        self.index, self.pose, self.detector, self._lock = index, pose, detector, threading.Lock()
 
-    def make(self, frame: np.ndarray, box: Box | None, people: list, heads: list[Box] = (),
+    def make(self, frame: np.ndarray, box: Box | None, enrolled: list, persons: list[Box] = (),
              cfg: CropTuning = CropTuning()) -> bytes:
         with self._lock:
-            self.index.load(people)
-            return blurred_crop(frame, box, self.index, heads, cfg)
+            self.index.load(enrolled)
+            return blurred_crop(frame, box, self.index, persons, cfg, self.pose, self.detector)

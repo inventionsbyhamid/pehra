@@ -201,7 +201,8 @@ class AlertTuning(_Section):
     # after a false alarm tap, that very trigger stays quiet this long from the tap (never longer); a new one is checked
     false_alarm_quiet_s: float = 300.0
     fingerprints_kept: int = 50  # triggers an incident remembers, for false_alarm_quiet_s
-    escalate_min: float = 2.0  # an unacknowledged critical incident is posted again after this many minutes
+    escalate_min: float = Field(2.0, ge=0.25)  # an unacknowledged critical incident is posted again after this long
+    hold_max_s: float = 15.0  # an incident held for its AI check goes out as not checked yet when no verdict comes
     escalate_times: int = 3  # and at most this many times
     edit_every_s: float = 10.0  # a count change edits a Telegram message at most this often; a status change at once
     chat_per_min: int = 18  # Telegram allows about 20 messages a minute in a group
@@ -224,7 +225,13 @@ class CropTuning(_Section):
     face_score: float = 0.5  # lower than enrolment's, so in doubt a face is blurred
     face_grow: float = 0.35  # share of a face box added around it before blurring
     blur_cells: int = 6  # a face is pixelated to this many cells across, then smoothed
-    head_share: float = 0.3  # top share of a person box blurred when no face is found in it
+    # a person box with no face found: the head is placed from pose landmarks (nose, eyes, ears, mouth) seen at least
+    # this surely, as a square head_grow times their spread and at least head_min of the box's longer side; with no
+    # landmarks the whole box is blurred
+    pose_visible: float = 0.5
+    head_grow: float = 3.0
+    head_min: float = 0.2
+    person_overlap: float = 0.5  # a person the detector finds overlapping a given person box this much is that person
     jpeg_quality: int = 85
 
 

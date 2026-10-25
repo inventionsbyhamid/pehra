@@ -413,3 +413,147 @@ def test_after_a_false_alarm_the_next_real_alert_opens_and_is_posted(env):
     env.run(at(60))
     assert real.id != first.id and inc_.get_incident(env.a, first.id).count == 1
     assert "a car is waiting" in env.fake.of("sendMessage")[-1][2]["text"]
+
+
+# fix round 2
+
+
+def test_a_real_verdict_landing_on_a_held_incident_is_posted(env):
+    """C1, the reviewer's sequence: A is posted; a guard taps false alarm on A while its check runs; a new track B
+    opens held (the tap counts as a clearing); A's real verdict lands on B; B's own check then dismisses."""
+    env.link(env.a, -1001)
+    a = live(env, "fpA", 0)
+    first = inc_.open_before_check(env.a, a)
+    env.run(at(0))
+    inc_.false_alarm(env.a, first.id, RAVI, at(3))
+    env.run(at(3))
+    b = live(env, "fpB", 6)
+    held = inc_.open_before_check(env.a, b)
+    assert held.agent_json.get("held")
+    env.run(at(6))
+    inc_.after_check(env.a, a, Verdict("alert", "A child is face down in the deep end.", [], "critical", "still"),
+                     "alt_a", incident_id=first.id, now=at(8))
+    env.run(at(8))
+    assert "Possible: A child is face down in the deep end." in env.fake.of("sendMessage")[-1][2]["text"]
+    inc_.after_check(env.a, b, Verdict("dismissed", "Only a towel on the water."), "alt_b", incident_id=held.id,
+                     now=at(10))
+    env.run(at(10))
+    still = inc_.get_incident(env.a, held.id)
+    assert still.status == "open" and still.reason == "A child is face down in the deep end."
+
+
+def test_a_held_incident_whose_check_never_files_is_posted(env):
+    """The reviewer's probe: held at 30 s, a trigger every 60 s for 30 minutes, and no verdict ever comes."""
+    env.link(env.a, -1001)
+    x = live(env, "fpX", 0)
+    cleared = inc_.open_before_check(env.a, x)
+    env.run(at(0))
+    inc_.after_check(env.a, x, Verdict("dismissed", "A guard on a chair."), incident_id=cleared.id, now=at(5))
+    env.run(at(5))
+    held = inc_.open_before_check(env.a, live(env, "fpB", 30))
+    assert held.agent_json.get("held")
+    for second in range(30, 50):
+        env.run(at(second))
+    posted = [c for c in env.fake.of("sendMessage") if "Not checked by the AI yet." in c[2]["text"]]
+    hold = env.worker.tuning.alerts.hold_max_s
+    assert len(posted) == 1 and posted[0][0] == at(30 + hold)
+    assert posted[0][2]["text"].splitlines()[1] == "Possible: Someone still in the water. Not checked by the AI yet."
+    for minute in range(1, 31):
+        open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "", None, at(30 + 60 * minute))
+        env.run(at(30 + 60 * minute))
+    assert inc_.get_incident(env.a, held.id).count == 31
+    assert any("Still not acknowledged" in c[2]["text"] for c in env.fake.of("sendMessage"))
+
+
+def test_a_folded_trigger_releases_a_held_incident_past_hold_max(env):
+    """If the release job is lost too, the next trigger folded into a held incident older than hold_max_s posts it."""
+    env.link(env.a, -1001)
+    x = live(env, "fpX", 0)
+    cleared = inc_.open_before_check(env.a, x)
+    env.run(at(0))
+    inc_.after_check(env.a, x, Verdict("dismissed", "A guard on a chair."), incident_id=cleared.id, now=at(5))
+    env.run(at(5))
+    held = inc_.open_before_check(env.a, live(env, "fpB", 30))
+    with env.a.tx() as s:
+        s.execute(m.Job.__table__.delete().where(m.Job.kind == "incident.release"))
+    open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "", None, at(40))
+    env.run(at(40))
+    assert not any("Not checked" in c[2]["text"] for c in env.fake.of("sendMessage"))  # still within hold_max_s
+    open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", "", None, at(60))
+    env.run(at(60))
+    assert inc_.get_incident(env.a, held.id).agent_json.get("held") is False
+    assert "Not checked by the AI yet." in env.fake.of("sendMessage")[-1][2]["text"]
+
+
+def test_a_slow_upload_queue_does_not_delay_a_live_critical_check():
+    """Live critical checks run before an upload's queued checks, on the camera manager's own pool."""
+    import threading
+    import time
+
+    from watchful.alerts.checks import CheckPool
+    from watchful.evidence import EvidencePack
+    pool, order, gate = CheckPool(1), [], threading.Event()
+
+    def check(pack, incident_id=None, live=False):
+        if pack.candidate.fingerprint == "up0":
+            gate.wait(5)
+        order.append(pack.candidate.fingerprint)
+
+    def pack(fp, severity="critical"):
+        return EvidencePack(Candidate("w", "c", 0.0, 1, severity, {}, [], fp), [], [])
+    futures = [pool.submit(check, pack(f"up{i}")) for i in range(5)]  # an upload: five checks, the first running
+    time.sleep(0.1)
+    futures.append(pool.submit(check, pack("live_info", "info"), None, True))
+    futures.append(pool.submit(check, pack("live_critical"), "inc_1", True))
+    gate.set()
+    for f in futures:
+        f.result(5)
+    assert order[:3] == ["up0", "live_critical", "live_info"]
+    pool.shutdown(wait=True)
+
+    import inspect
+
+    from watchful import workers
+    assert "CheckPool(" in inspect.getsource(workers.WorkerManager.__init__)
+
+
+def test_escalate_min_has_a_lower_bound():
+    from pydantic import ValidationError
+
+    from watchful.tuning import load_tuning
+    with pytest.raises(ValidationError):
+        load_tuning(overrides={"alerts": {"escalate_min": 0}})
+
+
+def test_a_group_whose_post_was_given_up_still_gets_reminders(env):
+    import httpx
+    env.link(env.a, -1001)
+    env.fake.replies[("sendMessage", "-1001")] = [
+        httpx.Response(400, json={"ok": False, "error_code": 400, "description": "Bad Request: oops"})
+        for _ in range(env.worker.tuning.alerts.chat_tries)]
+    open_or_touch_incident(env.a, env.cams["pool"], "wat_pool", "critical", POOL_TEXT, None, at(0))
+    for second in range(0, 121, 15):
+        env.run(at(second))
+    reminders = [c for c in env.fake.of("sendMessage") if "Still not acknowledged" in c[2]["text"]]
+    assert len(reminders) == 1 and reminders[0][0] == at(120) and "reply_parameters" not in reminders[0][2]
+
+
+def test_a_held_critical_the_ai_cannot_judge_goes_out_at_once_as_unverified(env, tmp_path):
+    """The verifier's cannot_judge ends unverified; a held critical incident goes out at once, not after hold_max_s."""
+    from test_agent import ctx, step
+    env.link(env.a, -1001)
+    x = live(env, "fpX", 0)
+    cleared = inc_.open_before_check(env.a, x)
+    env.run(at(0))
+    inc_.after_check(env.a, x, Verdict("dismissed", "A guard on a chair."), incident_id=cleared.id, now=at(5))
+    env.run(at(5))
+    c = live(env, "fpB", 30)
+    held = inc_.open_before_check(env.a, c)
+    assert held.agent_json.get("held")
+    verdict = verify(c, ctx(tmp_path), FakeLLM([step("cannot_judge", reason="it needs an age")]))
+    assert verdict.status == "unverified"
+    inc_.after_check(env.a, c, verdict, "alt_b", incident_id=held.id, now=at(32))
+    env.run(at(32))
+    sent = env.fake.of("sendMessage")[-1]
+    assert sent[0] == at(32) and "can't judge" in sent[2]["text"]
+    assert inc_.get_incident(env.a, held.id).agent_json["held"] is False

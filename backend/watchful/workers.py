@@ -8,11 +8,11 @@ import secrets
 import threading
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 
 from watchful.agent.verifier import Verdict, _fallback, verify
 from watchful.alerts import incidents as incidents_
+from watchful.alerts.checks import CheckPool
 from watchful.alerts.crops import frame_still
 from watchful.components import made_embedders, make_embedder, make_llm, make_metrics, make_notifier, make_repo
 from watchful.config import Settings
@@ -152,7 +152,7 @@ class WorkerManager:
         self.subs: dict[str, list[Subscription]] = defaultdict(list)
         self.scans: dict[str, dict] = {}
         self.llm = llm  # tests give one; else one per society, counting against its own AI cap
-        self.verifiers = ThreadPoolExecutor(max(1, settings.ai_parallel))
+        self.verifiers = CheckPool(max(1, settings.ai_parallel))  # live critical checks first (alerts/checks.py)
         self.approvals = ApprovalNotifier(make_notifier(settings))
         self._inflight: set[str] = set()
         self._lock = threading.Lock()

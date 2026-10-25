@@ -214,10 +214,12 @@ def test_crop_blurs_non_enrolled_faces():
     assert all(sharpness(out, box) < 0.25 * sharpness(frame, box) for box in faces)
 
     turned = np.random.default_rng(1).integers(0, 255, (400, 300, 3), np.uint8)  # a person facing away: no face
-    out = cv2.imdecode(np.frombuffer(blurred_crop(turned, None, nobody, heads=[(50, 20, 200, 360)]), np.uint8),
+    out = cv2.imdecode(np.frombuffer(blurred_crop(turned, None, nobody, persons=[(50, 20, 200, 360)]), np.uint8),
                        cv2.IMREAD_COLOR)
+    # no face and no pose to place the head: the whole person is blurred, and nothing outside the box
     assert sharpness(out, (60, 30, 180, 90)) < 0.1 * sharpness(turned, (60, 30, 180, 90))
-    assert sharpness(out, (60, 250, 180, 100)) > 0.5 * sharpness(turned, (60, 250, 180, 100))
+    assert sharpness(out, (60, 250, 180, 100)) < 0.1 * sharpness(turned, (60, 250, 180, 100))
+    assert sharpness(out, (258, 30, 38, 340)) > 0.5 * sharpness(turned, (258, 30, 38, 340))
 
     jpeg, box = frame_still(cv2.imencode(".jpg", frame)[1].tobytes(), (600, 100, 100, 200))
     still = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
@@ -365,8 +367,8 @@ def noisy(h=400, w=300) -> np.ndarray:
 
 
 def test_still_blurs_the_head_of_a_person_whose_face_is_not_found(env):
-    """I3: a person from above or in profile has no face YuNet finds; their head is blurred anyway, because the
-    track's class reaches the incident."""
+    """I3: a person from above or in profile has no face YuNet finds; the track's class reaches the incident, and
+    with no pose landmarks either (noise here) the whole person is blurred."""
     from test_rules import engine, tick, track
     from watchful.rules.presets import preset
     t0 = 1_800_000_000.0
@@ -392,7 +394,9 @@ def test_still_blurs_the_head_of_a_person_whose_face_is_not_found(env):
         out = cv2.imdecode(np.frombuffer(still_for(ctx, env.a, inc), np.uint8), cv2.IMREAD_COLOR)
         assert out.shape == frame.shape
         assert sharpness(out, head) < 0.1 * sharpness(frame, head)
-        assert sharpness(out, body) > 0.5 * sharpness(frame, body)
+        assert sharpness(out, body) < 0.1 * sharpness(frame, body)
+    out = cv2.imdecode(np.frombuffer(still_for(ctx, env.a, framed), np.uint8), cv2.IMREAD_COLOR)
+    assert sharpness(out, (258, 30, 38, 340)) > 0.5 * sharpness(frame, (258, 30, 38, 340))  # outside the person
 
 
 def test_one_failing_group_never_holds_up_the_others(env):
@@ -508,3 +512,105 @@ def test_a_slow_group_does_not_hold_up_another(env):
     release.set()
     t.join(5)
     assert finished == [("b", None)]
+
+
+# fix round 2
+
+
+class Blind:
+    """A face detector that finds nothing: a face from above, in profile, lying, small or under infrared light."""
+
+    def __init__(self):
+        self.threshold = 0.7
+
+    def setInputSize(self, size):
+        pass
+
+    def getScoreThreshold(self):
+        return self.threshold
+
+    def setScoreThreshold(self, value):
+        self.threshold = value
+
+    def detect(self, image):
+        return 1, None
+
+
+@pytest.fixture
+def blind_faces(monkeypatch):
+    from watchful import components
+    real = components.make_faces
+
+    def make(*a, **k):
+        index = real(*a, **k)
+        index.detector = Blind()
+        return index
+    monkeypatch.setattr(components, "make_faces", make)
+
+
+def face_of(image) -> tuple[int, int, int, int]:
+    return max(found_faces(image), key=lambda f: f[2] * f[3])
+
+
+def still_of(env, inc) -> np.ndarray:
+    from watchful.alerts.telegram import still_for
+    from watchful.jobs import JobContext
+    return cv2.imdecode(np.frombuffer(still_for(JobContext(None, env.worker, 30, T0), env.a, inc), np.uint8),
+                        cv2.IMREAD_COLOR)
+
+
+def in_still(frame, box, face):
+    """A face box of the frame in the still cut around `box`."""
+    from watchful.alerts.crops import _region
+    x0, y0, _, _ = _region(frame.shape, box, CropTuning().margin)
+    return face[0] - x0, face[1] - y0, face[2], face[3]
+
+
+def person_incident(env, frame, box, camera="pool"):
+    key = f"{camera}/still.png"
+    env.blobs.put(key, cv2.imencode(".png", frame)[1].tobytes(), "image/png")
+    c = Candidate("wat_x", env.cams[camera], T0.timestamp(), 1, "critical", {}, [], f"fp_{camera}", "Someone",
+                  cls="person")
+    return inc_.open_before_check(env.a, c, key, [float(v) for v in box])
+
+
+def test_a_lying_person_whose_face_is_not_found_has_the_face_blurred(env, blind_faces):
+    """I3: a body lying on its side; the face is at one end, at mid height, not in the box's top 30%."""
+    standing = cv2.imread(str(sample_path("basketball1.png")))
+    fx, fy, fw, fh = face_of(standing)
+    x0, y0 = max(0, fx - fw), max(0, fy - fh // 3)
+    body = standing[y0:min(standing.shape[0], fy + 5 * fh), x0:fx + 2 * fw]
+    lying = cv2.rotate(body, cv2.ROTATE_90_CLOCKWISE)
+    frame = np.full((480, 720, 3), 90, np.uint8)
+    frame[100:100 + lying.shape[0], 40:40 + lying.shape[1]] = lying
+    h0 = body.shape[0]
+    face = (40 + h0 - (fy - y0) - fh, 100 + fx - x0, fh, fw)  # where the face is after the turn
+    box = (40, 100, lying.shape[1], lying.shape[0])
+    assert box[2] > box[3] and box[1] + 0.3 * box[3] < face[1]
+    out = still_of(env, person_incident(env, frame, box))
+    at_face = in_still(frame, box, face)
+    assert sharpness(out, at_face) < 0.25 * sharpness(frame, face)
+
+
+def test_a_head_and_shoulders_swimmer_has_the_face_blurred(env, blind_faces):
+    """I3: only the head and shoulders above the water; the face sits at 30 to 60% of the box."""
+    frame = cv2.imread(str(sample_path("messi5.jpg")))
+    face = face_of(frame)
+    fx, fy, fw, fh = face
+    h = int(3.5 * fh)
+    box = (max(0, fx - fw), max(0, int(fy + fh / 2 - 0.45 * h)), 3 * fw, h)
+    assert 0.3 * box[3] <= fy - box[1] and fy + fh - box[1] <= 0.62 * box[3]
+    out = still_of(env, person_incident(env, frame, box))
+    assert sharpness(out, in_still(frame, box, face)) < 0.25 * sharpness(frame, face)
+
+
+def test_a_whole_frame_still_finds_its_people(env, blind_faces):
+    """I3: a scene or zone watch's still has no person box; the person detector finds the people in it."""
+    frame = cv2.imread(str(sample_path("messi5.jpg")))
+    face = face_of(frame)
+    env.blobs.put("gate/scene.png", cv2.imencode(".png", frame)[1].tobytes(), "image/png")
+    inc = open_or_touch_incident(env.a, env.cams["gate"], "wat_gate", "critical", "The gate is open.",
+                                 "gate/scene.png", T0)
+    out = still_of(env, inc)
+    assert out.shape == frame.shape
+    assert sharpness(out, face) < 0.25 * sharpness(frame, face)

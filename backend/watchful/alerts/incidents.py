@@ -21,7 +21,8 @@ from watchful.tuning import AlertTuning
 SEVERITIES = ("info", "warning", "critical")
 OPEN, ACKNOWLEDGED, FALSE_ALARM, RESOLVED = "open", "acknowledged", "false_alarm", "resolved"
 ACTIVE = (OPEN, ACKNOWLEDGED)
-SYNC, ESCALATE, RETENTION = "telegram.sync", "incident.escalate", "incidents.retention"
+SYNC, ESCALATE, RETENTION, RELEASE = "telegram.sync", "incident.escalate", "incidents.retention", "incident.release"
+CHECKING, NOT_CHECKED = "Checking now.", "Not checked by the AI yet."
 WARNINGS_KEY = "telegram_warnings"  # Meta: "on" when the society wants warnings on Telegram too
 AI_CHECK = "the AI check"  # agent_json closed_by of an incident the AI check cleared
 
@@ -170,9 +171,18 @@ def _remember(inc: m.Incident, fingerprint: str | None, t: AlertTuning) -> None:
         inc.agent_json = {**(inc.agent_json or {}), "fingerprints": (seen + [fingerprint])[-t.fingerprints_kept:]}
 
 
+def _release(inc: m.Incident, timed_out: bool) -> None:
+    """A held incident goes out: its check found it real, or no verdict came within alerts.hold_max_s (then it says
+    it is not checked yet)."""
+    inc.agent_json = {**(inc.agent_json or {}), "held": False}
+    if timed_out:
+        reason = inc.reason or ""
+        inc.reason = reason.replace(CHECKING, NOT_CHECKED) if CHECKING in reason else f"{reason} {NOT_CHECKED}".strip()
+
+
 def _open_or_touch(s, workspace_id: str, camera_id, watch_id, severity: str, reason: str, keyframe_key, now, t,
                    notify: bool, picture_key=None, picture_box=None, extra: dict | None = None,
-                   fingerprint: str | None = None, check_first: bool = False) -> m.Incident:
+                   fingerprint: str | None = None, check_first: bool = False, real: bool = False) -> m.Incident:
     if severity not in SEVERITIES:
         raise ValueError(f"severity is one of {', '.join(SEVERITIES)}")
     if fingerprint and (quiet := _quiet(s, workspace_id, camera_id, watch_id, fingerprint, now, t)) is not None:
@@ -188,6 +198,10 @@ def _open_or_touch(s, workspace_id: str, camera_id, watch_id, severity: str, rea
         _remember(inc, fingerprint, t)
         s.add(inc)
         s.flush()
+        if held:  # if its check never files (cancelled, crashed, stuck in a queue), it goes out anyway
+            JobQueue(s.get_bind()).enqueue(RELEASE, {"workspace_id": workspace_id, "incident_id": inc.id},
+                                           run_after=now + timedelta(seconds=t.hold_max_s), key=f"release|{inc.id}",
+                                           session=s)
         if notify:
             _notify(s, inc, now, t, urgent=True, escalate=True)
         return inc
@@ -205,8 +219,12 @@ def _open_or_touch(s, workspace_id: str, camera_id, watch_id, severity: str, rea
     if extra:
         inc.agent_json = {**extra, **(inc.agent_json or {})}
     _remember(inc, fingerprint, t)
+    released = bool((inc.agent_json or {}).get("held")) and (
+        real or (now - inc.opened_at).total_seconds() >= t.hold_max_s)
+    if released:
+        _release(inc, timed_out=not real)
     if notify:
-        _notify(s, inc, now, t, urgent=rose, escalate=rose)
+        _notify(s, inc, now, t, urgent=rose or released, escalate=rose or released)
     return inc
 
 
@@ -214,19 +232,20 @@ def open_or_touch_incident(repo, camera_id: str | None, watch_id: str | None, se
                            keyframe_key: str | None = None, now=None, *, tuning: AlertTuning | None = None,
                            notify: bool = True, picture_key: str | None = None, picture_box: list | None = None,
                            extra: dict | None = None, fingerprint: str | None = None,
-                           check_first: bool = False) -> m.Incident:
+                           check_first: bool = False, real: bool = False) -> m.Incident:
     """Opens an incident, or adds this trigger to the open or acknowledged one it repeats: the same camera and watch
     (a health problem passes its own watch_id, such as "camera_offline") with a trigger in the last Tuning
     alerts.group_s. A repeat raises the count and never lowers the severity. A closed incident never takes new
     triggers: only the very trigger (`fingerprint`) a false alarm closed stays quiet, for Tuning
     alerts.false_alarm_quiet_s from the tap (the closed incident is returned unchanged). `check_first` (a candidate
     before its AI check) holds a new incident off Telegram until the check says it is real, when this camera and watch
-    was cleared by the AI or closed as a false alarm in the last alerts.group_s. `notify` False (a recorded upload,
-    not a live camera) keeps it off Telegram. `extra` is kept in agent_json."""
+    was cleared by the AI or closed as a false alarm in the last alerts.group_s; it goes out when a real verdict lands
+    on it (`real`), or as not checked yet after alerts.hold_max_s. `notify` False (a recorded upload, not a live
+    camera) keeps it off Telegram. `extra` is kept in agent_json."""
     t, now = tuning or AlertTuning(), when(now)
     with _lock, repo.tx() as s:
         return _open_or_touch(s, repo.workspace_id, camera_id, watch_id, severity, reason, keyframe_key, now, t,
-                              notify, picture_key, picture_box, extra, fingerprint, check_first)
+                              notify, picture_key, picture_box, extra, fingerprint, check_first, real)
 
 
 def open_before_check(repo, candidate, picture_key: str | None = None, picture_box: list | None = None, *,
@@ -256,19 +275,22 @@ def record_verdict(repo, incident_id: str, status: str, severity: str | None, su
         inc = _mine(repo, s, incident_id)
         if inc is None:
             return None
+        prior = (inc.agent_json or {}).get("verdict")
         if inc.status not in ACTIVE:
             if status == "dismissed":
                 return inc
             fresh = _open_or_touch(s, inc.workspace_id, inc.camera_id, inc.watch_id,
                                    graded_severity(inc.severity, severity), summary or inc.reason, inc.keyframe_key,
                                    now, t, False, inc.picture_key, inc.picture_box,
-                                   {"cls": (inc.agent_json or {}).get("cls")})
-            fresh.agent_json = {**(fresh.agent_json or {}), **verdict}
+                                   {"cls": (inc.agent_json or {}).get("cls")}, real=True)
+            fresh.agent_json = {**(fresh.agent_json or {}), **verdict, "held": False}
             if summary:
                 fresh.reason = summary
             if notify:
                 _notify(s, fresh, now, t, urgent=True, escalate=True)
             return fresh
+        if status == "dismissed" and prior == "alert":
+            return inc  # another check found this situation real: a later dismissal does not clear it
         held = bool((inc.agent_json or {}).get("held"))
         inc.agent_json = {**(inc.agent_json or {}), **verdict}
         if status == "dismissed":
@@ -303,24 +325,36 @@ def after_check(repo, candidate, verdict, alert_id: str | None = None, incident_
                               getattr(verdict, "reason", ""), alert_id, now, tuning=tuning, notify=notify)
     if verdict.status == "dismissed":
         return None
+    t = tuning or AlertTuning()
     severity = graded_severity(candidate.severity, getattr(verdict, "severity", None))
-    inc = open_or_touch_incident(repo, candidate.camera_id, candidate.watch_id, severity,
-                                 verdict.summary or candidate.watch_name,
-                                 candidate.keyframe_keys[0] if candidate.keyframe_keys else None,
-                                 now if now is not None else candidate.ts, tuning=tuning, notify=notify,
-                                 picture_key=picture_key, picture_box=picture_box,
-                                 extra={"cls": getattr(candidate, "cls", None), **(extra or {})})
-    with repo.tx() as s:
-        row = _mine(repo, s, inc.id)
-        if row is not None and "verdict" not in (row.agent_json or {}):
-            row.agent_json = {**(row.agent_json or {}), "verdict": verdict.status,
+    with _lock, repo.tx() as s:
+        inc = _open_or_touch(s, repo.workspace_id, candidate.camera_id, candidate.watch_id, severity,
+                             verdict.summary or candidate.watch_name,
+                             candidate.keyframe_keys[0] if candidate.keyframe_keys else None,
+                             when(now if now is not None else candidate.ts), t, notify, picture_key, picture_box,
+                             {"cls": getattr(candidate, "cls", None), **(extra or {})}, real=True)
+        if "verdict" not in (inc.agent_json or {}):  # new, or one still checking (a held one went out above)
+            inc.agent_json = {**(inc.agent_json or {}), "verdict": verdict.status,
                               "why": getattr(verdict, "reason", ""), "alert_id": alert_id}
-            inc.agent_json = row.agent_json
-    return inc
+            if verdict.summary:
+                inc.reason = verdict.summary
+        return inc
 
 
 def checking_text(watch_name: str) -> str:
-    return f"Possible: {watch_name.rstrip('.')}. Checking now."
+    return f"Possible: {watch_name.rstrip('.')}. {CHECKING}"
+
+
+@handler(RELEASE, urgent=True)
+def _release_held(ctx, payload: dict) -> None:
+    """A held incident whose AI check filed nothing within alerts.hold_max_s goes out as not checked yet."""
+    repo, t = ctx.repo(payload["workspace_id"]), ctx.tuning.alerts
+    with _lock, repo.tx() as s:
+        inc = _mine(repo, s, payload["incident_id"])
+        if inc is None or inc.status != OPEN or not (inc.agent_json or {}).get("held"):
+            return
+        _release(inc, timed_out=True)
+        _notify(s, inc, ctx.now, t, urgent=True, escalate=True)
 
 
 def _act(repo, incident_id: str, member, now, action: str, allowed: tuple[str, ...], status: str, chat: str | None):

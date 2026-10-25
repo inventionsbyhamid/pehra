@@ -11,6 +11,7 @@ The bot token is in every Bot API address, so neither addresses nor httpx's requ
 import hashlib
 import json
 import logging
+import math
 import secrets
 import threading
 import time
@@ -565,10 +566,11 @@ def repost(repo, channel, limiter: ChatLimiter, incident_id: str, n: int, now: d
     for chat in chats:
         mine = [x for x in msgs if x.chat_id == chat]
         main = next((x for x in mine if x.kind == "incident"), None)
-        if main is None or sum(1 for x in mine if x.kind == "reminder") >= n:
+        if sum(1 for x in mine if x.kind == "reminder") >= n:
             continue
+        reply_to = main.message_id if main else None  # a group whose post was given up gets the reminder on its own
         mid, wait, chat = deliver(repo, limiter, chat, now, tuning, f"remind {inc.id} {n}",
-                                  lambda c: channel.send(c, body, None, keys, main.message_id))
+                                  lambda c: channel.send(c, body, None, keys, reply_to))
         if wait:
             waits.append(wait)
         if mid is None:
@@ -600,16 +602,26 @@ def _limiter(ctx: JobContext) -> ChatLimiter:
 def _stills(ctx: JobContext) -> StillMaker | None:
     """The worker's one face detector and recognizer (YuNet and SFace), loaded once for every society; None when
     the face models cannot be loaded (then no picture leaves the app; tried again after alerts.faces_refresh_s)."""
-    from watchful.components import make_faces
+    from watchful.components import make_detector, make_faces, make_pose
     with _faces_lock:
         state = ctx.worker.state
         if state.get("stills") is None and time.monotonic() - state.get("stills_failed", -1e9) >= \
                 ctx.tuning.alerts.faces_refresh_s:
             try:
-                state["stills"] = StillMaker(make_faces(ctx.settings, ctx.tuning))
+                faces = make_faces(ctx.settings, ctx.tuning)
             except Exception:
                 state["stills_failed"] = time.monotonic()
                 log.exception("the face models could not be loaded; alerts go without a picture")
+                return None
+            parts = []
+            for name, make in (("pose", lambda: make_pose(ctx.settings, ctx.tuning)),
+                               ("person detector", lambda: make_detector(ctx.settings, ctx.tuning, {"person"}))):
+                try:
+                    parts.append(make())
+                except Exception:  # without it, a person box is blurred whole, and stills find no people of their own
+                    log.exception("the %s for stills could not be loaded", name)
+                    parts.append(None)
+            state["stills"] = StillMaker(faces, *parts)
         return state.get("stills")
 
 
@@ -627,8 +639,8 @@ def _people(ctx: JobContext, repo) -> list:
 
 def still_for(ctx: JobContext, repo, inc: m.Incident) -> bytes | None:
     """Telegram's still: cut from the incident's private picture (or its keyframe) with faces of anyone not enrolled
-    blurred, and, for a person, the head too when no enrolled face is found in it (a face from above, in profile,
-    small or under infrared light is often not found). None when there is no picture or faces cannot be checked."""
+    blurred, and every person whose face is not found blurred at the head (pose) or whole (crops.blurred_crop). None
+    when there is no picture or faces cannot be checked."""
     key = inc.picture_key or inc.keyframe_key
     if not key:
         return None
@@ -640,11 +652,11 @@ def still_for(ctx: JobContext, repo, inc: m.Incident) -> bytes | None:
     if stills is None:
         return None
     box = inc.picture_box if inc.picture_key and inc.picture_box else None
-    heads = []
+    persons = []
     if (inc.agent_json or {}).get("cls") == "person":  # a keyframe is the person's own box
-        heads = [box] if box else [(0, 0, image.shape[1], image.shape[0])]
-    try:
-        return stills.make(image, box, _people(ctx, repo), heads, ctx.tuning.crops)
+        persons = [box] if box else [(0, 0, image.shape[1], image.shape[0])]
+    try:  # the person detector also finds the people of a scene or zone watch's still
+        return stills.make(image, box, _people(ctx, repo), persons, ctx.tuning.crops)
     except (cv2.error, ValueError):
         log.exception("the still for %s could not be made", inc.id)
         return None
@@ -674,9 +686,9 @@ def _escalate(ctx: JobContext, payload: dict) -> None:
         raise Defer(wait)
     if not still_open:
         return
-    since, step = datetime.fromisoformat(payload["since"]), n + 1
-    while since + timedelta(minutes=step * t.escalate_min) <= ctx.now:
-        step += 1  # steps that passed while the worker was down get no reminder of their own
+    since = datetime.fromisoformat(payload["since"])
+    # steps that passed while the worker was down get no reminder of their own
+    step = max(n + 1, math.floor((ctx.now - since).total_seconds() / (60 * t.escalate_min)) + 1)
     if step <= t.escalate_times:
         ctx.queue.enqueue(inc_.ESCALATE, {**payload, "n": step},
                           run_after=since + timedelta(minutes=step * t.escalate_min),
