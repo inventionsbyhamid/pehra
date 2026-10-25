@@ -2,6 +2,19 @@ import type {
   AddWatchResult, Alert, Answer, Camera, Metrics, Person, Preset, Scan, SearchResponse, Timeline, WatchRow, Zone,
 } from "./types";
 
+export interface Society {
+  id: string;
+  name: string;
+  timezone: string;
+}
+
+export interface Me {
+  user: { id: string; email: string | null; name: string | null };
+  workspace: Society | null;
+  role: string | null;
+  timezone: string;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -36,7 +49,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (!res.ok) {
     const data = await res.json().catch(() => null);
-    if (res.status === 401 && path !== "/api/login") onSignedOut();
+    if (res.status === 401) onSignedOut();
     throw new ApiError(res.status, messageFrom(res.status, data));
   }
   return res.json() as Promise<T>;
@@ -46,9 +59,12 @@ const get = <T>(path: string) => request<T>("GET", path);
 const post = <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {});
 
 export const api = {
-  me: () => get<{ user: string; timezone?: string }>("/api/me"),
-  login: (user: string, password: string) => post<{ user: string; timezone?: string }>("/api/login", { user, password }),
-  logout: () => post<{ ok: boolean }>("/api/logout"),
+  me: () => get<Me>("/api/me"),
+  providers: () => get<{ providers: { name: string; label: string }[] }>("/api/auth/providers"),
+  createSociety: (name: string, timezone: string) =>
+    post<{ workspace: Society; role: string }>("/api/workspaces", { name, timezone }),
+  acceptInvite: (token: string) => post<{ workspace: Society; role: string }>("/api/invites/accept", { token }),
+  logout: () => fetch("/auth/logout", { method: "POST", credentials: "same-origin" }),
 
   cameras: () => get<Camera[]>("/api/cameras"),
   camera: (id: string) => get<Camera>(`/api/cameras/${id}`),
@@ -124,4 +140,3 @@ export function wsUrl(path: string): string {
 
 export const frameUrl = (cameraId: string, bust = "") => `/api/cameras/${cameraId}/frame${bust ? `?v=${bust}` : ""}`;
 export const clipUrl = (alertId: string) => `/api/alerts/${alertId}/clip`;
-export const blobUrl = (key: string | null) => (key ? `/blobs/${key}` : null);

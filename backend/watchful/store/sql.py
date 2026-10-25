@@ -436,9 +436,10 @@ class SqlRepository:
                              .order_by(m.StateExample.created_at, m.StateExample.id)).all()
         return [(i, z, st, key) for i, z, st, key in rows if key]
 
-    def delete_state_example(self, example_id: str) -> None:
+    def delete_state_example(self, example_id: str) -> bool:
         with self.tx() as s:
-            s.execute(delete(m.StateExample).where(m.StateExample.id == example_id, self._mine(m.StateExample)))
+            return s.execute(delete(m.StateExample).where(m.StateExample.id == example_id,
+                                                          self._mine(m.StateExample))).rowcount > 0
 
 
 def _as_stored(row: WatchRow) -> WatchRow:

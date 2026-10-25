@@ -1,8 +1,14 @@
+import base64
+import hashlib
+import hmac
 import time
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import quote
 
 from watchful.registry import register
+
+MEDIA_PATH = "/api/blobs/"
 
 
 class BlobStore(Protocol):
@@ -41,11 +47,31 @@ class BackgroundPuts:
         self.pool.shutdown()
 
 
+class MediaSigner:
+    """Short lived links to local pictures and clips, as S3's presigned links are: the key and an expiry, signed."""
+
+    def __init__(self, secret: str, ttl_s: int):
+        self._key = hashlib.sha256(b"media:" + secret.encode()).digest()
+        self.ttl_s = ttl_s
+
+    def _sig(self, key: str, expires: int) -> str:
+        mac = hmac.new(self._key, f"{key}\n{expires}".encode(), hashlib.sha256).digest()
+        return base64.urlsafe_b64encode(mac[:18]).decode()
+
+    def url(self, key: str, now: float | None = None) -> str:
+        expires = int((now or time.time()) + self.ttl_s)
+        return f"{MEDIA_PATH}{quote(key)}?e={expires}&s={self._sig(key, expires)}"
+
+    def valid(self, key: str, expires: int, sig: str, now: float | None = None) -> bool:
+        return expires > (now or time.time()) and hmac.compare_digest(self._sig(key, expires), sig or "")
+
+
 @register("blobs", "local")
 class LocalBlobStore:
-    def __init__(self, data_dir: str | Path, name: str = "local", **_):
+    def __init__(self, data_dir: str | Path, name: str = "local", signer: MediaSigner | None = None, **_):
         self.root = Path(data_dir) / "blobs"
         self.root.mkdir(parents=True, exist_ok=True)
+        self.signer = signer  # served by api/blobs.py; without one (tests, tools) links are unsigned
 
     def _path(self, key: str) -> Path:
         if ".." in Path(key).parts or key.startswith("/"):
@@ -63,7 +89,7 @@ class LocalBlobStore:
         return self._path(key).read_bytes()
 
     def url(self, key: str) -> str:
-        return f"/blobs/{key}"
+        return self.signer.url(key) if self.signer else f"{MEDIA_PATH}{quote(key)}"
 
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)

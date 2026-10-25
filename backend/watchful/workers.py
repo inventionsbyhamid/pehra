@@ -24,7 +24,7 @@ from watchful.notify import ApprovalNotifier
 from watchful.rules.engine import RuleEngine, log_row, needs_for, validate
 from watchful.rules.watch import Watch
 from watchful.rules.zonestate import load_states
-from watchful.store.db import AlertRow, Camera
+from watchful.store.db import DEFAULT_WORKSPACE, AlertRow, Camera
 from watchful.tuning import Tuning, load_tuning
 from watchful.vision.embed import TextCache, watch_texts
 from watchful.vision.perceive import Needs
@@ -244,15 +244,22 @@ class _Handle:
 
 
 class WorkerManager:
-    def __init__(self, settings: Settings, tuning: Tuning, repo, blobs, llm=None):
+    """Cameras of every society; each camera's rows go through its own society's repository (repo_for). Retention,
+    metrics and the search index still cover `repo`'s society only, until the shared pool (Task 3)."""
+
+    def __init__(self, settings: Settings, tuning: Tuning, repo, blobs, llm=None, repo_for=None):
         self.settings, self.tuning, self.repo, self.blobs = settings, tuning, repo, blobs
+        self.home = getattr(repo, "workspace_id", DEFAULT_WORKSPACE)
+        self.repo_for = repo_for or (lambda ws: repo if ws == self.home else make_repo(settings, ws))
+        self.camera_ws: dict[str, str] = {}  # camera id to its society, filled by start and scan_upload
+        self._llms: dict[str, object] = {}
         self.ctx = mp.get_context("spawn")
         self.out_q = self.ctx.Queue(maxsize=2000)
         self.scanning = self.ctx.Value("i", 0)
         self.handles: dict[str, _Handle] = {}
         self.subs: dict[str, list[Subscription]] = defaultdict(list)
         self.scans: dict[str, dict] = {}
-        self.llm = llm or make_llm(settings, repo, "verify")
+        self.llm = llm  # tests give one; else one per society, counting against its own AI cap
         self.verifiers = ThreadPoolExecutor(max(1, settings.ai_parallel))
         self.approvals = ApprovalNotifier(make_notifier(settings))
         self._inflight: set[str] = set()
@@ -301,12 +308,26 @@ class WorkerManager:
             except Exception:
                 log.exception("metrics report failed")
 
+    # societies
+    def _repo(self, camera_id: str):
+        return self.repo_for(self.camera_ws.get(camera_id, self.home))
+
+    def _llm(self, camera_id: str):
+        if self.llm is not None:
+            return self.llm
+        ws = self.camera_ws.get(camera_id, self.home)
+        with self._lock:
+            if ws not in self._llms:
+                self._llms[ws] = make_llm(self.settings, self.repo_for(ws), "verify")
+            return self._llms[ws]
+
     # cameras
     def _watches(self, camera_id: str, zones: list | None = None) -> tuple[list[tuple[str, Watch]], list[str]]:
         """The camera's enabled watches that can run, and a plain note for each that can't."""
-        names = {z.name for z in (zones if zones is not None else self.repo.get_camera(camera_id).zones)}
+        repo = self._repo(camera_id)
+        names = {z.name for z in (zones if zones is not None else repo.get_camera(camera_id).zones)}
         ok, problems = [], []
-        for row in self.repo.list_watches(camera_id):
+        for row in repo.list_watches(camera_id):
             if not row.enabled:
                 continue
             try:
@@ -325,13 +346,16 @@ class WorkerManager:
         with self._lock:
             return self._locks.setdefault(camera_id, threading.Lock())
 
-    def start(self, camera_id: str) -> None:
+    def start(self, camera_id: str, workspace_id: str | None = None) -> None:
+        if workspace_id:
+            self.camera_ws[camera_id] = workspace_id
         with self._camera_lock(camera_id):
             self._start(camera_id)
 
     def _start(self, camera_id: str) -> None:
         self._stop(camera_id)
-        cam = self.repo.get_camera(camera_id)
+        repo = self._repo(camera_id)
+        cam = repo.get_camera(camera_id)
         if cam is None or not cam.enabled:
             return
         h = _Handle(None, self.ctx.Queue(maxsize=4), self.ctx.Value("i", 0), self.ctx.Event())
@@ -346,7 +370,7 @@ class WorkerManager:
             emb = make_embedder(self.settings)
             texts = {t: emb.text(t).tolist() for t in wanted}
         h.process = self.ctx.Process(target=run_camera, daemon=True, args=(
-            cam, watches, self.repo.list_enrollments(), self.settings.model_dump_json(),
+            cam, watches, repo.list_enrollments(), self.settings.model_dump_json(),
             self.tuning.model_dump_json(), h.in_q, self.out_q, h.viewers, self.scanning, h.stop, texts))
         h.process.start()
         h.status = WorkerStatus(running=True, source_status="starting", problems=problems)
@@ -453,9 +477,10 @@ class WorkerManager:
         """Camera health needs no AI check: a covered, blurred or turned camera is an alert straight away."""
         text = TAMPER_TEXT.get(msg["kind"], "Something is wrong with the camera picture.")
         fp = f"tamper|{msg['camera_id']}|{msg['kind']}|{int(msg['ts'] // 600)}"
-        if self.repo.alert_fingerprint_exists(fp, within_s=3600):
+        repo = self._repo(msg["camera_id"])
+        if repo.alert_fingerprint_exists(fp, within_s=3600):
             return
-        row = self.repo.add_alert(AlertRow(None, msg["camera_id"], None, msg["ts"], "warning", "alert", text, None, None,
+        row = repo.add_alert(AlertRow(None, msg["camera_id"], None, msg["ts"], "warning", "alert", text, None, None,
                                            [], None, fp))
         self._publish(msg["camera_id"], {"type": "alert", "alert": {**asdict(row), "keyframe_url": None}})
         self.metrics.put("Alerts", 1, {"Status": "tamper"})
@@ -464,7 +489,7 @@ class WorkerManager:
     def _on_candidate(self, pack: EvidencePack) -> None:
         c = pack.candidate
         with self._lock:
-            if c.fingerprint in self._inflight or self.repo.alert_fingerprint_exists(
+            if c.fingerprint in self._inflight or self._repo(c.camera_id).alert_fingerprint_exists(
                     c.fingerprint, within_s=self.settings.alert_dedupe_days * 86400):
                 return
             self._inflight.add(c.fingerprint)
@@ -473,7 +498,7 @@ class WorkerManager:
     def _verify_and_store(self, pack: EvidencePack) -> str | None:
         c = pack.candidate
         try:
-            verdict = verify(c, evidence_context(pack, self.repo, self.blobs), self.llm)
+            verdict = verify(c, evidence_context(pack, self._repo(c.camera_id), self.blobs), self._llm(c.camera_id))
         except Exception:
             log.exception("verifying %s failed", c.fingerprint)
             verdict = _fallback(c, [], "the check failed")
@@ -488,7 +513,7 @@ class WorkerManager:
 
     def _store(self, pack: EvidencePack, v: Verdict) -> AlertRow:
         c = pack.candidate
-        row = self.repo.add_alert(AlertRow(None, c.camera_id, c.watch_id, c.ts, c.severity, v.status,
+        row = self._repo(c.camera_id).add_alert(AlertRow(None, c.camera_id, c.watch_id, c.ts, c.severity, v.status,
                                            v.summary or c.watch_name, c.clip_key,
                                            c.keyframe_keys[0] if c.keyframe_keys else None,
                                            [asdict(t) for t in v.trace], None, c.fingerprint, c.track_id))
@@ -497,12 +522,13 @@ class WorkerManager:
         self.metrics.put("Alerts", 1, {"Status": v.status})
         return row
 
-    def approve(self, alert_id: str) -> bool:
-        row = self.repo.get_alert(alert_id)
+    def approve(self, alert_id: str, workspace_id: str | None = None) -> bool:
+        repo = self.repo_for(workspace_id or self.home)
+        row = repo.get_alert(alert_id)
         if row is None:
             return False
         row.status = "approved"
-        self.repo.update_alert(row)
+        repo.update_alert(row)
         return self.approvals.approve(row)
 
     # uploads
@@ -512,10 +538,13 @@ class WorkerManager:
                 self._scan_pool = ScanPool(self.settings, self.tuning)
             return self._scan_pool
 
-    def scan_upload(self, camera_id: str) -> str:
+    def scan_upload(self, camera_id: str, workspace_id: str | None = None) -> str:
+        if workspace_id:
+            self.camera_ws[camera_id] = workspace_id
         scan_id = "scn_" + secrets.token_hex(6)
         self.scans[scan_id] = {"state": "scanning", "progress": 0.0, "stats": None, "alert_ids": [],
-                               "camera_id": camera_id, "error": None}
+                               "camera_id": camera_id, "error": None,
+                               "workspace_id": self.camera_ws.get(camera_id, self.home)}
         threading.Thread(target=self._run_scan, args=(scan_id, camera_id), daemon=True).start()
         return scan_id
 
@@ -524,7 +553,8 @@ class WorkerManager:
 
     def _run_scan(self, scan_id: str, camera_id: str) -> None:
         info = self.scans[scan_id]
-        cam = self.repo.get_camera(camera_id)
+        repo = self._repo(camera_id)
+        cam = repo.get_camera(camera_id)
         with self.scanning.get_lock():
             self.scanning.value += 1
         try:
@@ -535,20 +565,20 @@ class WorkerManager:
             # the recording's own clock: its creation time, kept the same across rescans
             start_epoch = ((cam.last_scan or {}).get("start_epoch") or probe_start_time(cam.url) or time.time())
             result = scan_file(cam.url, cam, watches, self._pool(), self.blobs, self.settings, self.tuning,
-                               start_epoch=start_epoch, enrollments=self.repo.list_enrollments(),
+                               start_epoch=start_epoch, enrollments=repo.list_enrollments(),
                                embedder=self._embedder if needs.embed else None,
                                on_progress=lambda p: info.update(progress=round(p, 3)))
-            self.repo.delete_camera_events(cam.id)  # a rescan replaces the earlier timeline
-            self.repo.add_events(result.events)
+            repo.delete_camera_events(cam.id)  # a rescan replaces the earlier timeline
+            repo.add_events(result.events)
             info.update(state="checking", stats=asdict(result.stats))
             cam.last_scan = {**asdict(result.stats), "start_epoch": start_epoch, "finished_at": time.time()}
-            self.repo.update_camera(cam)
+            repo.update_camera(cam)
             self.metrics.put("ScanRealtimeFactor", result.stats.x_realtime)
             self.metrics.put("ScanSecondsPerMinute", result.stats.wall_s / max(result.stats.duration_s / 60, 1e-6))
             dedupe_s = self.settings.alert_dedupe_days * 86400 + max(0.0, time.time() - start_epoch)
-            self.repo.add_events([log_row(c) for c in result.candidates if c.output == "log"])
+            repo.add_events([log_row(c) for c in result.candidates if c.output == "log"])
             fresh = [c for c in result.candidates if c.output != "log"
-                     and not self.repo.alert_fingerprint_exists(c.fingerprint, dedupe_s)]
+                     and not repo.alert_fingerprint_exists(c.fingerprint, dedupe_s)]
             packs = [file_pack(cam.url, start_epoch, c, result.paths.get(c.track_id, []),
                                result.poses.get(c.track_id, []), self.tuning.evidence, cam.zones)
                      for c in fresh]

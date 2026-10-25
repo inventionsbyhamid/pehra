@@ -1,9 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signIn } from "./signin";
 
 // Screenshots of every page, for review and the report. Runs only when SHOTS_DIR is set.
 const DIR = process.env.SHOTS_DIR;
-const USER = process.env.DEMO_USER ?? "judge";
-const PASSWORD = process.env.DEMO_PASSWORD ?? "";
 const SAMPLE = process.env.SAMPLE_VIDEO ?? "/app/data/samples/vtest20.mp4";
 const ONLY = process.env.SHOTS_ONLY?.split(",");
 
@@ -14,14 +13,6 @@ const PREFIX = process.env.SHOTS_SCHEME === "dark" ? "dark-" : "";
 async function shot(page: Page, name: string, fullPage = true) {
   await page.waitForTimeout(400);
   await page.screenshot({ path: `${DIR}/${PREFIX}${name}.png`, fullPage });
-}
-
-async function signIn(page: Page) {
-  await page.goto("/");
-  await page.getByLabel("Name").fill(USER);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Cameras", level: 1 })).toBeVisible();
 }
 
 async function demoCamera(page: Page): Promise<string> {
@@ -38,8 +29,8 @@ for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["ph
     test(`pages ${label}`, async ({ page }) => {
       test.setTimeout(300_000);
       if (want("login")) {
-        await page.goto("/");
-        await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+        await page.goto("/app");
+        await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
         await shot(page, `${label}-01-login`);
       }
       await signIn(page);
@@ -142,7 +133,7 @@ test("flows desktop", async ({ page }) => {
     await shot(page, "desktop-15-alert-detail");
   }
   if (want("upload")) {
-    await page.goto("/");
+    await page.goto("/app");
     await page.locator('input[type="file"]').setInputFiles(SAMPLE);
     await page.getByLabel(/^Name/).fill("Plaza recording");
     await page.getByRole("button", { name: "Upload and scan" }).click();
@@ -151,7 +142,7 @@ test("flows desktop", async ({ page }) => {
     await page.locator(".add-camera").screenshot({ path: `${DIR}/desktop-16-upload-done.png` });
   }
   if (want("webcam")) {
-    await page.goto("/");
+    await page.goto("/app");
     await page.getByRole("tab", { name: "This browser's webcam" }).click();
     await page.getByLabel("Name").fill("Desk webcam");
     await page.getByRole("button", { name: "Add webcam" }).click();

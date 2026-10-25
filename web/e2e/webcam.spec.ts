@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { signIn } from "./signin";
 
-const USER = process.env.DEMO_USER ?? "judge";
-const PASSWORD = process.env.DEMO_PASSWORD ?? "";
 const NAME = "Test webcam";
 
 // Chromium runs with a fake camera (see playwright.config.ts), so this covers the whole loop:
@@ -9,16 +8,13 @@ const NAME = "Test webcam";
 // drawn over the browser's own video.
 test("webcam frames go to the server and come back analysed", async ({ page }) => {
   test.setTimeout(120_000);
-  expect(PASSWORD, "set DEMO_PASSWORD").not.toBe("");
-  await page.goto("/");
-  await page.getByLabel("Name").fill(USER);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Cameras", level: 1 })).toBeVisible();
+  await signIn(page);
 
   const cams = await (await page.request.get("/api/cameras")).json();
   let cam = cams.find((c: { kind: string; name: string }) => c.kind === "webcam" && c.name === NAME);
-  if (!cam) cam = await (await page.request.post("/api/cameras", { data: { name: NAME, kind: "webcam" } })).json();
+  // writes outside the page carry this site's Origin, as the browser's own requests do
+  const origin = new URL(page.url()).origin;
+  if (!cam) cam = await (await page.request.post("/api/cameras", { data: { name: NAME, kind: "webcam" }, headers: { origin } })).json();
 
   const pushed = page.waitForEvent("websocket", (ws) => ws.url().endsWith(`/ws/cameras/${cam.id}/push`));
   await page.goto(`/cameras/${cam.id}`);

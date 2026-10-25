@@ -820,14 +820,11 @@ def test_caddy_proxies_sockets_and_leaves_the_policy_to_the_app():
 
 def test_the_apps_policy_allows_sockets_and_blob_media():
     """Live views and camera pushes open wss:// sockets to PUBLIC_BASE_URL's host and pages show blob: media; the
-    app's Content Security Policy has to allow both, since Caddy adds none. Until the app sends a policy this xfails;
-    once it does, the check is real."""
-    sources = [p.read_text() for p in (ROOT / "backend" / "watchful").rglob("*.py")]
-    policies = [text for text in sources if "content-security-policy" in text.lower()]
-    if not policies:
-        pytest.xfail("the app sends no Content Security Policy yet")
-    text = "\n".join(policies)
-    assert "wss" in text and "blob:" in text and "public_base_url" in text
+    app's Content Security Policy has to allow both, since Caddy adds none."""
+    from watchful.api.headers import policy
+    csp = policy(Settings(session_secret="y", public_base_url=ORIGIN, _env_file=None))
+    assert f"wss://{DOMAIN}" in csp and "blob:" in csp.split("img-src")[1].split(";")[0]
+    assert "blob:" in csp.split("media-src")[1].split(";")[0] and "frame-ancestors 'none'" in csp
 
 
 def test_caddy_validates_the_caddyfile():

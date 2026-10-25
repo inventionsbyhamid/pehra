@@ -65,7 +65,7 @@ def test_answer_keeps_only_grounded_items(ctx):
                                {"label": "Made up", "event_id": "evt_nope", "start_ts": at(10, 0)}])])
     a = ask("when did Sana come into the kitchen and when did she leave", "cam", ctx, llm, now=at(12, 0))
     assert [i.label for i in a.items] == ["Sana in the kitchen"]
-    assert a.items[0].thumbnail_url == "/blobs/cam/kf/1.jpg" and a.confidence == "high"
+    assert a.items[0].thumbnail_url == "/api/blobs/cam/kf/1.jpg" and a.confidence == "high"
     assert [t.tool for t in a.trace] == ["people", "answer"]
 
 

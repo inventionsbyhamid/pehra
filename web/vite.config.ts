@@ -28,7 +28,6 @@ export default defineConfig({
     proxy: {
       "/api": api,
       "/auth": api,
-      "/blobs": api,
       "/healthz": api,
       "/ws": { target: api, ws: true },
     },

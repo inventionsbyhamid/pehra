@@ -9,6 +9,7 @@ import pytest
 import uvicorn
 from websockets.sync.client import connect
 
+from accounts import join, session_cookie
 from test_api import StubManager
 from watchful.agent.llm import FakeLLM
 from watchful.api import create_app
@@ -27,11 +28,12 @@ def server(tmp_path):
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "index.html").write_text("<html>watchful app</html>")
-    s = Settings(demo_password="pw", session_secret="s" * 32, data_dir=tmp_path, web_dist=dist, _env_file=None)
-    app = create_app(s, llm=FakeLLM([]), manager=StubManager())
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
+    s = Settings(session_secret="s" * 32, data_dir=tmp_path, web_dist=dist, public_base_url=f"http://127.0.0.1:{port}",
+                 _env_file=None)
+    app = create_app(s, llm=FakeLLM([]), manager=StubManager())
     srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     threading.Thread(target=srv.run, daemon=True).start()
     while not srv.started:
@@ -41,11 +43,17 @@ def server(tmp_path):
     srv.should_exit = True
 
 
+def _signed_in(server, email="judge@example.com", workspace_id="default"):
+    app = server_app(server)
+    name, value = session_cookie(app, join(app, email, workspace_id), workspace_id)
+    c = httpx.Client(base_url=f"http://{server}", headers={"origin": f"http://{server}"}, cookies={name: value})
+    return c, f"{name}={value}"
+
+
 def test_live_websocket_over_uvicorn(server):
-    with httpx.Client(base_url=f"http://{server}") as c:
-        assert c.post("/api/login", json={"user": "judge", "password": "pw"}).status_code == 200
+    c, cookie = _signed_in(server)
+    with c:
         cam = c.post("/api/cameras", json={"name": "Desk", "kind": "webcam"}).json()
-        cookie = "; ".join(f"{k}={v}" for k, v in c.cookies.items())
     with connect(f"ws://{server}/ws/cameras/{cam['id']}", additional_headers={"Cookie": cookie}) as ws:
         assert json.loads(ws.recv(timeout=5))["type"] == "frame"
     with connect(f"ws://{server}/ws/cameras/{cam['id']}/push", additional_headers={"Cookie": cookie}) as ws:
@@ -69,22 +77,31 @@ def test_signed_out_socket_closes_with_4401(server):
 
 
 def test_me_reports_the_timezone(server):
-    with httpx.Client(base_url=f"http://{server}") as c:
-        r = c.post("/api/login", json={"user": "judge", "password": "pw"})
-        assert r.json()["timezone"] == "Asia/Kolkata" and c.get("/api/me").json()["timezone"] == "Asia/Kolkata"
+    c, _ = _signed_in(server)
+    with c:
+        me = c.get("/api/me").json()
+        assert me["timezone"] == "Asia/Kolkata" and me["workspace"]["timezone"] == "Asia/Kolkata"
 
 
-def _signed_in(server):
-    c = httpx.Client(base_url=f"http://{server}")
-    c.post("/api/login", json={"user": "judge", "password": "pw"})
-    return c, "; ".join(f"{k}={v}" for k, v in c.cookies.items())
+def test_a_socket_from_another_site_or_society_is_refused(server):
+    from websockets.exceptions import ConnectionClosed
+    c, cookie = _signed_in(server)
+    cam = c.post("/api/cameras", json={"name": "Desk", "kind": "webcam"}).json()
+    _, stranger = _signed_in(server, "stranger@example.com", "ws_other")
+    for headers, code in (({"Cookie": cookie, "Origin": "https://evil.example"}, 4401), ({"Cookie": stranger}, 4404)):
+        with connect(f"ws://{server}/ws/cameras/{cam['id']}", additional_headers=headers) as ws:
+            try:
+                ws.recv(timeout=5)
+                assert False, "expected a close"
+            except ConnectionClosed as e:
+                assert e.rcvd.code == code
 
 
 def test_closed_live_view_is_released_quickly(server, monkeypatch):
     c, cookie = _signed_in(server)
     cam = c.post("/api/cameras", json={"name": "Desk", "kind": "webcam"}).json()
     released = []
-    manager = server_app(server).state.w.manager
+    manager = server_app(server).state.ctx.manager
     monkeypatch.setattr(manager, "unsubscribe", lambda cid, sub: released.append(cid))
     with connect(f"ws://{server}/ws/cameras/{cam['id']}", additional_headers={"Cookie": cookie}) as ws:
         ws.recv(timeout=5)
@@ -106,7 +123,7 @@ def test_push_only_for_webcams_and_stops_when_closed(server, monkeypatch):
         except ConnectionClosed as e:
             assert e.rcvd.code == 4400
     stopped = []
-    manager = server_app(server).state.w.manager
+    manager = server_app(server).state.ctx.manager
     monkeypatch.setattr(manager, "stop", lambda cid: stopped.append(cid))
     cam = c.post("/api/cameras", json={"name": "Desk", "kind": "webcam"}).json()
     with connect(f"ws://{server}/ws/cameras/{cam['id']}/push", additional_headers={"Cookie": cookie}) as ws:

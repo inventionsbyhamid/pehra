@@ -94,7 +94,7 @@ export default function CameraView() {
     return (
       <div className="page">
         <p className="notice notice-error" role="alert">{camera.error ?? "There is no camera with this address. It may have been removed."}</p>
-        <Link to="/">Back to cameras</Link>
+        <Link to="/app">Back to cameras</Link>
       </div>
     );
   }
@@ -162,7 +162,7 @@ export default function CameraView() {
     <div className="page">
       <div className="page-head">
         <div>
-          <Link to="/" className="small back">Cameras</Link>
+          <Link to="/app" className="small back">Cameras</Link>
           <h1>{cam.name}</h1>
           <div className="row small cam-facts">
             <span className="row" style={{ gap: 6 }}><span className={`live-dot ${st.tone}`} aria-hidden="true" />{st.label}</span>

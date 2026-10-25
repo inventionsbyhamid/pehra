@@ -6,7 +6,7 @@ import { useLoad } from "../hooks";
 import { Mark } from "./Mark";
 
 const NAV = [
-  { to: "/", label: "Cameras" },
+  { to: "/app", label: "Cameras" },
   { to: "/alerts", label: "Alerts" },
   { to: "/ask", label: "Ask" },
   { to: "/find", label: "Find" },
@@ -15,7 +15,7 @@ const NAV = [
 ];
 
 function isCurrent(to: string, path: string) {
-  if (to === "/") return path === "/" || path.startsWith("/cameras");
+  if (to === "/app") return path === "/app" || path.startsWith("/cameras");
   return path.startsWith(to);
 }
 
@@ -34,7 +34,7 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="shell">
       <a className="skip" href="#main">Skip to content</a>
       <header className="rail">
-        <Link to="/" className="brand" aria-label="Watchful, go to cameras">
+        <Link to="/app" className="brand" aria-label="Watchful, go to cameras">
           <Mark />
           <span className="brand-name">Watchful</span>
         </Link>

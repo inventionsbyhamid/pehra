@@ -122,7 +122,7 @@ def test_migrations_match_the_models(tmp_path):
 def test_blobs(tmp_path):
     blobs = LocalBlobStore(tmp_path)
     blobs.put("a/b.jpg", b"123", "image/jpeg")
-    assert blobs.get("a/b.jpg") == b"123" and blobs.url("a/b.jpg") == "/blobs/a/b.jpg"
+    assert blobs.get("a/b.jpg") == b"123" and blobs.url("a/b.jpg") == "/api/blobs/a/b.jpg"
     old = tmp_path / "blobs" / "a" / "b.jpg"
     past = time.time() - 9 * 86400
     import os

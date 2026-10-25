@@ -217,6 +217,21 @@ class PlateTuning(_Section):
     green_hue: tuple[float, float] = (40, 90)
 
 
+class AuthTuning(_Section):
+    session_days: int = 30  # a sign in lasts this many days in a browser
+    sign_in_minutes: int = 10  # time allowed between leaving for the sign in provider and coming back
+    invite_days: int = 7  # an invite link works this long, and only once
+    signin_link_minutes: int = 15  # an operator's sign in link (python -m watchful.auth) works this long, and once
+    media_link_s: int = 3600  # signed links to pictures and clips (/api/blobs) work this long
+
+
+class LimitsTuning(_Section):
+    login_per_min_ip: int = 10  # sign in attempts a minute per IP (Google, operator links); IPv6 per /64
+    api_per_min_workspace: int = 600  # signed in API requests a minute per society (several people, pages polling)
+    public_per_min_ip: int = 120  # pages behind a valid link a minute per IP
+    misses_per_min_ip: int = 10  # unknown sign in link tokens a minute per IP: guessing
+
+
 class Tuning(_Section):
     motion: MotionTuning = MotionTuning()
     detect: DetectTuning = DetectTuning()
@@ -235,6 +250,8 @@ class Tuning(_Section):
     plates: PlateTuning = PlateTuning()
     zones: ZoneTuning = ZoneTuning()
     backtest: BacktestTuning = BacktestTuning()
+    auth: AuthTuning = AuthTuning()
+    limits: LimitsTuning = LimitsTuning()
 
 
 def _merge(base: dict, extra: dict) -> dict:

@@ -1,19 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { signIn } from "./signin";
 
-const USER = process.env.DEMO_USER ?? "judge";
-const PASSWORD = process.env.DEMO_PASSWORD ?? "";
-
-async function signIn(page: Page) {
-  await page.goto("/");
-  await page.getByLabel("Name").fill(USER);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Cameras", level: 1 })).toBeVisible();
-}
 
 test("sign in, add a watch, see alerts and ask about the footage", async ({ page }) => {
   test.setTimeout(300_000);
-  expect(PASSWORD, "set DEMO_PASSWORD").not.toBe("");
 
   await signIn(page);
 

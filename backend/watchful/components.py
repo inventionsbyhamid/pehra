@@ -57,9 +57,13 @@ def make_llm(settings: Settings, repo, task: str = "verify"):
                       settings.ai_daily_call_limit)
 
 
-def make_blobs(settings: Settings):
+def make_blobs(settings: Settings, tuning: Tuning | None = None):
+    from watchful.store.blobs import MediaSigner
+    from watchful.tuning import load_tuning
     load_all()
-    return build("blobs", settings.storage, data_dir=settings.data_dir, settings=settings)
+    ttl_s = (tuning or load_tuning(settings.tuning_file)).auth.media_link_s
+    return build("blobs", settings.storage, data_dir=settings.data_dir, settings=settings,
+                 signer=MediaSigner(settings.session_secret, ttl_s), url_ttl_s=ttl_s)
 
 
 _engines: dict[str, object] = {}
@@ -78,6 +82,17 @@ def make_engine(settings: Settings):
             migrate(engine)
             _engines[url] = engine
         return _engines[url]
+
+
+def make_db(settings: Settings):
+    from watchful.db.platform import Database
+    return Database(make_engine(settings))
+
+
+def make_auth_providers(settings: Settings) -> dict:
+    """Sign in providers by name, in the order the settings list them."""
+    import watchful.auth.google  # noqa: F401
+    return {name: build("auth", name, settings=settings) for name in settings.auth_providers}
 
 
 def make_repo(settings: Settings, workspace_id: str | None = None):

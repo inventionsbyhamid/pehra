@@ -176,17 +176,15 @@ def test_purposes_only_suggest_plain_watch_texts():
 def test_watch_card_api_previews_backtests_and_saves(tmp_path):
     import cv2
     import numpy as np
-    from fastapi.testclient import TestClient
-
-    from test_api import StubManager, login
+    from accounts import browser
+    from test_api import StubManager
     from watchful.api import create_app
     from watchful.config import Settings
 
-    s = Settings(demo_password="pw", session_secret="s" * 32, data_dir=tmp_path, _env_file=None)
+    s = Settings(session_secret="s" * 32, data_dir=tmp_path, _env_file=None)
     manager = StubManager()
     app = create_app(s, llm=FakeLLM([]), manager=manager)
-    c = TestClient(app)
-    login(c)
+    c = browser(app)
     pool = c.post("/api/cameras", json={"name": "Pool", "kind": "stream", "url": "rtsp://x"}).json()
     gate = c.post("/api/cameras", json={"name": "Gate", "kind": "stream", "url": "rtsp://y"}).json()
     zones = [{"id": "w1", "name": "water", "kind": "water", "polygon": [[0, 0.2], [1, 0.2], [1, 1], [0, 1]]},
@@ -196,7 +194,7 @@ def test_watch_card_api_previews_backtests_and_saves(tmp_path):
 
     still = reply({"name": "Still in the water", "subject": {"classes": ["person"]}, "severity": "critical",
                    "conditions": [{"signal": "still_s", "zones": ["water"], "op": ">=", "value": 20}], "verify": "?"})
-    app.state.w.compile_llm = FakeLLM([still])
+    app.state.ctx.llm = FakeLLM([still])
     card = c.post(f"/api/cameras/{pool['id']}/watches/preview", json={"text": "someone still in the water"}).json()
     assert card["watch"]["name"] == "Still in the water" and card["coverage"][0]["tier"] == "B"
     assert card["backtest"]["not_replayed"] == ["still_s"] and card["backtest"]["fires"] == 0
@@ -210,7 +208,7 @@ def test_watch_card_api_previews_backtests_and_saves(tmp_path):
 
     site = reply({"name": "Camera covered", "scope": "site", "conditions": [
         {"signal": "camera_health", "op": "!=", "value": "live"}], "severity": "warning", "verify": ""})
-    app.state.w.compile_llm = FakeLLM([site])
+    app.state.ctx.llm = FakeLLM([site])
     manager.started.clear()
     r = c.post(f"/api/cameras/{pool['id']}/watches", json={"text": "any camera covered"}).json()
     assert r["watch"]["scope"] == "site" and set(manager.started) == {pool["id"], gate["id"]}

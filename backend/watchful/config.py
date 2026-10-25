@@ -1,10 +1,15 @@
+import json
 import math
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# a list setting may be written "a,b" or as JSON
+Names = Annotated[list[str], NoDecode]
 
 
 class Settings(BaseSettings):
@@ -61,14 +66,27 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     sns_topic_arn: str | None = None
 
-    demo_user: str = "judge"
-    demo_password: str
+    public_base_url: str = "http://localhost:8000"
+    # Cloudflare's CF-Connecting-IP names the visitor only where every request comes through Cloudflare (the ioflood
+    # tunnel); elsewhere a visitor could send it themselves (ratelimit.client_ip)
+    trust_cloudflare: bool = False
     session_secret: str
+    auth_providers: Names = ["google"]  # sign in providers offered, in order (auth/providers.py, auth/google.py)
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
 
     ai_daily_call_limit: int = 500
     retention_days: int = 7
     max_upload_mb: int = 200
     max_upload_minutes: int = 10
+
+    @field_validator("auth_providers", mode="before")
+    @classmethod
+    def _names(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return json.loads(value) if value.startswith("[") else [v.strip() for v in value.split(",") if v.strip()]
+        return value
 
     @property
     def database(self) -> str:

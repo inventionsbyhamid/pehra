@@ -64,7 +64,7 @@ export default function Terms({ standalone }: { standalone?: boolean }) {
     <div className="standalone">
       <header className="standalone-head">
         <Link to="/" className="brand"><Mark /><span className="brand-name">Watchful</span></Link>
-        <Link to="/" className="small">Sign in</Link>
+        <Link to="/app" className="small">Sign in</Link>
       </header>
       <main id="main" className="main">{body}</main>
     </div>

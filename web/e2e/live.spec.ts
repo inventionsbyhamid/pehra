@@ -1,17 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { signIn } from "./signin";
 
-const USER = process.env.DEMO_USER ?? "judge";
-const PASSWORD = process.env.DEMO_PASSWORD ?? "";
 
 // The server sends plain frames with tracks; the browser draws the boxes and labels itself.
 test("live view draws boxes from the tracks sent with each frame", async ({ page }) => {
   test.setTimeout(120_000);
-  expect(PASSWORD, "set DEMO_PASSWORD").not.toBe("");
-  await page.goto("/");
-  await page.getByLabel("Name").fill(USER);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Cameras", level: 1 })).toBeVisible();
+  await signIn(page);
 
   const cams = await (await page.request.get("/api/cameras")).json();
   const demo = cams.find((c: { kind: string }) => c.kind === "demo");

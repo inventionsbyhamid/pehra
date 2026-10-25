@@ -4,6 +4,7 @@ import { api, whenSignedOut } from "./api";
 import { setTimeZone } from "./format";
 import { Shell } from "./components/Shell";
 import Login from "./pages/Login";
+import Welcome, { Join } from "./pages/Welcome";
 import Cameras from "./pages/Cameras";
 import CameraView from "./pages/CameraView";
 import Alerts from "./pages/Alerts";
@@ -40,12 +41,24 @@ export default function App() {
 
 function Workspace() {
   const [user, setUser] = useState<string | null>(null);
+  const [society, setSociety] = useState<boolean>(false);
   const [checked, setChecked] = useState(false);
   const location = useLocation();
 
+  function load() {
+    api.me()
+      .then((m) => {
+        setTimeZone(m.timezone);
+        setUser(m.user.name || m.user.email || "you");
+        setSociety(m.workspace !== null);
+      })
+      .catch(() => setUser(null))
+      .finally(() => setChecked(true));
+  }
+
   useEffect(() => {
     whenSignedOut(() => setUser(null));
-    api.me().then((m) => { setTimeZone(m.timezone); setUser(m.user); }).catch(() => setUser(null)).finally(() => setChecked(true));
+    load();
   }, []);
 
   if (!checked) return null;
@@ -53,6 +66,13 @@ function Workspace() {
   if (location.pathname === "/terms" && !user) return <Terms standalone />;
 
   if (!user) return <SessionContext.Provider value={{ user, setUser }}><Login /></SessionContext.Provider>;
+
+  if (location.pathname.startsWith("/join/")) {
+    const token = location.pathname.slice("/join/".length);
+    return <SessionContext.Provider value={{ user, setUser }}><Join token={token} onDone={() => { history.replaceState(null, "", "/app"); load(); }} /></SessionContext.Provider>;
+  }
+
+  if (!society) return <SessionContext.Provider value={{ user, setUser }}><Welcome onDone={load} /></SessionContext.Provider>;
 
   return (
     <SessionContext.Provider value={{ user, setUser }}>
@@ -69,7 +89,7 @@ function Workspace() {
           <Route path="/people" element={<People />} />
           <Route path="/numbers" element={<Numbers />} />
           <Route path="/terms" element={<Terms />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/app" replace />} />
         </Routes>
       </Shell>
     </SessionContext.Provider>
