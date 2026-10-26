@@ -66,6 +66,7 @@ export function useWebcam(cameraId: string) {
         setError(ev.code === 4401 ? "Your session ended. Sign in again to use this device as a camera."
           : ev.code === 4403 ? "Only a society admin can use this browser as a camera."
           : ev.code === 4409 ? "Another device is now sending this camera, so this one stopped."
+          : ev.code === 4429 && ev.reason ? ev.reason
           : `The connection to ${brand.name} dropped. Start the camera again.`);
         setOn(false);
       };

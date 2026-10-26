@@ -1,5 +1,6 @@
 import { useTitle } from "../hooks";
 import brand from "../site/brand";
+import { TryDemo } from "../site/actions";
 import SignInButtons from "../site/SignInButtons";
 import SiteLayout from "../site/SiteLayout";
 
@@ -27,6 +28,7 @@ export default function SignIn() {
           <SignInButtons className="cta" next={next} />
         </div>
         <p className="login-small">A sign in link from your society's admin works too.</p>
+        <p className="login-small">Here for the demo? <TryDemo className="" label="Start a new demo" /></p>
       </div>
     </SiteLayout>
   );

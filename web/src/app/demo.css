@@ -32,3 +32,4 @@
   flex: 1; padding: 8px 10px; border-radius: var(--r-md); background: var(--tint); color: var(--ink); font-size: var(--t-sm);
   font-weight: 700; text-align: center;
 }
+.inc-row .tag-example, .page-sub .tag-example { margin-top: 4px; justify-self: start; width: fit-content; }

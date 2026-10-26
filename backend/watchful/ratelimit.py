@@ -99,7 +99,9 @@ class Limiters:
         self.public = RateLimiter(limits.public_per_min_ip, 60.0)  # pages behind a link that exists, per address
         self.misses = RateLimiter(limits.misses_per_min_ip, 60.0)  # unknown link tokens: guessing
         self.demo = RateLimiter(limits.demo_logins_per_ip, limits.demo_login_window_s)  # new sandboxes, per address
+        self.demo_24 = RateLimiter(limits.demo_logins_per_24, limits.demo_login_window_s)  # and per IPv4 /24
         self.demo_48 = RateLimiter(limits.demo_logins_per_48, limits.demo_login_window_s)  # and per IPv6 /48
+        self.demo_32 = RateLimiter(limits.demo_logins_per_32, limits.demo_login_window_s)  # and per IPv6 /32
 
 
 def address_key(ip: str) -> str:
@@ -124,6 +126,19 @@ def wide_key(ip: str | None) -> str | None:
     if addr.version != 6 or addr.ipv4_mapped:
         return None
     return str(ipaddress.ip_network(f"{addr}/48", strict=False))
+
+
+def network_key(ip: str | None, v4_prefix: int | None, v6_prefix: int | None) -> str | None:
+    """The address's network of this size (an IPv4 /24, an IPv6 /48 or /32), or None when the address is of the
+    other kind or unknown."""
+    try:
+        addr = ipaddress.ip_address(ip or "")
+    except ValueError:
+        return None
+    if addr.version == 6 and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    prefix = v4_prefix if addr.version == 4 else v6_prefix
+    return None if prefix is None else str(ipaddress.ip_network(f"{addr}/{prefix}", strict=False))
 
 
 def _loopback(ip: str) -> bool:

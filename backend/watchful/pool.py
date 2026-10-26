@@ -16,7 +16,7 @@ import os
 import queue
 import threading
 import time
-from collections import Counter, deque
+from collections import Counter, OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -101,35 +101,37 @@ def percentile(values, q: float) -> float | None:
 
 class Models:
     """The models one camera process loads once and shares between its cameras. A camera whose own Tuning changes a
-    model's settings gets a model of its own for that setting. `loads` counts every load."""
+    model's settings gets a model of its own for that setting; at most Tuning resources.model_variants of each kind
+    are kept for later cameras (the least recently asked goes; a camera still using it keeps its own), so editing a
+    camera's tuning again and again never grows the process. `loads` counts every load."""
 
     def __init__(self, settings: Settings, tuning: Tuning):
         self.settings, self.tuning = settings, tuning
         self.loads: Counter = Counter()
-        self._detectors: dict[str, object] = {}
-        self._poses: dict[str, object] = {}
-        self._faces: dict[str, object] = {}
+        self._detectors: OrderedDict[str, object] = OrderedDict()
+        self._poses: OrderedDict[str, object] = OrderedDict()
+        self._faces: OrderedDict[str, object] = OrderedDict()
+
+    def _kept(self, cache: OrderedDict, key: str, kind: str, make):
+        if key in cache:
+            cache.move_to_end(key)
+            return cache[key]
+        self.loads[kind] += 1
+        cache[key] = model = make()
+        while len(cache) > max(1, self.tuning.resources.model_variants):
+            cache.popitem(last=False)
+        return model
 
     def detector(self, tuning: Tuning):
-        key = tuning.detect.model_dump_json()
-        if key not in self._detectors:
-            self.loads["detector"] += 1
-            self._detectors[key] = make_detector(self.settings, tuning)
-        return self._detectors[key]
+        return self._kept(self._detectors, tuning.detect.model_dump_json(), "detector",
+                          lambda: make_detector(self.settings, tuning))
 
     def pose(self, tuning: Tuning):
-        key = tuning.pose.model_dump_json()
-        if key not in self._poses:
-            self.loads["pose"] += 1
-            self._poses[key] = make_pose(self.settings, tuning)
-        return self._poses[key]
+        return self._kept(self._poses, tuning.pose.model_dump_json(), "pose", lambda: make_pose(self.settings, tuning))
 
     def faces(self, tuning: Tuning):
-        key = tuning.faces.model_dump_json()
-        if key not in self._faces:
-            self.loads["faces"] += 1
-            self._faces[key] = make_faces(self.settings, tuning)
-        return self._faces[key]
+        return self._kept(self._faces, tuning.faces.model_dump_json(), "faces",
+                          lambda: make_faces(self.settings, tuning))
 
     def plates(self, tuning: Tuning):
         if "plates" not in self.loads:
@@ -155,10 +157,11 @@ class EventSink:
                        "rows": rows})
 
 
-def make_source(camera: Camera, settings: Settings):
+def make_source(camera: Camera, settings: Settings, tuning: Tuning | None = None):
     fps, width = max(settings.display_fps, settings.analysis_fps), settings.analysis_width
     if camera.kind == "demo":  # one decoder per clip in this process, shared by every demo camera on it
-        return demo_source(camera.url, fps, width, settings.demo_realtime)
+        return demo_source(camera.url, fps, width, settings.demo_realtime,
+                           (tuning or Tuning()).limits.demo_loop_idle_s)
     if camera.kind == "file":
         return FileSource(camera.url, fps, realtime=settings.demo_realtime, width=width)
     if camera.kind == "webcam":
@@ -208,7 +211,7 @@ class CameraRunner:
                 if is_health_watch(w) and holds(w, job.health):
                     self.engine.armed[(wid, None)] = False
                     self.engine.last_fired[(wid, None)] = time.time()
-        self.source = make_source(cam, s)
+        self.source = make_source(cam, s, t)
         self.webcam = isinstance(self.source, PushSource)
         self.clips = ClipRecorder(blobs, max(s.display_fps, s.analysis_fps), t.clips, self.ws, worker.clip_writer)
         self.evidence = EvidenceBuffer(t.evidence, cam.zones, self.ws)
@@ -582,7 +585,8 @@ class _Slot:
 class WorkerPool:
     """The app's side of the camera processes: which camera runs where (the least loaded process, in round robin
     order), assigning and removing cameras, reloading a society's faces, and starting a dead process again with its
-    cameras. Processes start when their first camera arrives."""
+    cameras. Processes start when their first camera arrives. Demo sandbox cameras run on processes of their own
+    (Tuning limits.demo_processes, after the others), so the demo can never slow a society's cameras."""
 
     def __init__(self, settings: Settings, processes: int = 0, tuning: Tuning | None = None, out_q=None,
                  scanning=None, ctx=None, repo_for=None):
@@ -592,8 +596,9 @@ class WorkerPool:
         self.out_q = out_q if out_q is not None else self.ctx.Queue(maxsize=2000)
         self.scanning = scanning if scanning is not None else self.ctx.Value("i", 0)
         self.repo_for = repo_for
-        n = processes or settings.camera_processes or available_cpus()
-        self.slots = [_Slot(i) for i in range(max(1, n))]
+        n = max(1, processes or settings.camera_processes or available_cpus())
+        self.slots = [_Slot(i) for i in range(n + max(0, self.tuning.limits.demo_processes))]
+        self.demo_slots = set(range(n, len(self.slots)))
         self.where: dict[str, int] = {}
         self.jobs: dict[str, CameraJob] = {}
         self._next = 0
@@ -603,10 +608,11 @@ class WorkerPool:
     def processes(self) -> int:
         return len(self.slots)
 
-    def _pick(self) -> int:
+    def _pick(self, demo: bool = False) -> int:
         load = Counter(self.where.values())
         n = len(self.slots)
-        order = [(self._next + k) % n for k in range(n)]
+        lane = [j for j in range(n) if (j in self.demo_slots) == demo] or list(range(n))
+        order = [j for j in ((self._next + k) % n for k in range(n)) if j in lane]
         i = min(order, key=lambda j: load[j])
         self._next = (i + 1) % n
         return i
@@ -632,13 +638,14 @@ class WorkerPool:
 
     def assign(self, camera: Camera, watches: list[tuple[str, Watch]], enrollments: list[Enrollment],
                texts: dict | None = None, examples: list | None = None, record: bool = True,
-               viewers: int = 0, health: str | None = None) -> int:
-        """Runs the camera (again, with these watches) on its process, or on the least loaded one; returns which."""
+               viewers: int = 0, health: str | None = None, demo: bool = False) -> int:
+        """Runs the camera (again, with these watches) on its process, or on the least loaded one of its lane (the
+        demo's own processes for a demo sandbox's camera); returns which."""
         job = CameraJob(camera, watches, enrollments, texts or {}, list(examples or []), record, viewers, health)
         with self._lock:
             i = self.where.get(camera.id)
             if i is None:
-                i = self.where[camera.id] = self._pick()
+                i = self.where[camera.id] = self._pick(demo)
             self.jobs[camera.id] = job
             self._send(i, ("assign", job))
             return i

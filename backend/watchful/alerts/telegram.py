@@ -479,6 +479,31 @@ def _send_post(channel, chat: str, text: str, photo: bytes | None, rows: list) -
     return channel.send(chat, text, None, rows), False
 
 
+def message(repo, inc: m.Incident, base_url: str) -> tuple[str, list, bool]:
+    """The incident's message as its society's groups get it: the text, the buttons, and whether it goes to Telegram
+    now (critical at once, a warning when the society turned warnings on, never while held for its check)."""
+    tz, _, warnings = _society(repo)
+    text, rows = caption(inc, _camera_name(repo, inc.camera_id), tz, base_url), buttons(inc, base_url)
+    wanted = (inc.status in inc_.ACTIVE and inc_.pushable(inc.severity, warnings)
+              and not (inc.agent_json or {}).get("held"))
+    return text, rows, wanted
+
+
+def preview(repo, inc: m.Incident, base_url: str, still: bytes | None) -> dict:
+    """What the society's group sees for this incident, for the incident page: the same text and buttons as
+    posting (message), the still made the same way (still), whether it goes to Telegram, and whether it was sent."""
+    text, rows, wanted = message(repo, inc, base_url)
+    _, chats, warnings = _society(repo)
+    with repo.tx() as s:
+        sent = s.scalar(select(m.TelegramMessage.id).where(m.TelegramMessage.workspace_id == repo.workspace_id,
+                                                           m.TelegramMessage.incident_id == inc.id).limit(1))
+    return {"caption": text,
+            "buttons": [[{"text": t, "url": a if a.startswith(("https://", "http://")) else None} for t, a in row]
+                        for row in rows],
+            "goes_to_telegram": inc_.pushable(inc.severity, warnings), "would_send": wanted,
+            "sent": sent is not None, "connected": bool(chats), "still": still}
+
+
 def sync_incident(repo, channel, limiter: ChatLimiter, incident_id: str, now: datetime, tuning: AlertTuning,
                   base_url: str, picture=lambda inc: None) -> float | None:
     """Brings the incident's messages in every linked group up to date: posts its message if it has none yet and
@@ -493,11 +518,9 @@ def sync_incident(repo, channel, limiter: ChatLimiter, incident_id: str, now: da
             .order_by(m.TelegramMessage.sent_at)))
     if inc is None:
         return None
-    tz, chats, warnings = _society(repo)
+    tz, chats, _ = _society(repo)
     camera = _camera_name(repo, inc.camera_id)
-    text, rows = caption(inc, camera, tz, base_url), buttons(inc, base_url)
-    wanted = (inc.status in inc_.ACTIVE and inc_.pushable(inc.severity, warnings)
-              and not (inc.agent_json or {}).get("held"))
+    text, rows, wanted = message(repo, inc, base_url)
     if not chats:
         if wanted:
             log.info("Telegram is not connected for %s; alert: %s", repo.workspace_id, text.replace("\n", " | "))
@@ -638,17 +661,23 @@ def _people(ctx: JobContext, repo) -> list:
 
 
 def still_for(ctx: JobContext, repo, inc: m.Incident) -> bytes | None:
+    """Telegram's still (still), with the job worker's face models and the society's enrolled people."""
+    return still(ctx.worker.blobs, lambda: _stills(ctx), lambda: _people(ctx, repo), inc, ctx.tuning.crops)
+
+
+def still(blobs, stills, people, inc: m.Incident, crops) -> bytes | None:
     """Telegram's still: cut from the incident's private picture (or its keyframe) with faces of anyone not enrolled
     blurred, and every person whose face is not found blurred at the head (pose) or whole (crops.blurred_crop). None
-    when there is no picture or faces cannot be checked."""
+    when there is no picture or faces cannot be checked. `stills` and `people` give the StillMaker and the
+    enrolled people when a picture is there."""
     key = inc.picture_key or inc.keyframe_key
     if not key:
         return None
     try:
-        image = cv2.imdecode(np.frombuffer(ctx.worker.blobs.get(key), np.uint8), cv2.IMREAD_COLOR)
+        image = cv2.imdecode(np.frombuffer(blobs.get(key), np.uint8), cv2.IMREAD_COLOR)
     except (OSError, KeyError):
         return None
-    stills = _stills(ctx) if image is not None else None
+    stills = stills() if image is not None else None
     if stills is None:
         return None
     box = inc.picture_box if inc.picture_key and inc.picture_box else None
@@ -656,7 +685,7 @@ def still_for(ctx: JobContext, repo, inc: m.Incident) -> bytes | None:
     if (inc.agent_json or {}).get("cls") == "person":  # a keyframe is the person's own box
         persons = [box] if box else [(0, 0, image.shape[1], image.shape[0])]
     try:  # the person detector also finds the people of a scene or zone watch's still
-        return stills.make(image, box, _people(ctx, repo), persons, ctx.tuning.crops)
+        return stills.make(image, box, people(), persons, crops)
     except (cv2.error, ValueError):
         log.exception("the still for %s could not be made", inc.id)
         return None

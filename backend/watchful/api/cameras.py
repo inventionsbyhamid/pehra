@@ -18,6 +18,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from watchful import demo_rules
 from watchful.agent.compiler import age_in_name
 from watchful.api.common import LIVE_KINDS, camera_json, camera_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
@@ -108,6 +109,8 @@ def make_router(ctx) -> APIRouter:
     def add_camera(body: CameraIn, member: CurrentMember = Depends(require_role("admin"))):
         if body.kind not in USER_KINDS:
             raise HTTPException(400, "A camera is a stream the server reads, or a device that sends its own pictures.")
+        if refused := demo_rules.sandbox_camera(member.workspace, body.kind):
+            raise HTTPException(403, refused)
         purpose = _purpose(body.purpose)
         url = body.url
         if body.nvr is not None:
@@ -139,6 +142,8 @@ def make_router(ctx) -> APIRouter:
     def delete_camera(camera_id: str, member: CurrentMember = Depends(require_role("admin"))):
         r = repo(member)
         cam = camera_or_404(r, camera_id)
+        if refused := demo_rules.sandbox_delete(member.workspace, cam.kind):
+            raise HTTPException(403, refused)
         manager.stop(cam.id)
         pictures = [key for _, _, _, key in r.list_state_examples(cam.id)]
         tokens.revoke(member.workspace.id, cam.id)
@@ -156,6 +161,9 @@ def make_router(ctx) -> APIRouter:
     def patch_camera(camera_id: str, body: CameraPatch, member: CurrentMember = Depends(require_role("admin"))):
         r = repo(member)
         cam = camera_or_404(r, camera_id)
+        if refused := demo_rules.sandbox_patch(member.workspace, cam.kind, body.zones is not None,
+                                               body.tuning is not None):
+            raise HTTPException(403, refused)
         purpose = _purpose(body.purpose)  # every check before anything is written
         if body.zones is not None:
             bare = next((z["name"] for z in body.zones if age_in_name(str(z.get("name") or ""))), None)
@@ -259,7 +267,10 @@ def make_router(ctx) -> APIRouter:
             raise HTTPException(404, "No such zone on this camera.")
         if not state.strip():
             raise HTTPException(400, "Name the state, for example open or closed.")
-        data = file.file.read() if file is not None else frame(cam)
+        limit = ctx.tuning.limits.example_kb * 1024
+        data = file.file.read(limit + 1) if file is not None else frame(cam)
+        if len(data) > limit:
+            raise HTTPException(413, f"That picture is larger than {ctx.tuning.limits.example_kb // 1024} MB.")
         image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
         if image is None:
             raise HTTPException(400, "That picture can't be read.")
@@ -383,6 +394,8 @@ def make_router(ctx) -> APIRouter:
             raise HTTPException(404, "No such scan.")
         return {k: v for k, v in info.items() if k != "workspace_id"}
 
+    from watchful.demo import ai_limit as demo_ai_limit
+
     @router.get("/api/metrics")
     def metrics(member: CurrentMember = Depends(current_member)):
         r = repo(member)
@@ -392,7 +405,8 @@ def make_router(ctx) -> APIRouter:
         scans = [s for s in getattr(manager, "scans", {}).values() if s.get("stats") and own_scan(member, s)]
         return {"cameras": [camera_json(manager, c) for c in r.list_cameras()],
                 "ai_calls_today": ai_used(r, CHECKS),
-                "ai_daily_limit": daily_ai_cap(r, ctx.settings.ai_daily_call_limit),
+                "ai_daily_limit": demo_ai_limit(r, ctx.settings, ctx.tuning)
+                or daily_ai_cap(r, ctx.settings.ai_daily_call_limit),  # a sandbox's are the demo's own
                 "alerts": by_status, "scans": [s["stats"] for s in scans][-20:]}
 
     return router

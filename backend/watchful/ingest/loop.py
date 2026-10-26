@@ -1,7 +1,7 @@
 """Demo cameras share their decoding: one looping FileSource per clip in a camera process, read in real time on a
 thread of its own, hands its newest frame to every demo camera on that clip (LoopTap), so twenty demo sandboxes
 mean one decoder per clip per camera process, not one per camera. The decoder rests while no camera has read for
-IDLE_S (a demo camera nobody watches is paused, pool.CameraRunner._paused).
+Tuning limits.demo_loop_idle_s (a demo camera nobody watches is paused, pool.CameraRunner._paused).
 
 Each tap gets its own copy of the picture (a camera's pipeline may draw on or blur its frame) stamped with the wall
 clock, as a live camera's would be, so an incident on a loop that rested an hour is not an hour old."""
@@ -13,15 +13,13 @@ from watchful.ingest.sources import FileSource, Frame, Status, _Latest
 
 log = logging.getLogger(__name__)
 
-IDLE_S = 2.0  # no tap has read for this long: the decoder rests (a reading camera asks every frame)
-
 
 class SharedLoop:
     """One clip decoded once, in real time and looping, for every tap reading it."""
 
-    def __init__(self, path: str, fps: float, width: int):
+    def __init__(self, path: str, fps: float, width: int, idle_s: float):
         self.key = (path, fps, width)
-        self.path, self.fps, self.width = path, fps, width
+        self.path, self.fps, self.width, self.idle_s = path, fps, width, idle_s
         self.taps: set["LoopTap"] = set()
         self.status: Status = "live"
         self.frames = 0  # decoded frames handed out, for tests and measurements
@@ -43,7 +41,7 @@ class SharedLoop:
         try:
             source = FileSource(self.path, self.fps, loop=True, realtime=True, width=self.width)
             while not self._stop.is_set():
-                if time.monotonic() - self._last_read > IDLE_S:
+                if time.monotonic() - self._last_read > self.idle_s:
                     self._wanted.clear()
                     self._wanted.wait(0.5)
                     continue
@@ -107,12 +105,15 @@ class Loops:
         self.loops: dict[tuple, SharedLoop] = {}
         self._lock = threading.Lock()
 
-    def tap(self, path: str, fps: float, width: int) -> LoopTap:
+    def tap(self, path: str, fps: float, width: int, idle_s: float | None = None) -> LoopTap:
+        if idle_s is None:
+            from watchful.tuning import Tuning
+            idle_s = Tuning().limits.demo_loop_idle_s
         key = (str(path), fps, width)
         with self._lock:
             loop = self.loops.get(key)
             if loop is None or loop.status == "ended":
-                loop = self.loops[key] = SharedLoop(str(path), fps, width)
+                loop = self.loops[key] = SharedLoop(str(path), fps, width, idle_s)
                 loop.start()
             tap = LoopTap(loop, self)
             loop.taps.add(tap)
@@ -135,9 +136,9 @@ class Loops:
 LOOPS = Loops()
 
 
-def demo_source(path: str, fps: float, width: int, realtime: bool = True):
+def demo_source(path: str, fps: float, width: int, realtime: bool = True, idle_s: float | None = None):
     """A demo camera's frames: the clip's shared real time loop; a private FileSource when the clip is read faster
     than real time (tests and tools, where each camera must see every frame)."""
     if not realtime:
         return FileSource(path, fps, loop=True, realtime=False, width=width)
-    return LOOPS.tap(path, fps, width)
+    return LOOPS.tap(path, fps, width, idle_s)

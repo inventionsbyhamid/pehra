@@ -37,21 +37,44 @@ export function noSignIn(providers: Providers): boolean {
 type Visitor = "unknown" | "signed_out" | "member" | "demo";
 
 let visitor: Promise<Visitor> | null = null;
+let offered: Promise<boolean> | null = null;
+
+function ask() {
+  const answer = fetch("/api/demo/visitor", { credentials: "same-origin" })
+    .then(async (res) => (res.ok ? await res.json().catch(() => null) : null))
+    .catch(() => null) as Promise<{ kind?: string; offered?: boolean } | null>;
+  visitor = answer.then((data) => {
+    const kind = data?.kind;
+    if (kind === "member" || kind === "seller") return "member";
+    return kind === "demo" ? "demo" : "signed_out";
+  });
+  offered = answer.then((data) => data?.offered !== false);
+}
+
+// Whether this server offers the demo (DEMO_ENABLED); true until the answer, as the pages were prerendered.
+export function useDemoOffered(): boolean {
+  const [yes, setYes] = useState(true);
+  useEffect(() => {
+    if (!offered) ask();
+    let gone = false;
+    void offered!.then((v) => {
+      if (!gone) setYes(v);
+    });
+    return () => {
+      gone = true;
+    };
+  }, []);
+  return yes;
+}
 
 // Who is looking at a public page: signed out, a member signed in to their society, or a demo visitor. Until the
 // answer the page renders as for a visitor signed out, as it was prerendered.
 export function useVisitor(): Visitor {
   const [who, setWho] = useState<Visitor>("unknown");
   useEffect(() => {
-    visitor ??= fetch("/api/demo/visitor", { credentials: "same-origin" })
-      .then(async (res) => {
-        const kind = res.ok ? (await res.json().catch(() => null))?.kind : null;
-        if (kind === "member" || kind === "seller") return "member";
-        return kind === "demo" ? "demo" : "signed_out";
-      })
-      .catch(() => "signed_out" as const);
+    if (!visitor) ask();
     let gone = false;
-    void visitor.then((v) => {
+    void visitor!.then((v) => {
       if (!gone) setWho(v);
     });
     return () => {

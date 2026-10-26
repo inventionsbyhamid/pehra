@@ -30,7 +30,7 @@ export function TelegramPreview({ incidentId, version, demo }: { incidentId: str
   const [head, ...rest] = msg.caption.split("\n");
   let note: string;
   if (!msg.goes_to_telegram) note = "Warnings go to Telegram only when the society turns them on. This is what it would say.";
-  else if (demo) note = "In the demo nothing is sent. This is the message your group would get, kept up to date as the incident changes.";
+  else if (demo || msg.demo) note = "In the demo nothing is sent. This is the message your group would get, kept up to date as the incident changes.";
   else if (!msg.connected) note = "No Telegram group is connected yet, so nothing was sent. This is what it would say.";
   else note = "Edited in the group as the incident changes.";
 
@@ -59,7 +59,7 @@ export function TelegramPreview({ incidentId, version, demo }: { incidentId: str
       </figure>
       <p className="small muted">
         {note}
-        {!demo && !msg.connected && msg.goes_to_telegram && admin && <> <Link to="/app/settings/telegram">Connect a group</Link></>}
+        {!demo && !msg.demo && !msg.connected && msg.goes_to_telegram && admin && <> <Link to="/app/settings/telegram">Connect a group</Link></>}
       </p>
     </div>
   );

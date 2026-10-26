@@ -125,6 +125,8 @@ def current_member(request: Request, user: m.User = Depends(current_user),
     route = getattr(request.scope.get("route"), "path", None) or request.url.path
     if refused := demo_rules.refusal(member.workspace, request.method, route, ctx.db, ctx.tuning.limits.demo_cameras):
         raise HTTPException(403, refused)
+    if member.workspace.demo:
+        demo_rules.seen(member.workspace.id)
     return member
 
 

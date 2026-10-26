@@ -20,6 +20,7 @@ export function IncidentRow({ incident, camera }: { incident: Incident; camera?:
       <span>
         <span className="inc-what">{sentence(plain(incident.title || incident.reason))}</span>
         <span className="inc-where">{[camera, at(epoch(incident.opened_at))].filter(Boolean).join(", ")}</span>
+        {incident.example && <span className="tag tag-example">Example</span>}
         {status && <span className="inc-status">{status}</span>}
       </span>
     </Link>

@@ -17,6 +17,7 @@ from watchful.alerts.checks import CheckPool
 from watchful.alerts.crops import frame_still
 from watchful.components import made_embedders, make_embedder, make_llm, make_metrics, make_notifier, make_repo
 from watchful.config import Settings
+from watchful.demo_rules import in_sandbox
 from watchful.evidence import EvidencePack, evidence_context, file_pack
 from watchful.health import BACK, HealthBook, check as health_check, holds, is_health_watch
 from watchful.logs import ledger, register
@@ -37,7 +38,6 @@ log = logging.getLogger("watchful.workers")
 def should_record(repo, camera: Camera) -> bool:
     """A demo camera records its timeline once; later runs only show the live view and alerts. A demo sandbox's
     cameras never record: their day is seeded (demo.py), so a new sandbox costs no analysis until someone watches."""
-    from watchful.demo_rules import in_sandbox
     if camera.kind == "demo" and in_sandbox(repo):
         return False
     return camera.kind != "demo" or not repo.query_events(camera_id=camera.id, limit=1)
@@ -147,6 +147,7 @@ class WorkerManager:
         self.repo_for = repo_for or (lambda ws: repo if ws == self.home else make_repo(settings, ws))
         self.societies = societies or (lambda: [self.home])
         self.camera_ws: dict[str, str] = {}  # camera id to its society, filled by start and scan_upload
+        self.sandboxes: set[str] = set()  # demo sandboxes among them
         self._llms: dict[str, object] = {}
         self.ctx = mp.get_context("spawn")
         self.out_q = self.ctx.Queue(maxsize=2000)
@@ -298,8 +299,12 @@ class WorkerManager:
             if any(c.signal == "zone_state" for _, w in watches for c in w.conditions) else []
         if cam.last_frame_at is not None:  # seen in an earlier run; a new camera's row says offline by default
             self.health.seed(cam.id, cam.status)
+        demo = in_sandbox(repo)  # a demo sandbox's camera runs on the demo's own processes, and writes its log rows
+        if demo:
+            self.sandboxes.add(repo.workspace_id)
         process = self.pool.assign(cam, watches, repo.list_enrollments(), self._watch_vectors(watches), examples,
-                                   should_record(repo, cam), len(self.subs[camera_id]), self.health.state(cam.id))
+                                   should_record(repo, cam), len(self.subs[camera_id]), self.health.state(cam.id),
+                                   demo=demo)
         old = self.cams.get(camera_id)
         kept = old if old is not None and old.status.running else None  # a restart keeps the offline clock
         self.cams[camera_id] = _Cam(cam, WorkerStatus(running=True, source_status="starting", problems=problems,
@@ -470,7 +475,7 @@ class WorkerManager:
         elif kind == "log":
             ws = self._from_society(msg)
             row: EventRow = msg["row"]
-            if ws and msg.get("record", True):
+            if ws and (msg.get("record", True) or ws in self.sandboxes):
                 self.repo_for(ws).add_events([row])  # a log watch writes a row and never alerts
             self._publish(msg["camera_id"], {"type": "log", "camera_id": msg["camera_id"], "row": asdict(row)})
         elif kind == "status":

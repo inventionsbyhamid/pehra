@@ -22,6 +22,7 @@ from watchful.db import models as m
 from watchful.ingest.loop import LOOPS, Loops, demo_source
 from watchful.jobs import JobQueue, Worker
 from watchful.rules.engine import validate
+from watchful.store.db import Camera
 from watchful.tuning import Tuning, load_tuning
 from watchful.vision.models import sample_path
 from watchful.workers import should_record
@@ -43,6 +44,7 @@ class Manager(StubManager):
     def stop(self, camera_id):
         self.stopped.append(camera_id)
         self.camera_ws.pop(camera_id, None)
+        self.started = [c for c in self.started if c != camera_id]
 
     def push_frame(self, camera_id, jpeg, ts):
         self.pushed.append(camera_id)
@@ -105,7 +107,7 @@ def test_demo_login_gives_a_sandbox_of_its_own(tmp_path):
     assert names == ["A camera is offline, covered, turned or blurred", "log people leaving the left walkway",
                      "someone walks into the left walkway", "too many people in the left walkway"]
     info = a.get("/api/demo").json()
-    assert info["clips"] == [{"camera": "Plaza", "source": "OpenCV's sample video vtest.avi, BSD licence."}]
+    assert info["clips"] == [{"camera": "Plaza", "source": "OpenCV's sample video vtest.avi, Apache 2.0 licence."}]
     assert (info["own_cameras"], info["own_cameras_allowed"], info["ended"]) == (0, 2, False)
 
     # a day of incidents, each with a picture cut from the clip, and a few log rows
@@ -119,7 +121,10 @@ def test_demo_login_gives_a_sandbox_of_its_own(tmp_path):
     assert 0 < min(ages) < 3600 and 20 * 3600 < max(ages) < 24 * 3600
     acked = [i for i in feed if i["status"] == "acknowledged" and i["ack_by"] == "Anita"][0]
     steps = a.get(f"/api/incidents/{acked['id']}").json()["timeline"]
-    assert {"kind": "acknowledged", "by": "Anita", "via": "telegram"}.items() <= steps[1].items()
+    assert any({"kind": "acknowledged", "by": "Anita", "via": "telegram"}.items() <= x.items() for x in steps)
+    # examples, honestly: made from the clip, labelled, and no AI check claimed
+    assert all(i["example"] and i["graded_why"] is None for i in feed)
+    assert [x["kind"] for x in steps if x["kind"] in ("example", "checked")] == ["example"]
     repo = ctx.repo_for(ws["id"])
     logs = repo.query_events(camera_id=cams[0]["id"], kinds=["watch_log"])
     assert len(logs) == 5 and all(e.data["watch"] == "Leaves left walkway" for e in logs)
@@ -187,11 +192,11 @@ def test_demo_login_gives_a_sandbox_of_its_own(tmp_path):
     assert all(c["enabled"] for c in a.get("/api/cameras").json())
 
     # who is looking at a public page; a member signed in is never signed out without saying so
-    assert judge(app, ip="192.0.2.50").get("/api/demo/visitor").json() == {"kind": "signed_out"}
-    assert a.get("/api/demo/visitor").json() == {"kind": "demo"}
+    assert judge(app, ip="192.0.2.50").get("/api/demo/visitor").json() == {"kind": "signed_out", "offered": True}
+    assert a.get("/api/demo/visitor").json() == {"kind": "demo", "offered": True}
     from accounts import browser
     member = browser(app, "owner@example.com", "ws_green_park")
-    assert member.get("/api/demo/visitor").json() == {"kind": "member"}
+    assert member.get("/api/demo/visitor").json() == {"kind": "member", "offered": True}
     asked = member.post("/api/demo/login", headers={"cf-connecting-ip": "198.51.100.200"})
     assert asked.status_code == 409 and "signs you out" in asked.json()["detail"]
     left = member.post("/api/demo/login", json={"sign_out": True}, headers={"cf-connecting-ip": "198.51.100.200"})
@@ -377,7 +382,7 @@ def test_the_telegram_preview_is_the_groups_own_message(tmp_path):
     assert shown["caption"] == telegram.caption(inc, "Plaza", tz, ctx.settings.public_base_url)
     assert shown["caption"].startswith("Critical, Plaza, ") and "Not acknowledged yet." in shown["caption"]
     assert [[b["text"] for b in row] for row in shown["buttons"]] == [["Acknowledge", "False alarm"]]
-    assert (shown["goes_to_telegram"], shown["sent"], shown["connected"]) == (True, True, False)
+    assert (shown["goes_to_telegram"], shown["sent"], shown["connected"], shown["demo"]) == (True, False, False, True)
     assert shown["photo"].startswith("data:image/jpeg;base64,")
 
     assert a.post(f"/api/incidents/{opened['id']}/acknowledge").status_code == 200
@@ -390,20 +395,25 @@ def test_the_telegram_preview_is_the_groups_own_message(tmp_path):
 
 
 def test_the_demo_ai_caps(tmp_path, monkeypatch):
-    """A sandbox's checks and help have the demo's own caps a day, checks counted once each however many steps; all
-    sandboxes together stay under AI_DAILY_CALL_LIMIT; a real society keeps its plan's."""
+    """A sandbox's checks and help have the demo's own caps a day, checks counted once each however many steps; the
+    sandboxes started from one network share a budget; all sandboxes together stay within the demo's own total, apart
+    from AI_DAILY_CALL_LIMIT; a real society keeps its plan's."""
     app, _ = make(tmp_path)
     ctx = app.state.ctx
-    settings = ctx.settings.model_copy(update={"ai_daily_call_limit": 4})
+    settings = ctx.settings.model_copy(update={"ai_daily_call_limit": 1})  # the demo never uses a society's limit
     import watchful.components as components
     built = components.build
     monkeypatch.setattr(components, "build", lambda kind, name, **kw: FakeLLM(["ok"] * 20) if kind == "llm"
                         else built(kind, name, **kw))
-    tuning = load_tuning(overrides={"limits": {"demo_ai_checks": 2, "demo_ai_assist": 1}})
-    one, two = judge(app), judge(app, ip="198.51.100.7")
-    one.post("/api/demo/login")
-    two.post("/api/demo/login")
-    ws1, ws2 = me(one)["workspace"]["id"], me(two)["workspace"]["id"]
+    tuning = load_tuning(overrides={"limits": {"demo_ai_checks": 2, "demo_ai_assist": 1, "demo_ai_per_network": 3,
+                                               "demo_ai_total": 5}})
+    ids, clients = [], []
+    for ip in ("203.0.113.5", "203.0.113.9", "198.51.100.7", "192.0.2.1"):
+        c = judge(app, ip=ip)
+        c.post("/api/demo/login")
+        ids.append(me(c)["workspace"]["id"])
+        clients.append(c)
+    ws1, ws2, ws3, ws4 = ids  # ws1 and ws2 from one /24
 
     def llm(ws: str, task: str):
         return demo.sandbox_llm(FakeLLM(["ok"] * 20), ctx.repo_for(ws), settings, task, tuning)
@@ -418,16 +428,20 @@ def test_the_demo_ai_caps(tmp_path, monkeypatch):
     assert llm(ws1, "compile").complete("system", []) == "ok"
     with pytest.raises(AILimitReached):
         llm(ws1, "compile").complete("system", [])  # and its help, apart from its checks
-    assert check(ws2) == ["ok"] * 3
     with pytest.raises(AILimitReached):
-        check(ws2)  # its own cap has room, but every sandbox together is at AI_DAILY_CALL_LIMIT (4 a day)
+        check(ws2)  # its own caps have room, but its network's budget (3) is spent
+    assert check(ws3) == ["ok"] * 3 and check(ws3) == ["ok"] * 3  # another network
+    with pytest.raises(AILimitReached):
+        check(ws4)  # every sandbox together is at the demo's total (5 a day)
     with ctx.db.tx() as s:
-        assert s.scalar(select(func.count()).select_from(m.Audit).where(m.Audit.action == demo.AI_CALL)) == 4
+        assert s.scalar(select(func.count()).select_from(m.Audit).where(m.Audit.action == demo.AI_CALL)) == 5
     from accounts import browser
     browser(app, "owner@example.com", "ws_green_park")
     assert demo.sandbox_llm(FakeLLM(["ok"]), ctx.repo_for("ws_green_park"), settings, "verify", tuning) is None
     assert isinstance(components.make_llm(settings, ctx.repo_for(ws1), "verify"), demo.SandboxLLM)
     assert not isinstance(components.make_llm(settings, ctx.repo_for("ws_green_park"), "verify"), demo.SandboxLLM)
+    # the numbers page of a sandbox shows the demo's own limit
+    assert clients[0].get("/api/metrics").json()["ai_daily_limit"] == Tuning().limits.demo_ai_checks
 
 
 def test_a_sandbox_ends_and_the_daily_reset_deletes_it(tmp_path):
@@ -476,9 +490,283 @@ def test_a_sandbox_ends_and_the_daily_reset_deletes_it(tmp_path):
     assert push_parts(ctx)[1].find(token) is None
     # cameras of a society the reset deleted stop in the app too
     manager.camera_ws["cam_left_over"] = gone_ws
+    manager.started.append("cam_left_over")
+    ctx.repo_for(gone_ws)  # and the app forgets what it kept of that society
     assert "cam_left_over" in app.state.sandboxes.run_once()
+    assert gone_ws not in ctx.remembered()
 
 
 def _engine(ctx):
     from watchful.components import make_engine
     return make_engine(ctx.settings)
+
+
+# fix round 1
+
+def _sandbox(app, ip="203.0.113.5"):
+    c = judge(app, ip=ip)
+    assert c.post("/api/demo/login").status_code == 201
+    return c, me(c)
+
+
+def test_a_sandbox_takes_only_the_writes_the_demo_needs(tmp_path):
+    """demo_rules is an allow list: every other write is refused in plain words, one family at a time; the writes
+    the demo needs work."""
+    app, _ = make(tmp_path)
+    a, seen = _sandbox(app)
+    plaza = [c for c in a.get("/api/cameras").json() if c["kind"] == "demo"][0]
+    zone = plaza["zones"][0]["id"]
+    picture = jpeg(np.zeros((32, 32, 3), np.uint8))
+    refused = {
+        "uploads": a.post("/api/uploads", files={"file": ("a.mp4", b"x", "video/mp4")}),
+        "photo search": a.post("/api/search", files={"photo": ("a.jpg", picture, "image/jpeg")},
+                               data={"consent": "true"}),
+        "person search": a.post("/api/search", json={"person_id": "per_someone"}),
+        "stream cameras": a.post("/api/cameras", json={"name": "Gate", "kind": "stream",
+                                                       "url": "rtsp://203.0.113.80/live"}),
+        "tuning": a.patch(f"/api/cameras/{plaza['id']}", json={"tuning": {"detect": {"conf": 0.4001}}}),
+        "the demo camera's zones": a.patch(f"/api/cameras/{plaza['id']}", json={"zones": []}),
+        "removing a demo camera": a.delete(f"/api/cameras/{plaza['id']}"),
+        "enrolment": a.post("/api/people", data={"name": "Asha"}, files={"files": ("a.jpg", picture, "image/jpeg")}),
+        "zone pictures": a.post(f"/api/cameras/{plaza['id']}/zones/{zone}/examples", data={"state": "open"},
+                                files={"file": ("a.jpg", picture, "image/jpeg")}),
+        "lookouts": a.post("/api/lookouts", json={"camera_ids": [plaza["id"]], "description": "a red shirt"}),
+        "Telegram": a.post("/api/telegram/connect"),
+        "Telegram warnings": a.post("/api/telegram/warnings", json={"on": True}),
+        "invites": a.post("/api/invites", json={"role": "admin"}),
+        "billing": a.post("/api/billing/cameras", json={"cameras": 3}),
+        "team": a.patch(f"/api/members/{seen['user']['id']}", json={"role": "viewer"}),
+        "alert feedback": a.post("/api/alerts/alt_x/feedback", json={"feedback": "up"}),
+        "joining by invite": a.post("/api/invites/accept", json={"token": "x" * 20}),
+    }
+    for family, res in refused.items():
+        assert res.status_code == 403, (family, res.status_code, res.text)
+        words = res.json()["detail"]
+        assert "demo" in words.lower(), (family, words)
+        assert not any(ch in words for ch in "\u2014\u2013"), words
+    with app.state.ctx.db.tx() as s:
+        assert s.scalar(select(func.count()).select_from(m.Camera).where(m.Camera.workspace_id ==
+                                                                        seen["workspace"]["id"])) == 1
+
+    # what the demo needs works: this device or a phone, its link, zones and watches on it, acknowledging, words
+    own = a.post("/api/cameras", json={"name": "My camera", "kind": "webcam"}).json()
+    desk = [{"name": "desk", "polygon": [[0, 0], [1, 0], [1, 1]]}]
+    zones = a.patch(f"/api/cameras/{own['id']}", json={"zones": desk})
+    assert zones.status_code == 200, zones.text
+    assert a.post(f"/api/cameras/{own['id']}/device-token").status_code == 200
+    saved = a.post(f"/api/cameras/{own['id']}/watches", json={"preset": "enters", "fill": {"zone": "desk"}})
+    assert saved.status_code == 200 and saved.json()["saved"] is True, saved.text
+    assert a.patch(f"/api/watches/{saved.json()['id']}", json={"enabled": False}).status_code == 200
+    opened = [i for i in a.get("/api/incidents").json() if i["status"] == "open"][0]
+    assert a.post(f"/api/incidents/{opened['id']}/acknowledge").status_code == 200
+    with app.state.ctx.db.tx() as s:
+        row = s.get(m.Workspace, seen["workspace"]["id"])
+    assert demo_rules.refusal(row, "POST", "/api/search") is None
+    assert demo_rules.sandbox_search(row, False, False) is None
+    assert a.post("/api/ask", json={"question": "who walked by?"}).status_code != 403
+    assert a.delete(f"/api/cameras/{own['id']}").status_code == 200
+
+    # in a real society none of this is the demo's business
+    from accounts import browser
+    member = browser(app, "owner@example.com", "ws_green_park")
+    cam = member.post("/api/cameras", json={"name": "Desk", "kind": "webcam"}).json()
+    assert member.patch(f"/api/cameras/{cam['id']}", json={"tuning": {"detect": {"conf": 0.41}}}).status_code == 200
+
+
+def test_camera_tuning_never_grows_a_camera_process(tmp_path, monkeypatch):
+    """Each distinct tuning loads a model of its own; the process keeps at most Tuning resources.model_variants."""
+    import watchful.pool as pool
+    loaded = []
+    monkeypatch.setattr(pool, "make_detector", lambda settings, tuning: loaded.append(tuning.detect.conf) or object())
+    models = pool.Models(Settings(session_secret="s" * 32, data_dir=tmp_path, _env_file=None), Tuning())
+    for i in range(6):
+        models.detector(load_tuning(overrides={"detect": {"conf": 0.4 + i / 10000}}))
+    kept = Tuning().resources.model_variants
+    assert models.loads["detector"] == 6 and len(models._detectors) == kept
+    models.detector(load_tuning(overrides={"detect": {"conf": 0.4005}}))  # still kept: no new load
+    assert models.loads["detector"] == 6
+
+
+def test_face_networks_are_shared_by_every_society_and_forgotten(tmp_path, monkeypatch):
+    import watchful.api.app as api_app
+    app, _ = make(tmp_path)
+    ctx = app.state.ctx
+    made = []
+    real = api_app.make_faces
+    monkeypatch.setattr(api_app, "make_faces", lambda *a, **k: made.append(1) or real(*a, **k))
+    from accounts import browser
+    browser(app, "a@example.com", "ws_one")
+    browser(app, "b@example.com", "ws_two")
+    one, two = ctx.faces_for("ws_one"), ctx.faces_for("ws_two")
+    assert len(made) == 1 and one._inner.detector is two._inner.detector and one._inner is not two._inner
+    assert ctx.face_index()._inner.recognizer is one._inner.recognizer and len(made) == 1
+    ctx.llm_for("ws_one", "verify")
+    assert "ws_one" in ctx.remembered()
+    ctx.forget_society("ws_one")
+    assert "ws_one" not in ctx.remembered() and "ws_two" in ctx.remembered()
+
+
+def test_zone_pictures_have_a_size_bound(tmp_path):
+    app, _ = make(tmp_path, example_kb=1)
+    from accounts import browser
+    member = browser(app, "owner@example.com", "ws_green_park")
+    cam = member.post("/api/cameras", json={"name": "Desk", "kind": "webcam"}).json()
+    member.patch(f"/api/cameras/{cam['id']}", json={"zones": [{"name": "gate", "polygon": [[0, 0], [1, 0], [1, 1]]}]})
+    zone = member.get(f"/api/cameras/{cam['id']}").json()["zones"][0]["id"]
+    big = jpeg(np.random.default_rng(1).integers(0, 255, (200, 200, 3), np.uint8))
+    res = member.post(f"/api/cameras/{cam['id']}/zones/{zone}/examples", data={"state": "open"},
+                      files={"file": ("a.jpg", big, "image/jpeg")})
+    assert res.status_code == 413 and "larger than" in res.json()["detail"]
+
+
+def test_one_network_cannot_lock_the_judges_out(tmp_path, monkeypatch):
+    app, _ = make(tmp_path, demo_logins_per_ip=5, demo_logins_per_24=2, demo_logins_per_32=2,
+                  demo_sandboxes_day=6, demo_idle_reclaim_h=1)
+    ctx = app.state.ctx
+    # an IPv4 /24
+    assert [judge(app, ip=f"203.0.113.{i}").post("/api/demo/login").status_code for i in (1, 2, 3)] == [201, 201, 429]
+    words = judge(app, ip="203.0.113.4").post("/api/demo/login").json()["detail"]
+    assert words == "This network has started 2 demos today, the most for one day. Come back tomorrow."
+    # an IPv6 /32, across its /48s
+    assert [judge(app, ip=f"2001:db8:{i}::1").post("/api/demo/login").status_code for i in (1, 2, 3)] == \
+        [201, 201, 429]
+    # a start that fails gives its counts back: two failures in one /24 (its cap is 2), then a start there works
+    monkeypatch.setattr(demo, "start_sandbox", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk full")))
+    for ip in ("198.51.100.1", "198.51.100.2"):
+        with pytest.raises(RuntimeError):
+            judge(app, ip=ip).post("/api/demo/login")
+    monkeypatch.undo()
+    assert judge(app, ip="198.51.100.3").post("/api/demo/login").status_code == 201
+    # at the day's cap the oldest sandbox nobody used for an hour is reclaimed, not the visitor refused
+    assert judge(app, ip="192.0.2.1").post("/api/demo/login").status_code == 201  # 6 started
+    full = judge(app, ip="192.0.2.2").post("/api/demo/login")
+    assert full.status_code == 429 and full.json()["detail"] == "The demo is full for today. Come back tomorrow."
+    with ctx.db.tx() as s:
+        oldest = s.scalar(select(m.Workspace).where(m.Workspace.demo == "sandbox").order_by(m.Workspace.created_at))
+        oldest.created_at = m.utcnow() - timedelta(hours=2)
+        oldest_id = oldest.id
+    demo_rules.forget(oldest_id)
+    assert judge(app, ip="192.0.2.3").post("/api/demo/login").status_code == 201
+    with ctx.db.tx() as s:
+        assert s.get(m.Workspace, oldest_id) is None
+        assert s.scalar(select(func.count()).select_from(m.Audit).where(m.Audit.action == "demo.reclaim")) == 1
+
+
+def test_turnstile_is_a_hook_off_unless_its_secret_is_set(tmp_path, monkeypatch):
+    import watchful.api.demo as demo_api
+    app, _ = make(tmp_path)
+    app.state.ctx.settings = app.state.ctx.settings.model_copy(update={"turnstile_secret": "secret"})
+    asked = []
+    monkeypatch.setattr(demo_api, "human", lambda secret, token, ip: asked.append(token) or token == "good")
+    assert judge(app).post("/api/demo/login", json={"turnstile": "bad"}).status_code == 403
+    assert judge(app).post("/api/demo/login", json={"turnstile": "good"}).status_code == 201
+    assert asked == ["bad", "good"]
+
+
+def test_sandbox_cameras_run_on_the_demos_own_process_with_a_live_cap(tmp_path):
+    from watchful.pool import WorkerPool
+    from watchful.workers import WorkerManager
+    from watchful.store.db import EventRow
+    pool = WorkerPool(Settings(session_secret="y", _env_file=None), processes=2)
+    pool._send = lambda i, cmd: None
+    cams = [Camera(f"cam{i}", f"c{i}", "webcam", None, workspace_id="ws_a") for i in range(5)]
+    assert [pool.assign(c, [], [], demo=i % 2 == 1) for i, c in enumerate(cams)] == [0, 2, 1, 2, 0]
+
+    app, _ = make(tmp_path, demo_live_cameras=1)
+    ctx = app.state.ctx
+    a, seen = _sandbox(app)
+    ws = seen["workspace"]["id"]
+    plaza = [c for c in a.get("/api/cameras").json() if c["kind"] == "demo"][0]
+    s = ctx.settings.model_copy(update={"scan_pool_at_start": False, "index_embeddings": False})
+    real = WorkerManager(s, Tuning(), None, ctx.blobs, llm=FakeLLM([]), repo_for=ctx.repo_for,
+                         societies=ctx.workspace_ids, processes=1)
+    real.pool._send = lambda i, cmd: None
+    try:
+        real.start(plaza["id"], ws)
+        assert real.pool.where[plaza["id"]] in real.pool.demo_slots
+        from accounts import browser
+        member = browser(app, "owner@example.com", "ws_green_park")
+        desk = member.post("/api/cameras", json={"name": "Desk", "kind": "webcam"}).json()
+        real.start(desk["id"], "ws_green_park")
+        assert real.pool.where[desk["id"]] not in real.pool.demo_slots
+        # the Plaza log watch writes its rows in a sandbox, though the camera records no events
+        row = EventRow(None, plaza["id"], time.time(), "watch_log", 3, None, None, {"watch": "Leaves left walkway"},
+                       None, None, None, None)
+        before = len(ctx.repo_for(ws).query_events(camera_id=plaza["id"], kinds=["watch_log"]))
+        real._handle({"type": "log", "workspace_id": ws, "camera_id": plaza["id"], "row": row, "record": False})
+        assert len(ctx.repo_for(ws).query_events(camera_id=plaza["id"], kinds=["watch_log"])) == before + 1
+    finally:
+        real.shutdown()
+
+    # one visitor's camera live at a time (Tuning demo_live_cameras 1): the next is refused in plain words
+    from watchful.api.demo import live_refusal
+    from watchful.ingest.push import push_parts
+    mine = a.post("/api/cameras", json={"name": "My camera", "kind": "webcam"}).json()
+    b, _ = _sandbox(app, ip="198.51.100.7")
+    theirs = b.post("/api/cameras", json={"name": "My phone", "kind": "webcam"}).json()
+    hub = push_parts(ctx)[0]
+    hub._senders[mine["id"]] = [object()]
+    cam = ctx.repo_for(me(b)["workspace"]["id"]).get_camera(theirs["id"])
+    assert live_refusal(ctx, cam) == "The demo is busy: 1 visitors' cameras are live now. Try again in a few minutes."
+    assert live_refusal(ctx, ctx.repo_for("ws_green_park").get_camera(desk["id"])) is None
+    hub._senders.pop(mine["id"])
+    assert live_refusal(ctx, cam) is None
+
+
+def test_seeded_examples_keep_to_their_watchs_hours():
+    from zoneinfo import ZoneInfo
+    from datetime import datetime
+    watch = demo.watch_of(demo.spec()["cameras"][0]["watches"][1])  # in the water after pool hours, 21:00 to 06:00
+    tz = ZoneInfo("Asia/Kolkata")
+    for hour in range(24):
+        at = datetime(2026, 10, 26, hour, 30, tzinfo=tz)
+        got = demo.inside_hours(watch, at, "Asia/Kolkata")
+        assert got <= at and watch.time_window.contains(got.timestamp(), "Asia/Kolkata"), (hour, got)
+
+
+def test_a_typed_watch_backtests_on_the_seeded_timeline(tmp_path):
+    from watchful.rules.backtest import backtest
+    from watchful.rules.presets import preset
+    app, _ = make(tmp_path)
+    ctx = app.state.ctx
+    settings = ctx.settings.model_copy(update={"analysis_fps": 1.0})
+    ctx.settings = settings
+    plaza = demo.demo_cameras(settings)[0]
+    rows = demo.clip_timeline(settings, plaza)
+    assert any(r["kind"] == "enter" and r["zone"] == "left walkway" for r in rows)
+    assert demo.clip_timeline(settings, plaza) == rows  # made once, then read back
+    a, seen = _sandbox(app)
+    ws = seen["workspace"]["id"]
+    repo = ctx.repo_for(ws)
+    cam = [c for c in repo.list_cameras() if c.kind == "demo"][0]
+    events = repo.query_events(camera_id=cam.id, kinds=["enter"], limit=5000)
+    assert events and all(e.data.get("seeded") and e.keyframe_key is None for e in events)
+    result = backtest(preset("enters", zone="left walkway"), repo, [cam.id], tuning=ctx.tuning)
+    assert result.fires > 0
+
+
+def test_the_demo_can_be_switched_off_and_an_ended_demo_offers_a_new_one(tmp_path):
+    app, _ = make(tmp_path)
+    a, seen = _sandbox(app)
+    with app.state.ctx.db.tx() as s:
+        s.get(m.Workspace, seen["workspace"]["id"]).expires_at = m.utcnow() - timedelta(minutes=1)
+    assert a.get("/api/demo/visitor").json() == {"kind": "signed_out", "offered": True}  # the site offers a new one
+    assert app.state.sandboxes.run_once() and app.state.sandboxes.run_once() == []  # touched once, then left
+    (tmp_path / "off").mkdir()
+    off, _ = make(tmp_path / "off")
+    off.state.ctx.settings = off.state.ctx.settings.model_copy(update={"demo_enabled": False})
+    assert judge(off).get("/api/demo/visitor").json() == {"kind": "signed_out", "offered": False}
+    assert judge(off).post("/api/demo/login").status_code == 404
+
+
+def test_the_preview_is_telegrams_own_message_and_examples_claim_no_check(tmp_path):
+    app, _ = make(tmp_path)
+    ctx = app.state.ctx
+    a, seen = _sandbox(app)
+    repo = ctx.repo_for(seen["workspace"]["id"])
+    opened = [i for i in a.get("/api/incidents").json() if i["status"] == "open"][0]
+    shown = a.get(f"/api/incidents/{opened['id']}/telegram").json()
+    inc = inc_.get_incident(repo, opened["id"])
+    assert shown["caption"] == telegram.message(repo, inc, ctx.settings.public_base_url)[0]
+    assert "Possible" not in shown["caption"] and "Graded" not in shown["caption"]
+    assert (shown["sent"], shown["demo"]) == (False, True)

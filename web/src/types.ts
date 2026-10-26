@@ -167,10 +167,12 @@ export interface Incident {
   closed_at: string | null;
   on_telegram: boolean;
   picture_url: string | null;
+  example?: boolean; // the demo's: made from a real moment of its clip, no AI check ran on it
 }
 
 export type IncidentStep =
   | { kind: "opened"; at: string; text: string }
+  | { kind: "example"; at: string }
   | { kind: "repeated"; at: string; count: number }
   | { kind: "telegram" | "reminder"; at: string; group: string | null }
   | { kind: "acknowledged" | "false_alarm"; at: string; by: string | null; via: string | null }

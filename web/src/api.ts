@@ -74,8 +74,10 @@ export interface TelegramMessage {
   buttons: { text: string; url: string | null }[][];
   photo: string | null;
   goes_to_telegram: boolean;
+  would_send: boolean;
   sent: boolean;
   connected: boolean;
+  demo: boolean;
 }
 
 export interface DeviceLink {

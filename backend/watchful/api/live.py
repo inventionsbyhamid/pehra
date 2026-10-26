@@ -127,6 +127,10 @@ def mount(app: FastAPI, ctx) -> None:
         stopping = asyncio.create_task(sender.stop.wait())
         incoming = asyncio.create_task(ws.receive())
         try:
+            from watchful.api.demo import live_refusal
+            if busy := await run_in_threadpool(live_refusal, ctx, cam):  # the demo's cap on visitors' own cameras
+                await ws.close(code=CLOSE_BUSY, reason=busy)
+                return
             if not manager.status(cam.id).running:
                 await run_in_threadpool(manager.start, cam.id, cam.workspace_id)
             limit, gap, last = tune.max_frame_kb * 1024, 1.0 / tune.max_fps, 0.0

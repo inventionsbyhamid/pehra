@@ -438,6 +438,8 @@ def make_router(ctx) -> APIRouter:
 
     @router.post("/api/invites/accept")
     def accept_invite(body: TokenIn, response: Response, user: m.User = Depends(current_user)):
+        if user.demo:
+            raise HTTPException(403, "The demo society is yours alone. Sign in to join a society with an invite.")
         invite = load_invite(body.token)
         now = m.utcnow()
         with ctx.db.tx() as s:

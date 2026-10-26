@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
+from watchful import demo_rules
 from watchful.agent.ask import AskContext, ask, people_groups
 from watchful.api.common import camera_or_404
 from watchful.auth.deps import CurrentMember, current_member
@@ -72,6 +73,8 @@ def make_router(ctx) -> APIRouter:
                             since=data.get("since"), until=data.get("until"), classes=data.get("classes") or [])
         if q.text is None and q.photo is None and q.person_id is None:
             raise HTTPException(400, "Type what to look for, or add a photo.")
+        if refused := demo_rules.sandbox_search(member.workspace, q.photo is not None, bool(q.person_id)):
+            raise HTTPException(403, refused)
         await run_in_threadpool(own_camera, member, q.camera_id)
         faces = await run_in_threadpool(ctx.faces_for, ws) if q.photo is not None or q.person_id else None
         try:

@@ -22,7 +22,8 @@ def incident_json(blobs, inc, title: str | None = None) -> dict:
             "status": inc.status, "opened_at": inc.opened_at, "last_at": inc.last_at, "count": inc.count,
             "reason": inc.reason, "graded_why": (inc.agent_json or {}).get("why") or None, "ack_by": inc.ack_by,
             "ack_at": inc.ack_at, "closed_at": inc.closed_at, "on_telegram": inc.telegram_message_id is not None,
-            "clip_key": inc.clip_key, "picture_url": blobs.url(key) if key else None, "title": title or inc.reason}
+            "clip_key": inc.clip_key, "picture_url": blobs.url(key) if key else None, "title": title or inc.reason,
+            "example": bool((inc.agent_json or {}).get("seeded"))}  # the demo's: made from a moment of its clip
 
 
 def titles(repo) -> dict[str, str]:
@@ -37,6 +38,8 @@ def timeline(repo, inc) -> list[dict]:
     check's verdict (it keeps no time of its own)."""
     agent = inc.agent_json or {}
     steps = [{"at": inc.opened_at, "kind": "opened", "text": inc.reason}]
+    if agent.get("seeded"):
+        steps.append({"at": inc.opened_at, "kind": "example"})  # the demo's: no AI check ran on it
     if inc.count > 1:
         steps.append({"at": inc.last_at, "kind": "repeated", "count": inc.count})
     with repo.tx() as s:

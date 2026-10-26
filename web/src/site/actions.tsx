@@ -1,11 +1,13 @@
 import { Link } from "react-router-dom";
-import { noSignIn, useProviders, useVisitor } from "./providers";
+import { noSignIn, useDemoOffered, useProviders, useVisitor } from "./providers";
 
 export const DEMO_URL = "/demo";
 export const APP_URL = "/app";
 
 // "Try the demo": a sandbox society with sample cameras and no sign in. A full page load, so the server starts it.
+// Nothing when this server does not offer the demo.
 export function TryDemo({ className, label = "Try the demo" }: { className: string; label?: string }) {
+  if (!useDemoOffered()) return null;
   return (
     <a className={className} href={DEMO_URL}>
       {label}

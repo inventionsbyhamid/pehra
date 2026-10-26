@@ -127,7 +127,8 @@ export function DemoBar() {
     <div className="demo-bar" role="region" aria-label="Demo">
       <div className="wrap demo-bar-row">
         <p>
-          <strong>Demo society.</strong> Yours for {left(d.expires_at)}. Nothing here goes to Telegram.{" "}
+          <strong>Demo society.</strong> Yours for {left(d.expires_at)}. Nothing here goes to Telegram. Incidents
+          before you arrived are examples made from real moments of the clip.{" "}
           <button type="button" className="linkish" aria-expanded={about} onClick={() => setAbout(!about)}>About the cameras</button>
         </p>
         <div className="row">

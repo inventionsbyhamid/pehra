@@ -23,6 +23,8 @@ function stepWords(step: IncidentStep, camera: string | undefined): string {
   switch (step.kind) {
     case "opened":
       return camera ? `First seen on ${camera}` : "First seen";
+    case "example":
+      return "An example made from this moment of the clip. No AI check ran on it.";
     case "repeated":
       return `Seen again, ${step.count} times in all`;
     case "telegram":
@@ -109,6 +111,7 @@ export default function IncidentPage() {
         sub={
           <>
             <SeverityTag level={inc.severity} />
+            {inc.example && <span className="tag tag-example">Example</span>}
             <span>
               {camera ? <Link to={`/app/cameras/${camera.id}`}>{camera.name}</Link> : "A camera"}, {at(epoch(inc.opened_at))}
             </span>

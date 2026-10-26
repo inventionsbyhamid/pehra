@@ -5,7 +5,8 @@
     "source: what the clip is and its licence, shown in the app. Only consented recordings or openly licensed clips the owner approved.",
     "zones and lines: points normalized 0 to 1 across and down the picture. Check them against a recorded clip and adjust here.",
     "watches: what a society would type (text) and the watch it compiles to (a preset with fill, or the watch itself).",
-    "incidents: hours_ago places it in the last day; clip_s is the second of the clip whose frame is its picture (the person in the watch's zone at that moment is boxed); watch is the index into watches.",
+    "incidents: examples made from real moments of the clip, labelled as examples in the app (no AI check ran on them). hours_ago places one in the last day (moved back into its watch's hours when it has some); clip_s is the second of the clip whose frame is its picture (the person in the watch's zone at that moment is boxed); watch is the index into watches.",
+    "timeline_hours_ago: when the clip's own timeline (made once by running the pipeline over it) is placed in the last day, so a watch typed in the demo backtests to something.",
     "log_rows: rows a log watch wrote, hours_ago each. ledger and register: gate log and staff register rows for the seeding hook Task 6b fills (demo.py seed_gate_log_and_register)."
   ],
   "society": "Demo society",
@@ -13,6 +14,7 @@
   "cameras": [
     {
       "key": "pool",
+      "timeline_hours_ago": [1.5, 7, 13, 19],
       "name": "Pool",
       "purpose": "pool",
       "clip": "demo/pool.mp4",
@@ -34,13 +36,13 @@
       ],
       "incidents": [
         {"watch": 1, "hours_ago": 9.5, "clip_s": 4, "status": "acknowledged", "by": "Suresh", "via": "telegram",
-         "count": 2, "reason": "A person in the water after the pool closed.",
-         "why": "Someone in the pool after hours could be in danger alone."}
+         "count": 2, "reason": "A person in the water after the pool closed."}
       ],
       "log_rows": []
     },
     {
       "key": "main_gate",
+      "timeline_hours_ago": [1.5, 7, 13, 19],
       "name": "Main gate",
       "purpose": "main gate",
       "clip": "demo/main_gate.mp4",
@@ -65,6 +67,7 @@
     },
     {
       "key": "service_gate",
+      "timeline_hours_ago": [1.5, 7, 13, 19],
       "name": "Service gate",
       "purpose": "service gate",
       "clip": "demo/service_gate.mp4",
@@ -90,10 +93,11 @@
     },
     {
       "key": "plaza",
+      "timeline_hours_ago": [1.5, 7, 13, 19],
       "name": "Plaza",
       "purpose": "other",
       "clip": "vtest.avi",
-      "source": "OpenCV's sample video vtest.avi, BSD licence.",
+      "source": "OpenCV's sample video vtest.avi, Apache 2.0 licence.",
       "zones": [
         {"name": "left walkway", "polygon": [[0, 0.3], [0.5, 0.3], [0.5, 1], [0, 1]]}
       ],
@@ -107,19 +111,15 @@
       ],
       "incidents": [
         {"watch": 0, "hours_ago": 0.3, "clip_s": 40, "status": "open", "count": 3,
-         "reason": "A person walked into the left walkway.",
-         "why": "The walkway is marked critical by the society, so anyone walking in is told at once."},
+         "reason": "A person walked into the left walkway."},
         {"watch": 1, "hours_ago": 2.6, "clip_s": 72, "status": "acknowledged", "by": "Ravi", "via": "app", "count": 2,
-         "reason": "Four people in the left walkway at once.",
-         "why": "A crowd in the walkway is worth a look but not urgent."},
+         "reason": "Four people in the left walkway at once."},
         {"watch": 0, "hours_ago": 6.2, "clip_s": 10, "status": "false_alarm", "by": "Suresh", "via": "telegram",
-         "count": 1, "reason": "A person walked into the left walkway.",
-         "why": "The walkway is marked critical by the society, so anyone walking in is told at once."},
+         "count": 1, "reason": "A person walked into the left walkway."},
         {"watch": 1, "hours_ago": 11.4, "clip_s": 30, "status": "resolved", "count": 4,
          "reason": "Four people in the left walkway at once.", "closed_by": "Cleared on its own"},
         {"watch": 0, "hours_ago": 17.8, "clip_s": 2, "status": "acknowledged", "by": "Anita", "via": "telegram",
-         "count": 1, "reason": "A person walked into the left walkway.",
-         "why": "The walkway is marked critical by the society, so anyone walking in is told at once."},
+         "count": 1, "reason": "A person walked into the left walkway."},
         {"watch": 1, "hours_ago": 21.5, "clip_s": 64, "status": "resolved", "count": 2,
          "reason": "Four people in the left walkway at once.", "closed_by": "Cleared on its own"}
       ],

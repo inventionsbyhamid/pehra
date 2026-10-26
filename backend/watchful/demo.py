@@ -1,21 +1,24 @@
 """The judges' demo (sandbox lifecycle, caps and reset from packsure e97a509). "Try the demo" (api/demo.py) gives each
 visitor a sandbox society of their own for Tuning limits.demo_hours: the demo cameras of data/demo.json whose clip
 files exist, looping as if live, with their watches, a day of incidents (pictures cut from their own clips) and log
-rows; the visitor can add this laptop or a phone as a camera and type watches of their own. A visitor is a user
-without an email, flagged demo, and the owner of their sandbox. Nobody else ever sees a sandbox.
+rows, and a short timeline of what the camera saw (so a typed watch backtests to something); the visitor can add
+this laptop or a phone as a camera and type watches of their own. The seeded incidents are examples made from real
+moments of the clip: no AI check ran on them, and the app labels them so. A visitor is a user without an email,
+flagged demo, and the owner of their sandbox. Nobody else ever sees a sandbox.
 
 A sandbox is comped the Society plan until it ends, for Tuning limits.demo_cameras cameras of the visitor's own (the
 demo's clips are not watched cameras, billing/limits.py), and the plan sweep leaves sandboxes alone. Its AI calls
-have a cap of their own (SandboxLLM). When it ends its cameras stop (api/demo.py SandboxWatch), every request in it is
+have caps of their own (SandboxLLM). When it ends its cameras stop (api/demo.py SandboxWatch), every request in it is
 refused (demo_rules.py), and the daily `demo_reset` job deletes it with its visitor, device links and pictures.
 
 A demo camera with no clip file is left out, never shown with another clip: today only OpenCV's sample vtest.avi
-(BSD) is known to be safe to show, so Plaza runs on it, and Pool and the gates appear when the owner's consented
+(Apache 2.0) is known to be safe to show, so Plaza runs on it, and Pool and the gates appear when the owner's consented
 recordings land in samples/demo/.
 
     python -m watchful.demo cameras    which demo cameras new sandboxes get, and which clips are missing
     python -m watchful.demo reset      delete sandboxes that ended, now"""
 import argparse
+import hashlib
 import json
 import logging
 import threading
@@ -43,6 +46,8 @@ from watchful.store.db import Camera, EventRow, WatchRow
 from watchful.store.sql import add_default_watches
 from watchful.tuning import Tuning
 from watchful.vision.zones import Zone
+
+TIMELINE_CLASSES = {"person", "bicycle", "car", "motorcycle", "bus", "truck"}  # what a typed watch is likely about
 
 log = logging.getLogger(__name__)
 
@@ -183,10 +188,10 @@ class Seeded:
     watches: dict[str, list[str]] = field(default_factory=dict)  # demo.json key to its watch ids, in order
 
 
-def start_sandbox(ctx, now: datetime | None = None) -> tuple[m.User, m.Workspace]:
+def start_sandbox(ctx, now: datetime | None = None, network: str | None = None) -> tuple[m.User, m.Workspace]:
     """A new demo visitor and their sandbox (`ctx`: the app's context), made in one transaction: the society, comped
     until it ends, with its default site watches. Its demo cameras and their day are seeded next (seed), then the app
-    starts the cameras."""
+    starts the cameras. `network` is the visitor's (an IPv4 /24 or IPv6 /48): its sandboxes share an AI budget."""
     from watchful.api.account import add_workspace
     now = now or m.utcnow()
     t = ctx.tuning.limits
@@ -198,7 +203,8 @@ def start_sandbox(ctx, now: datetime | None = None) -> tuple[m.User, m.Workspace
         ws = add_workspace(s, user.id, spec().get("society", "Demo society"), ctx.settings.timezone, demo=SANDBOX,
                            created_at=now, expires_at=ends, comp_plan=PLAN, comp_cameras=t.demo_cameras,
                            comp_until=ends)
-        s.add(m.Audit(workspace_id=ws.id, actor=user.id, action="demo.start", data={"expires_at": ends.isoformat()}))
+        s.add(m.Audit(workspace_id=ws.id, actor=user.id, action="demo.start",
+                      data={"expires_at": ends.isoformat(), "network": network}))
     try:
         seed(ctx.repo_for(ws.id), ctx.blobs, ctx.settings, now)
     except Exception:
@@ -231,6 +237,7 @@ def seed(repo, blobs, settings, now: datetime) -> Seeded:
         for n, spec_inc in enumerate(item.get("incidents", [])):
             _seed_incident(repo, blobs, settings, cam, made.id, rows, watches, spec_inc, n, now)
         events = [_log_row(made.id, rows, watches, r, now) for r in item.get("log_rows", [])]
+        events += seeded_timeline(settings, cam, made.id, now)
         if events:
             repo.add_events(events)
     with repo.tx() as s:
@@ -241,7 +248,7 @@ def seed(repo, blobs, settings, now: datetime) -> Seeded:
 def _seed_incident(repo, blobs, settings, cam: DemoCamera, camera_id: str, rows: list[WatchRow], watches: list[Watch],
                    item: dict, n: int, now: datetime) -> None:
     watch, row = watches[item["watch"]], rows[item["watch"]]
-    opened = now - timedelta(hours=float(item["hours_ago"]))
+    opened = inside_hours(watch, now - timedelta(hours=float(item["hours_ago"])), settings.timezone)
     last = opened + timedelta(minutes=2 * max(0, int(item.get("count", 1)) - 1))
     key = box = None
     got = incident_picture(settings, cam.path, item.get("clip_s", 0), watch, cam.item.get("zones", []))
@@ -251,7 +258,7 @@ def _seed_incident(repo, blobs, settings, cam: DemoCamera, camera_id: str, rows:
         blobs.put(key, data, "image/jpeg")
     track = box is not None
     status = item.get("status", inc_.OPEN)
-    agent = {"verdict": "alert", "why": item.get("why", ""), "cls": "person" if track else None, "seeded": True}
+    agent = {"cls": "person" if track else None, "seeded": True}  # an example: no AI check ran on it
     acted = status in (inc_.ACKNOWLEDGED, inc_.FALSE_ALARM)
     at = last + timedelta(minutes=3) if status != inc_.OPEN else None
     if status == inc_.RESOLVED:
@@ -270,6 +277,18 @@ def _seed_incident(repo, blobs, settings, cam: DemoCamera, camera_id: str, rows:
             s.add(m.Audit(workspace_id=repo.workspace_id, actor="demo", action=action, ts=at,
                           data={"incident": inc.id, "watch": row.id, "camera": camera_id, "name": item.get("by"),
                                 "via": item.get("via", "app"), "chat": None, "changed": True}))
+
+
+def inside_hours(watch: Watch, at: datetime, timezone: str) -> datetime:
+    """`at`, or the latest moment before it inside the watch's hours (an after hours watch fires only then), so an
+    example is never seeded at a time its watch could not fire, whenever the sandbox starts."""
+    if watch.time_window is None:
+        return at
+    for steps in range(24 * 4):
+        t = at - timedelta(minutes=15 * steps)
+        if watch.time_window.contains(t.timestamp(), timezone):
+            return t
+    return at
 
 
 def _log_row(camera_id: str, rows: list[WatchRow], watches: list[Watch], item: dict, now: datetime) -> EventRow:
@@ -298,24 +317,31 @@ def seed_gate_log_and_register(s, workspace_id: str, seeded: Seeded, demo: dict,
 class SandboxLLM(LimitedLLM):
     """The AI for a sandbox, with the demo's own caps a day: Tuning limits.demo_ai_checks checks of flagged moments
     (one per check however many steps it takes, LimitedLLM.check) and limits.demo_ai_assist requests of help (writing
-    watches, questions, search), and every sandbox together within AI_DAILY_CALL_LIMIT in the last day, counted from
-    Audit rows the demo reset keeps."""
+    watches, questions, search); the sandboxes started from one network within limits.demo_ai_per_network, and every
+    sandbox together within limits.demo_ai_total in the last day, counted from Audit rows the demo reset keeps. The
+    demo's budget is its own, so judges never use up a society's AI_DAILY_CALL_LIMIT or theirs."""
 
-    def __init__(self, inner, repo, limit: int, task: str, used, total: int):
+    def __init__(self, inner, repo, limit: int, task: str, used, total: int, per_network: int):
         super().__init__(inner, repo, limit, task, used=used)
-        self.total = total
+        self.total, self.per_network = total, per_network
+        with repo.tx() as s:
+            started = s.scalar(select(m.Audit.data).where(m.Audit.workspace_id == repo.workspace_id,
+                                                          m.Audit.action == "demo.start").limit(1))
+        self.network = (started or {}).get("network")
 
     def admit(self) -> None:
         since = m.utcnow() - timedelta(days=1)
+        recent = [m.Audit.action == AI_CALL, m.Audit.ts >= since]
         with self.repo.tx() as s:
-            spent = s.scalar(select(func.count()).select_from(m.Audit)
-                             .where(m.Audit.action == AI_CALL, m.Audit.ts >= since)) or 0
-        if spent >= self.total:
+            spent = s.scalar(select(func.count()).select_from(m.Audit).where(*recent)) or 0
+            mine = s.scalar(select(func.count()).select_from(m.Audit).where(
+                *recent, m.Audit.data["network"].as_string() == self.network)) or 0 if self.network else 0
+        if spent >= self.total or mine >= self.per_network:
             raise AILimitReached("the demo's daily AI limit is reached")
         super().admit()  # this sandbox's own cap for its kind; records the call
         with self.repo.tx() as s:
             s.add(m.Audit(workspace_id=self.repo.workspace_id, actor="system", action=AI_CALL,
-                          data={"task": self.task}))
+                          data={"task": self.task, "network": self.network}))
 
 
 def sandbox_llm(inner, repo, settings, task: str, tuning: Tuning | None = None) -> SandboxLLM | None:
@@ -327,8 +353,105 @@ def sandbox_llm(inner, repo, settings, task: str, tuning: Tuning | None = None) 
     t = (tuning or load_tuning(settings.tuning_file)).limits
     kind = CHECKS if task in CHECK_TASKS else ASSIST
     cap = t.demo_ai_checks if kind == CHECKS else t.demo_ai_assist
-    return SandboxLLM(inner, repo, min(cap, settings.ai_daily_call_limit), task, lambda: ai_used(repo, kind),
-                      settings.ai_daily_call_limit)
+    return SandboxLLM(inner, repo, cap, task, lambda: ai_used(repo, kind), t.demo_ai_total, t.demo_ai_per_network)
+
+
+def ai_limit(repo, settings, tuning: Tuning | None = None) -> int | None:
+    """A sandbox's AI checks a day (for its numbers page), or None for any other society."""
+    if not is_sandbox(repo, repo.workspace_id):
+        return None
+    from watchful.tuning import load_tuning
+    return (tuning or load_tuning(settings.tuning_file)).limits.demo_ai_checks
+
+
+# a short timeline of what each demo camera saw, so a watch typed in a sandbox backtests to something
+
+class _Rows:
+    def __init__(self):
+        self.rows: list[EventRow] = []
+
+    def add_events(self, rows) -> None:
+        self.rows += rows
+
+
+class _NoBlobs:
+    """Keyframes of the timeline are not kept: the seeded events carry none."""
+
+    def put(self, key, data, content_type) -> None:
+        pass
+
+    def get(self, key):
+        raise KeyError(key)
+
+    def url(self, key) -> str:
+        return ""
+
+    def delete(self, key) -> None:
+        pass
+
+
+def _timeline_file(settings, cam: DemoCamera) -> Path:
+    zones = json.dumps(cam.item.get("zones", []), sort_keys=True)
+    tag = f"{cam.path}|{cam.path.stat().st_mtime}|{zones}|{settings.analysis_fps}|{settings.analysis_width}"
+    return Path(settings.data_dir) / "demo" / f"timeline-{hashlib.sha256(tag.encode()).hexdigest()[:16]}.json"
+
+
+def clip_timeline(settings, cam: DemoCamera, tuning: Tuning | None = None) -> list[dict]:
+    """One pass of the clip through the camera pipeline at the analysis rate: its events (people and vehicles coming
+    and going through the camera's zones), with the clip's own seconds. Saved under DATA_DIR/demo, so it is made
+    once per clip and zones."""
+    from watchful.components import make_detector
+    from watchful.ingest.sources import FileSource
+    from watchful.vision.perceive import Needs
+    from watchful.vision.pipeline import CameraPipeline
+    path = _timeline_file(settings, cam)
+    if path.is_file():
+        return json.loads(path.read_text())
+    tuning = tuning or Tuning()
+    camera = Camera("cam_timeline", cam.item["name"], "file", str(cam.path), zones_of(cam.item))
+    sink = _Rows()
+    pipe = CameraPipeline(camera, sink, _NoBlobs(), None, settings, tuning, Needs(classes=set(TIMELINE_CLASSES)),
+                          detector=make_detector(settings, tuning))
+    source = FileSource(cam.path, settings.analysis_fps, width=settings.analysis_width, start_epoch=0.0)
+    last = 0.0
+    while (frame := source.read()) is not None:
+        pipe.process(frame)
+        last = frame.ts
+    pipe.finish(last)
+    rows = [{"t": round(e.ts, 2), "kind": e.kind, "track_id": e.track_id, "cls": e.cls, "zone": e.zone,
+             "data": {k: v for k, v in (e.data or {}).items() if isinstance(v, (int, float, str, bool, type(None)))}}
+            for e in sink.rows]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows))
+    tmp.replace(path)
+    return rows
+
+
+def warm_timelines(settings, tuning: Tuning | None = None) -> None:
+    """Makes the timeline of every demo clip that has none yet (the app does this once, in the background)."""
+    for cam in demo_cameras(settings):
+        try:
+            clip_timeline(settings, cam, tuning)
+        except Exception:
+            log.exception("the demo timeline of %s could not be made", cam.path)
+
+
+def seeded_timeline(settings, cam: DemoCamera, camera_id: str, now: datetime) -> list[EventRow]:
+    """The clip's timeline, made earlier, placed at demo.json's timeline_hours_ago (each pass's tracks numbered
+    apart); nothing when it has not been made yet."""
+    path = _timeline_file(settings, cam)
+    if not path.is_file():
+        return []
+    rows = json.loads(path.read_text())
+    out = []
+    for n, hours in enumerate(cam.item.get("timeline_hours_ago", [])):
+        start = (now - timedelta(hours=float(hours))).timestamp()
+        for r in rows:
+            track = r["track_id"] + (n + 1) * 1_000_000 if r["track_id"] is not None else None
+            out.append(EventRow(None, camera_id, start + r["t"], r["kind"], track, r["cls"], r["zone"],
+                                {**r["data"], "seeded": True}, None, None, None, None))
+    return out
 
 
 # the end of a sandbox, and the daily reset

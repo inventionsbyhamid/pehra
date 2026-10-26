@@ -40,6 +40,8 @@ class AppContext(AuthContext):
         self._repos: dict[str, object] = {}
         self._llms: dict[tuple[str, str], object] = {}
         self._faces: dict[str, object] = {}
+        self._face_nets = None
+        self._face_lock = threading.RLock()
         self._embedder = None
         self._detector = None
         self._parts = threading.Lock()
@@ -65,17 +67,44 @@ class AppContext(AuthContext):
             return self._llms[workspace_id, task]
 
     def faces_for(self, workspace_id: str):
+        """The society's face index: its own enrolled people on the app's one pair of face networks, which every
+        society shares (one request at a time), so memory does not grow with the number of societies."""
         repo = self.repo_for(workspace_id)
         with self._parts:
             if workspace_id not in self._faces:
-                faces = make_faces(self.settings, self.tuning)
-                faces.load(repo.list_enrollments())
-                self._faces[workspace_id] = faces
+                if self._face_nets is None:
+                    self._face_nets = make_faces(self.settings, self.tuning)
+                self._faces[workspace_id] = OneAtATime(self._face_nets.share(repo.list_enrollments(), workspace_id),
+                                                       self._face_lock)
             return self._faces[workspace_id]
+
+    def face_index(self):
+        """A face index with nobody enrolled on the app's one pair of face networks, behind the same lock (the
+        Telegram preview's still maker loads each society's people into it)."""
+        with self._parts:
+            if self._face_nets is None:
+                self._face_nets = make_faces(self.settings, self.tuning)
+            return OneAtATime(self._face_nets.share([]), self._face_lock)
 
     def forget_faces(self, workspace_id: str) -> None:
         with self._parts:
             self._faces.pop(workspace_id, None)
+
+    def forget_society(self, workspace_id: str) -> None:
+        """A deleted society's parts go from memory: its repository, AI clients and face index (the demo reset)."""
+        with self._parts:
+            self._repos.pop(workspace_id, None)
+            self._faces.pop(workspace_id, None)
+            for key in [k for k in self._llms if k[0] == workspace_id]:
+                self._llms.pop(key)
+        llms = getattr(self.manager, "_llms", None)
+        if isinstance(llms, dict):
+            llms.pop(workspace_id, None)
+
+    def remembered(self) -> set[str]:
+        """The societies this app keeps parts of in memory."""
+        with self._parts:
+            return set(self._repos) | set(self._faces) | {k[0] for k in self._llms}
 
     @property
     def embedder(self):
@@ -92,6 +121,25 @@ class AppContext(AuthContext):
     def workspace_ids(self) -> list[str]:
         with self.db.tx() as s:
             return list(s.scalars(select(m.Workspace.id).order_by(m.Workspace.created_at)))
+
+
+class OneAtATime:
+    """An object whose methods run one call at a time across everyone sharing `lock` (face networks change their
+    input size for each picture)."""
+
+    def __init__(self, inner, lock):
+        self._inner, self._lock = inner, lock
+
+    def __getattr__(self, name):
+        attr = getattr(self._inner, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args, **kwargs):
+            with self._lock:
+                out = attr(*args, **kwargs)
+            return OneAtATime(out, self._lock) if name == "share" else out  # another index on the same networks
+        return call
 
 
 def create_app(settings: Settings | None = None, llm=None, manager=None, providers: dict | None = None,

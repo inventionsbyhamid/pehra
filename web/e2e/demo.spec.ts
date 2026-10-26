@@ -71,7 +71,8 @@ test("a judge goes from Try the demo to an acknowledged incident and its Telegra
   await expect(bar).toContainText("Demo society.");
   await expect(bar.getByRole("button", { name: "Add your camera" })).toBeVisible();
   await bar.getByRole("button", { name: "About the cameras" }).click();
-  await expect(bar).toContainText("OpenCV's sample video vtest.avi, BSD licence.");
+  await expect(bar).toContainText("OpenCV's sample video vtest.avi, Apache 2.0 licence.");
+  await expect(bar).toContainText("Incidents before you arrived are examples made from real moments of the clip.");
 
   // live cameras: the Plaza tile shows a real picture and its page plays frames
   const tile = page.getByRole("list", { name: "Cameras" }).getByRole("link", { name: /Plaza/ });
@@ -79,6 +80,7 @@ test("a judge goes from Try the demo to an acknowledged incident and its Telegra
   expect(await tile.locator("img").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
   const feed = page.getByRole("list", { name: "Incidents" });
   await expect(feed.getByRole("listitem").first()).toContainText("Critical");
+  await expect(feed.getByText("Example", { exact: true }).first()).toBeVisible();
   await check(page, "demo-01-control-room");
   await tile.click();
   const live = page.getByRole("img", { name: /Live camera picture/ });
@@ -95,7 +97,8 @@ test("a judge goes from Try the demo to an acknowledged incident and its Telegra
   await expect(message).toContainText("Not acknowledged yet.");
   await expect(message.getByRole("list", { name: "Its buttons" })).toContainText("Acknowledge");
   await expect(message.getByRole("img")).toBeVisible();
-  expect(await message.getByRole("img").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect.poll(() => message.getByRole("img").evaluate((img: HTMLImageElement) => (img.complete ? img.naturalWidth : 0)))
+    .toBeGreaterThan(0);
   await check(page, "demo-03-incident");
 
   // acknowledged: the page and the group's message both say who and when
@@ -122,7 +125,9 @@ test("add your camera: this device joins, a typed watch is saved and fires; a ph
   await dialog.getByRole("button", { name: "Add it" }).click();
   const qr = dialog.getByRole("img", { name: /QR code/ });
   await expect(qr).toBeVisible();
-  expect(await qr.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  // the picture comes from the server: wait for it to load (through a tunnel it can lag the dialog)
+  await expect.poll(() => qr.evaluate((img: HTMLImageElement) => (img.complete ? img.naturalWidth : 0)),
+    { timeout: 30_000 }).toBeGreaterThan(0);
   await expect(dialog.getByLabel("The phone's camera page")).toHaveValue(/\/cam\//);
   await check(page, "demo-05-phone-qr");
   await dialog.getByRole("button", { name: "Done" }).click();

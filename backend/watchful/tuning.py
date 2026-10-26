@@ -368,15 +368,24 @@ class LimitsTuning(_Section):
     billing_poll_tries: int = 15  # and at most this many times
     # the judges' demo: each "Try the demo" starts a sandbox society of its own (demo.py)
     demo_logins_per_ip: int = 5  # new sandboxes one address (an IPv6 /64) may start in demo_login_window_s
+    demo_logins_per_24: int = 20  # and one IPv4 /24
     demo_logins_per_48: int = 20  # and one IPv6 /48 (one home or office may hold many /64s)
+    demo_logins_per_32: int = 60  # and one IPv6 /32 (one provider's customers)
     demo_login_window_s: float = 86400.0
-    demo_sandboxes_day: int = 300  # new sandboxes in the last day from every address together
+    demo_sandboxes_day: int = 1000  # sandboxes started in the last day; an idle one is reclaimed at the cap
+    demo_idle_reclaim_h: float = 2.0  # a sandbox nobody used for this long may be reclaimed for a new visitor
     demo_hours: int = 24  # a sandbox stops at this age and goes at the next daily reset, with its pictures
     demo_ai_checks: int = 30  # AI checks of flagged moments a day per sandbox
     demo_ai_assist: int = 15  # AI help a day per sandbox: writing watches, questions, search
-    # and every sandbox together stays under AI_DAILY_CALL_LIMIT in the last day
+    demo_ai_total: int = 3000  # AI requests of every sandbox together in the last day (about $3 at today's prices)
+    demo_ai_per_network: int = 300  # and of the sandboxes started from one network (IPv4 /24, IPv6 /48)
     demo_cameras: int = 2  # cameras a visitor may add to a sandbox (this laptop, a phone); demo clips are extra
     demo_check_s: float = 60.0  # how often the app stops the cameras of sandboxes that ended
+    demo_processes: int = 1  # camera processes of their own for sandbox cameras, so the demo never slows a society
+    demo_live_cameras: int = 6  # visitors' own cameras analysed at once across every sandbox
+    demo_loop_idle_s: float = 2.0  # a shared demo clip rests when no camera has read it for this long
+    telegram_previews_kept: int = 64  # Telegram stills made for incident pages, kept in memory
+    example_kb: int = 8192  # largest picture of a zone's state a member may upload
 
 
 class PushTuning(_Section):
@@ -412,6 +421,7 @@ class ResourcesTuning(_Section):
     text_tower_idle_s: float = 300.0  # the app drops the image model's text tower (about 1.5 GB) after this long unused
     report_every_s: float = 1.0  # camera status to the app
     push_queue: int = 16  # pushed frames waiting for a camera process; more are dropped
+    model_variants: int = 3  # models of each kind a camera process keeps for cameras with their own model settings
 
 
 class Tuning(_Section):
