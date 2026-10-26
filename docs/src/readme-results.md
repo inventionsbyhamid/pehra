@@ -22,7 +22,8 @@ What goes wrong, so far: people walking close together, seen from above, merge i
 missed; at very low frame rates two similar people can swap ids; a plate box that cuts characters can give a wrong but
 valid read; the age guard also refuses some harmless phrases, such as "a kids bicycle left on the ramp"; and a watch
 described by looks costs the most on old CPUs, so on our dev box, which has no AVX2, it stays under one analysed frame
-a second per camera. The first
+a second per camera. On the Pool demo camera, a stock clip filmed from straight above, the small detector misses
+many swimmers; a larger input or tiling on pool cameras is the next step. The first
 false alarm and first miss of each watch are saved as pictures in
 [eval/results/failures](eval/results/failures). One labelled clip is a small sample of one scene, and we have no
 society footage labelled yet. The [report](docs/report.md) has the details.

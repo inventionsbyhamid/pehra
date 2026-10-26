@@ -194,7 +194,8 @@ What goes wrong, so far: people walking close together, seen from above, merge i
 missed; at very low frame rates two similar people can swap ids; a plate box that cuts characters can give a wrong but
 valid read; the age guard also refuses some harmless phrases, such as "a kids bicycle left on the ramp"; and a watch
 described by looks costs the most on old CPUs, so on our dev box, which has no AVX2, it stays under one analysed frame
-a second per camera. The first
+a second per camera. On the Pool demo camera, a stock clip filmed from straight above, the small detector misses
+many swimmers; a larger input or tiling on pool cameras is the next step. The first
 false alarm and first miss of each watch are saved as pictures in
 [eval/results/failures](eval/results/failures). One labelled clip is a small sample of one scene, and we have no
 society footage labelled yet. The [report](docs/report.md) has the details.
@@ -226,7 +227,10 @@ Every model allows a paid service. `scripts/fetch_assets.py` downloads each one 
 | SigLIP 2 base patch32 (ONNX by `onnx-community`) | Looks described in words | Apache 2.0 |
 | OpenCV.js 5.0 (`@techstark/opencv-js`) | Face blur on the phone | Apache 2.0 |
 
-We do not use Ultralytics YOLO (AGPL). The sample clip `vtest.avi` comes from OpenCV's samples.
+We do not use Ultralytics YOLO (AGPL). The sample clip `vtest.avi` comes from OpenCV's samples. The Pool demo camera
+replays ["Aerial View of People Enjoying a Pool"](https://www.pexels.com/video/aerial-view-of-people-enjoying-a-pool-28559383/)
+by Vitalis Nwenyi on Pexels, used under the Pexels licence and cropped for the demo; `python scripts/fetch_assets.py
+--demo` downloads it and checks its SHA 256, and it is not in this repo.
 
 Python 3.12 and every package are pinned in `requirements.lock` (OpenCV is `opencv-python-headless` 5.0.0.93); the
 web app's packages are pinned in `web/package-lock.json`.
