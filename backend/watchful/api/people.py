@@ -10,6 +10,7 @@ import numpy as np
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
+from watchful.api.common import LIVE_KINDS
 from watchful.auth.deps import CurrentMember, require_role
 from watchful.billing.limits import staff_allowed, staff_refusal, workspace_of
 from watchful.logs import register
@@ -110,9 +111,24 @@ def make_router(ctx) -> APIRouter:
             if in_society(key, ws):
                 ctx.blobs.delete(key)
         ctx.forget_faces(ws)
-        ctx.db.audit(ws, member.user.id, "staff.remove", {"staff": row.id, "name": row.name})
+        off = switch_off_watches_about(ctx.repo_for(ws), row.id)
+        ctx.db.audit(ws, member.user.id, "staff.remove", {"staff": row.id, "name": row.name, "disabled_watches": off})
         manager.reload_faces(ws)  # gone from every camera process now, no restarts
-        return {"ok": True, "id": row.id, "removed_at": row.removed_at}
+        return {"ok": True, "id": row.id, "removed_at": row.removed_at, "disabled_watches": off}
+
+    def switch_off_watches_about(r, staff_id: str) -> list[str]:
+        """Watches about a removed staff member could never fire again: they are switched off, as a removed zone's
+        are, and their cameras run without them."""
+        off = []
+        for row in r.list_watches():
+            if row.enabled and ((row.watch or {}).get("subject") or {}).get("who") == staff_id:
+                row.enabled = False
+                r.update_watch(row)
+                off.append((row.watch or {}).get("name") or row.text)
+                for c in r.list_cameras():
+                    if c.kind in LIVE_KINDS and (c.id == row.camera_id or row.scope == "site"):
+                        manager.restart(c.id)
+        return off
 
     @router.delete("/api/staff/{staff_id}")
     def remove_staff(staff_id: str, member: CurrentMember = Depends(require_role("admin"))):

@@ -150,8 +150,10 @@ export default function People() {
     setBusy(true);
     setError(null);
     try {
-      await api.removeStaff(removing.id);
-      setDone(`${removing.name} is removed and will not be recognised again. Their past days stay in the staff register.`);
+      const gone = await api.removeStaff(removing.id);
+      const off = gone.disabled_watches ?? [];
+      setDone(`${removing.name} is removed and will not be recognised again. Their past days stay in the staff register.`
+        + (off.length ? ` These watches were about them and are now off: ${off.join(", ")}.` : ""));
       staff.reload();
       confirm.close();
     } catch (err) {

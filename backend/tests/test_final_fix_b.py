@@ -518,3 +518,23 @@ def test_the_flow_tool_says_when_frames_are_too_far_apart():
     times = [100.0 + 2.0 * i for i in range(4)]
     frames, boxes = _walk(times)
     assert "too far apart" in _flow(frames, boxes, times[-1], from_s=-6, to_s=0)
+
+
+# Also: watches about a removed staff member are switched off, with a note
+
+def test_removing_staff_switches_off_the_watches_about_them(app):
+    from accounts import SOCIETY, browser
+    from watchful.logs import register
+    from watchful.store.db import Camera
+    c = browser(app)
+    repo = app.state.ctx.repo_for(SOCIETY)
+    cam = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://g"))
+    ravi = register.enrol(repo, "Ravi", "driver", [[0.1] * 128], None)
+    about = Watch(name="Ravi at the gate", subject=Subject(who=ravi.id), conditions=[Condition(signal="present")])
+    other = Watch(name="Someone at the gate", conditions=[Condition(signal="present")])
+    repo.add_watch(WatchRow(None, cam.id, "ravi at the gate", about.model_dump(), True))
+    repo.add_watch(WatchRow(None, cam.id, "someone at the gate", other.model_dump(), True))
+    r = c.delete(f"/api/staff/{ravi.id}").json()
+    assert r["disabled_watches"] == ["Ravi at the gate"]
+    assert {w.text: w.enabled for w in repo.list_watches()} == {"ravi at the gate": False, "someone at the gate": True}
+    assert cam.id in app.state.ctx.manager.started  # the camera runs again without it
