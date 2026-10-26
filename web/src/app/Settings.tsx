@@ -103,7 +103,7 @@ function NoticeContact() {
       </p>
       <Problem>{contact.error ?? error}</Problem>
       {admin ? (
-        <form className="copy" onSubmit={save}>
+        <form className="inline-form" onSubmit={save}>
           <input className="input" value={shown} maxLength={120} aria-label="Whom to ask about the cameras"
             placeholder="For example: the society office, 98200 00000"
             onChange={(e) => { setValue(e.target.value); setSaved(false); }} />
