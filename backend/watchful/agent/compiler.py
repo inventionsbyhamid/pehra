@@ -567,9 +567,11 @@ def _build(data: dict, text: str, ctx: CompileContext, from_ai: bool = True) -> 
         if not from_ai:
             raise Invalid([words["faces_entry_problem"].format(entries=entry_words())])
         clause = ctx.people.get(who) or {"known": "staff", "unknown": "people not on the staff list"}[who]
-        cannot.append(Cannot(clause, words["faces_entry_reason"].format(entries=entry_words()),
-                             words["faces_entry_alternative"]))
+        faces = Cannot(clause, words["faces_entry_reason"].format(entries=entry_words()),
+                       words["faces_entry_alternative"])
         watch.subject.who = "anyone"
+    else:
+        faces = None
     missing = _fix_names(watch, ctx)
     problems = validate(watch, {**_kinds(ctx), **dict.fromkeys(missing)}) + _contradictions(watch)
     if problems:
@@ -580,7 +582,9 @@ def _build(data: dict, text: str, ctx: CompileContext, from_ai: bool = True) -> 
     if watch.output == "log":
         watch.severity, watch.repeat = "info", False  # one row each time it becomes true
     coverage = _coverage(watch, data.get("coverage"), ctx)
-    cannot = _settle_overlaps(coverage, cannot, names)
+    if faces is not None:  # nothing here tells people apart: no part of the card may say it does
+        coverage = [c for c in coverage if c.signal != "faces"]
+    cannot = _settle_overlaps(coverage, cannot, names) + ([faces] if faces else [])
     for cov in coverage:
         if cov.tier == "X" and not any(c.clause == cov.clause for c in cannot):
             cannot.append(Cannot(cov.clause, cov.caveat or words["fallback_reason"], ""))

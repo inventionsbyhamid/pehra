@@ -330,9 +330,11 @@ def test_i5_a_watch_about_who_someone_is_runs_on_entry_cameras_only(who):
         with pytest.raises(Invalid) as e:
             check_watch(spec, "someone at the gate", staff_ctx(purpose))
         assert "entry cameras" in str(e.value)
-    r = compile_watch("someone not on the staff list in the gate area", staff_ctx("pool"), FakeLLM([reply(spec)]))
-    assert r.watch.subject.who == "anyone" and r.cannot and "entry cameras" in r.cannot[0].reason
-    assert r.cannot[0].alternative.startswith("anyone")
+    said = json.dumps({"watch": spec, "coverage": [{"clause": "people not on the staff list", "signal": "faces",
+                                                    "tier": "B"}], "setup": [], "cannot": [], "about_age": False})
+    r = compile_watch("someone not on the staff list in the gate area", staff_ctx("pool"), FakeLLM([said]))
+    assert r.watch.subject.who == "anyone" and r.cannot and "entry cameras" in r.cannot[-1].reason
+    assert r.cannot[-1].alternative.startswith("anyone") and not any(c.signal == "faces" for c in r.coverage)
     r = compile_watch("someone not on the staff list in the gate area", staff_ctx("main gate"), FakeLLM([reply(spec)]))
     assert r.watch.subject.who == who and r.cannot == []
 
