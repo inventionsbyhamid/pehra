@@ -3,13 +3,17 @@ catalog, spellings of zones and lines, setup tasks, coverage tiers and the priva
 so nothing the catalog cannot express is saved as a watch that silently never fires."""
 import copy
 import json
+import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from functools import lru_cache
+from typing import Callable
 
 from pydantic import ValidationError
 
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
+from watchful.agent.meaning import default_meaning
 from watchful.agent.prompting import parse_json, render
 from watchful.rules.engine import validate
 from watchful.rules.presets import describe
@@ -18,13 +22,15 @@ from watchful.rules.vocab import DATA, resolve_classes, vocabulary
 from watchful.rules.watch import Watch
 from watchful.vision.detect import COCO
 
+log = logging.getLogger(__name__)
 ATTEMPTS = 3
 SCHEMA = {"type": "object", "properties": {
     "watch": {"type": ["object", "null"]},
     "coverage": {"type": "array", "items": {"type": "object"}},
     "setup": {"type": "array", "items": {"type": "string"}},
-    "cannot": {"type": "array", "items": {"type": "object"}}},
-    "required": ["watch", "coverage", "setup", "cannot"]}
+    "cannot": {"type": "array", "items": {"type": "object"}},
+    "about_age": {"type": "boolean"}},
+    "required": ["watch", "coverage", "setup", "cannot", "about_age"]}
 
 
 @dataclass
@@ -51,6 +57,7 @@ class CompileContext:
     camera_flags: dict = field(default_factory=dict)  # e.g. night_ir, attributes read on this camera
     purpose: str | None = None
     places: list[str] = field(default_factory=list)  # every zone and line name in the society, for the age check
+    meaning: Callable[[str], bool] | None = None  # the meaning check on look texts; None is the process's own
 
     def __post_init__(self):
         if not isinstance(self.zones, dict):
@@ -92,31 +99,40 @@ def _words() -> dict:
     return json.loads((DATA / "compile.json").read_text())
 
 
+def _nfc(text) -> str:
+    return unicodedata.normalize("NFC", str(text))
+
+
+def _alternation(words) -> str:
+    return "|".join(re.escape(_nfc(w)) for w in sorted(words, key=len, reverse=True))
+
+
 @lru_cache
 def _age_pattern() -> re.Pattern:
-    """Age words and phrases (child, a minor, bachcha, school uniform) and ages written as numbers (7-year-old)."""
-    terms = [re.escape(t) for t in sorted(_words()["age_terms"], key=len, reverse=True)]
-    return re.compile(r"\b(?:(?:a|an|the|some|any)\s+)?(" + "|".join(_words()["age_patterns"] + terms) + r")(?!\w)",
-                      re.I)
+    """Age words and phrases (child, a minor, bachcha in Latin script or Devanagari, school uniform), explicit ages
+    written with numbers or number words (7-year-old, seven year-old, 8 yrs) and heights standing in for age (shorter
+    than 4 feet)."""
+    return re.compile(r"\b(?:(?:a|an|the|some|any)\s+)?(" + "|".join(_words()["age_patterns"]) + "|"
+                      + _alternation(_words()["age_terms"]) + r")(?!\w)", re.I)
 
 
 @lru_cache
-def _place_word_pattern() -> re.Pattern:
-    words = sorted(_words()["place_words"], key=len, reverse=True)
-    return re.compile(r"(?<!\w)(" + "|".join(re.escape(w) for w in words) + r")(?!\w)", re.I)
+def _place_name() -> re.Pattern:
+    """A name that is only a place: an age word directly before place words and nothing else (kids play area, toddler
+    pool, girls toilet, children's park)."""
+    return re.compile(r"(?:the\s+)?(?:" + _alternation(_words()["age_terms"]) + r")(?:['\u2019]s|s?['\u2019])?"
+                      r"(?:\s+(?:" + _alternation(_words()["place_words"]) + r"))+", re.I)
 
 
 def place_phrases(names) -> list[str]:
-    """The drawn names that hold an age word and are still only a place: the rest of the name holds a place word
-    from data (kids play area, toddler pool, children's park). "small child", "child alone" or "kids only" say who,
-    not where, so they are never places and can't hide an age."""
+    """The drawn names that hold an age word and are still only a place: the age word sits directly before place
+    words from data, with nothing else in the name (kids play area, toddler pool, children's park). "small child",
+    "child alone at the gate", "minor at the gate" or "girls only room" say who, not where, so they are never places
+    and can't hide an age."""
     out = []
     for name in names:
-        name = (name or "").strip()
-        if not name or not _age_pattern().search(name):
-            continue  # nothing in it could be read as an age, so nothing to exempt
-        rest = re.sub(r"['\u2019]s\b", " ", _age_pattern().sub(" ", name))
-        if _place_word_pattern().search(rest):
+        name = _nfc(name or "").strip()
+        if name and _age_pattern().search(name) and _place_name().fullmatch(re.sub(r"\s+", " ", name)):
             out.append(name)
     return out
 
@@ -135,8 +151,9 @@ def _mask(text: str, names=()) -> tuple[str, list[str]]:
         found.append(m.group(0))
         return f"\x00{len(found) - 1}\x00"
 
+    text = _nfc(text)
     for phrase in sorted({*place_phrases(names), *_words()["not_age_phrases"]}, key=len, reverse=True):
-        text = re.sub(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", keep, text, flags=re.I)
+        text = re.sub(r"(?<!\w)" + re.escape(phrase).replace(r"\ ", r"\s+") + r"(?!\w)", keep, text, flags=re.I)
     return text, found
 
 
@@ -154,16 +171,21 @@ def _age_phrase(text: str, names=()) -> str | None:
     return m.group(0) if m else None
 
 
-def neutral_text(text: str) -> str:
-    """Words with every age or child word replaced by someone, for text people will read."""
-    return _neutral(text)
+def neutral_text(text: str, names=()) -> str:
+    """Words with every age or child word replaced by someone, for text people will read. names are the society's
+    zone and line names, which are only places (the kids play area stays)."""
+    return _neutral(text, names)
+
+
+GOES = re.compile(r"(?:aged|under|below|shorter|smaller|less|lower|height)\b|u\s*-?\s*\d|.*(?:tall|high|in height)$",
+                  re.I)  # age phrases that just go from a sentence; the rest become "someone"
 
 
 def _neutral(text: str, names=()) -> str:
     masked, found = _mask(text, names)
 
-    def swap(m: re.Match) -> str:  # "a child" becomes someone; "of about 7" or "aged 7" just goes
-        return "" if re.match(r"(?:of|aged)\b", m.group(1), re.I) else "someone"
+    def swap(m: re.Match) -> str:  # "a child" becomes someone; "aged 7", "under 12 years" or "4 feet tall" just go
+        return m.group(0)[:m.start(1) - m.start(0)] if GOES.match(m.group(1)) else "someone"
 
     out = re.sub(r"\s{2,}", " ", _age_pattern().sub(swap, masked))
     out = _unmask(re.sub(r"\s+([,.?!])", r"\1", out).strip(), found)
@@ -185,22 +207,39 @@ def _clause(c: dict | object) -> str:
 LOOK_KEYS = ("text", "not_text")  # what looks_like and zone_looks_like compare pictures with
 
 
-def _strip_age(w: dict, names=()) -> tuple[dict | None, list[str]]:
+def looks_check(ctx: CompileContext) -> Callable[[str], bool]:
+    """Whether a text a picture will be compared with is about age or children: the words, then the meaning check
+    (agent/meaning.py), which loads the image model's text tower if it is not loaded. If the check can't run, the
+    text is refused."""
+    def about_age(text) -> bool:
+        if not str(text or "").strip():
+            return False
+        if mentions_age(text):
+            return True
+        try:
+            return bool((ctx.meaning or default_meaning())(str(text)))
+        except Exception:
+            log.warning("the meaning check could not run, so a look text was refused", exc_info=True)
+            return True
+    return about_age
+
+
+def _strip_age(w: dict, names=(), looks: Callable[[str], bool] = mentions_age) -> tuple[dict | None, list[str]]:
     """Removes every part of a watch that is about age or children, and says what went. A watch whose subject was
     picked by age, or with nothing left, is dropped. Whole place phrases are only places, except in what a
-    picture is compared with: "a child" is never a place."""
+    picture is compared with (`looks`: the words and the meaning check): "a child" is never a place."""
     removed, kept = [], []
     for c in w.get("conditions") or []:
         params = c.get("params") or {}
-        looks = [str(params[k]) for k in LOOK_KEYS if params.get(k)]
+        texts = [str(params[k]) for k in LOOK_KEYS if params.get(k)]
         rest = {k: v for k, v in params.items() if k not in LOOK_KEYS}
-        if any(mentions_age(t) for t in looks) or mentions_age(json.dumps(rest), names) \
+        if any(looks(t) for t in texts) or mentions_age(json.dumps(rest, ensure_ascii=False), names) \
                 or mentions_age(c.get("value"), names):
             removed.append(_clause(c))
         else:
             kept.append(c)
     subject = w.get("subject") or {}
-    lost_subject = mentions_age(subject.get("looks_like"))
+    lost_subject = looks(subject.get("looks_like"))
     if lost_subject:
         removed.append(subject.pop("looks_like"))
     w["conditions"] = kept
@@ -399,9 +438,9 @@ def _build(data: dict, text: str, ctx: CompileContext, from_ai: bool = True) -> 
     """Every check code makes on a watch, the same for the AI's reply and for a watch a client sends to be saved.
     Raises Invalid (or a parse error) for a watch that must be fixed first."""
     words, names = _words(), ctx.place_names
-    age = mentions_age(text, names)
+    age = mentions_age(text, names) or (from_ai and data.get("about_age") is True)  # the AI's own flag
     cannot = _cannot(data.get("cannot"))
-    w, removed = (_strip_age(dict(data["watch"]), names) if data.get("watch") else (None, []))
+    w, removed = (_strip_age(dict(data["watch"]), names, looks_check(ctx)) if data.get("watch") else (None, []))
     if w is None:
         problem = data.get("problem") or data.get("error")
         if not cannot and not removed:
@@ -434,16 +473,22 @@ def _build(data: dict, text: str, ctx: CompileContext, from_ai: bool = True) -> 
                          _finish(cannot, text, age, removed, names))
 
 
+def check_age(spec: dict, ctx: CompileContext) -> None:
+    """Raises Invalid when any part of a watch about to be saved is about age or children, its look texts by words
+    and by meaning: a client's card, a preset filled in, a lookout's description."""
+    names = ctx.place_names
+    _, removed = _strip_age(copy.deepcopy(spec), names, looks_check(ctx))
+    rest = {k: v for k, v in spec.items() if k not in ("name", "verify", "conditions", "subject")}
+    subject = {k: v for k, v in (spec.get("subject") or {}).items() if k not in ("looks_like", "same_as")}
+    if removed or mentions_age(json.dumps([rest, subject], ensure_ascii=False), names):
+        raise Invalid(["no watch may be about anyone's age"])
+
+
 def check_watch(spec: dict, text: str, ctx: CompileContext, coverage=(), cannot=()) -> CompileResult:
     """A watch a client sends to be saved (usually the one its card showed), checked again here exactly like the
     AI's: privacy, catalog, names and kinds, contradictions, output rules; coverage tiers and setup are worked out
     again rather than trusted. Raises Invalid with plain problems."""
-    names = ctx.place_names
-    _, removed = _strip_age(copy.deepcopy(spec), names)
-    rest = {k: v for k, v in spec.items() if k not in ("name", "verify", "conditions", "subject")}
-    subject = {k: v for k, v in (spec.get("subject") or {}).items() if k != "looks_like"}
-    if removed or mentions_age(json.dumps([rest, subject]), names):
-        raise Invalid(["no watch may be about anyone's age"])
+    check_age(spec, ctx)
     try:
         return _build({"watch": spec, "coverage": list(coverage), "cannot": list(cannot)}, text, ctx, from_ai=False)
     except Invalid:
@@ -487,6 +532,6 @@ def compile_watch(text: str, ctx: CompileContext | list[str], llm: LLM,
     if last and data:
         reason = (mixed[:1].upper() + mixed[1:] + ".") if mixed else words["fallback_reason"]
         cannot = _finish([Cannot(text, reason, words["fallback_alternative"])], text,
-                         mentions_age(text, ctx.place_names), [], ctx.place_names)
+                         mentions_age(text, ctx.place_names) or data.get("about_age") is True, [], ctx.place_names)
         return CompileResult(None, [], [], cannot)
     return CompileResult(None, error=f"I couldn't turn that into a watch: {last}")

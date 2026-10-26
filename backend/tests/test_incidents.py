@@ -143,10 +143,11 @@ def test_the_agent_grades_severity_with_a_reason(tmp_path, env):
                   "fp", "Gate open late")
     v = verify(c, ctx(tmp_path), FakeLLM([step("raise_alert", summary="The gate is wide open with nobody near.",
                                               severity="Critical", reason="a child is walking towards the road")]))
-    assert (v.status, v.severity, v.reason) == ("alert", "critical", "a child is walking towards the road")
+    # the reason is read by people too, so it never calls anyone a child either (privacy fix round)
+    assert (v.status, v.severity, v.reason) == ("alert", "critical", "Someone is walking towards the road")
     inc = inc_.after_check(env.a, c, v, "alt_9", now=at(0))
     assert inc.severity == "critical" and inc.reason.startswith("The gate is wide open")
-    assert inc.agent_json["why"] == "a child is walking towards the road"
+    assert inc.agent_json["why"] == "Someone is walking towards the road"
 
     plain = verify(c, ctx(tmp_path), FakeLLM([step("raise_alert", summary="Open.", severity="loud")]))
     assert plain.severity is None

@@ -120,6 +120,9 @@ class SignalTuning(_Section):
     climb_window_s: float = 2.0
     looks_like_threshold: float = 0.1  # cosine, for embedders without a calibration
     looks_like_probability: float = 0.05  # match probability for a described subject
+    # the age guard's meaning check (agent/meaning.py): a look text this much nearer its nearest child anchor than its
+    # nearest ordinary anchor is refused; calibrated in tests/test_privacy_fix.py on both SigLIP 2 models
+    child_meaning_margin: float = 0.0
     search_min_probability: float = 0.01
     same_as_threshold: float = 0.8
     zone_margin: float = 0.02
@@ -243,7 +246,7 @@ class CropTuning(_Section):
     face_score: float = 0.5  # lower than enrolment's, so in doubt a face is blurred
     face_grow: float = 0.35  # share of a face box added around it before blurring
     blur_cells: int = 6  # a face is pixelated to this many cells across, then smoothed
-    # a person box with no face found: the head is placed from pose landmarks (nose, eyes, ears, mouth) seen at least
+    # every person box: the head is placed from pose landmarks (nose, eyes, ears, mouth) seen at least
     # this surely, as a square head_grow times their spread and at least head_min of the box's longer side; with no
     # landmarks the whole box is blurred
     pose_visible: float = 0.5

@@ -7,7 +7,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from watchful.agent.compiler import Invalid, card, check_watch, compile_watch, context_for
+from watchful.agent.compiler import Invalid, card, check_age, check_watch, compile_watch, context_for
 from watchful.api.blobs import owns
 from watchful.api.common import LIVE_KINDS, alert_or_404, camera_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
@@ -111,6 +111,13 @@ def make_router(ctx) -> APIRouter:
         restart_where_it_runs(r, watch, cam.id)
         return row
 
+    def no_age(r, cam: Camera, watch: Watch) -> None:
+        """A preset filled in, or a lookout's description, is checked for age like any other watch."""
+        try:
+            check_age(watch.model_dump(), context_for(r, cam))
+        except Invalid as e:
+            raise HTTPException(400, f"That watch can't be saved: {e}.")
+
     def checked(member: CurrentMember, cam: Camera, body: WatchIn) -> tuple[Watch, dict]:
         """A watch the client sends is checked again like the AI's, and may only point at this society's pictures and
         events; the card is worked out again rather than trusted."""
@@ -136,6 +143,7 @@ def make_router(ctx) -> APIRouter:
                 watch = preset(body.preset, **body.fill)
             except (KeyError, ValueError) as e:
                 raise HTTPException(400, f"That preset can't be used: {e}")
+            no_age(r, cam, watch)
             text = body.preset
         elif body.watch is not None:
             watch, shown = checked(member, cam, body)
@@ -195,6 +203,8 @@ def make_router(ctx) -> APIRouter:
         else:
             raise HTTPException(400, "Pick a person, a description or a sighting.")
         cams = [camera_or_404(r, cid) for cid in body.camera_ids]
+        if cams:
+            no_age(r, cams[0], preset("lookout", **fill))
         return {"watch_ids": [save_watch(member, cam, "lookout", preset("lookout", **fill)).id for cam in cams]}
 
     return router

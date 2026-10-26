@@ -631,7 +631,7 @@ def test_small_child_zone_does_not_compile_into_a_child_watch():
 
 
 AGE_WORDS = ["a person of about 7", "aged 10", "someone of 8 or 9", "minor", "a minor", "7-year-old", "7 yr old",
-             "7yo", "a 7 years old", "12 y.o.", "under 12", "under-12s",
+             "7yo", "a 7 years old", "12 y.o.", "under 12 years", "under-12s",
              "adolescent", "preschooler", "newborn", "kiddos", "a little one", "schoolgirl", "schoolgirls", "schoolboy",
              "schoolboys", "schoolkids", "school uniform", "school student", "school students", "bachcha", "bachche",
              "baccha", "bacche", "bachchi", "ladka", "ladke", "ladki", "munna", "munni"]
@@ -671,7 +671,7 @@ def test_the_verifier_never_judges_age(tmp_path):
     v = verify(cand(), ctx(tmp_path), FakeLLM([step("cannot_judge", reason="It needs an age.")]))
     assert v.status == "unverified" and "age" in v.summary and v.trace[-1].tool == "cannot_judge"
     v = verify(cand(), ctx(tmp_path / "b"), FakeLLM([step("dismiss", reason="I cannot judge this without an age.")]))
-    assert v.status == "unverified"
+    assert v.status == "dismissed"  # only the cannot_judge tool means it needs an age (privacy fix round, B)
     v = verify(cand(), ctx(tmp_path / "c"), FakeLLM([step("raise_alert", summary="A child of about 7 is in the pool.",
                                                          severity="critical", reason="alone")]))
     assert v.status == "alert" and not mentions_age(v.summary) and v.summary == "Someone is in the pool."

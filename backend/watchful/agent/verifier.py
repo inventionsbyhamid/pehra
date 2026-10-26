@@ -11,7 +11,6 @@ from watchful.rules.engine import Candidate
 
 MAX_IMAGES = 6
 GRADES = ("critical", "warning", "info")
-CANNOT_JUDGE = "cannot judge"
 SCHEMA = {"type": "object", "properties": {"tool": {"type": "string", "enum": list(TOOLS) + list(TERMINAL)},
                                            "args": {"type": "object"}, "why": {"type": "string"}},
           "required": ["tool", "args", "why"]}
@@ -61,6 +60,14 @@ def _opening(c: Candidate, ctx: ToolContext) -> tuple[str, list[str]]:
     return "\n".join(lines), refs
 
 
+def _places(ctx: ToolContext) -> list[str]:
+    """The society's zone and line names (this camera's among them): places, never read as an age in a summary."""
+    try:
+        return sorted({z.name for cam in ctx.repo.list_cameras() for z in cam.zones})
+    except Exception:  # a summary is still made safe without them; place names may then be changed
+        return []
+
+
 def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadline_s: float = 45) -> Verdict:
     if c.evidence.get("method") == "face":
         return Verdict("alert", f"{c.watch_name}: recognised by face.")
@@ -100,16 +107,19 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
         if tool in TERMINAL:
             summary = plain(str(args.get("summary") or args.get("reason") or args.get("question") or why))
             trace.append(TraceStep(n, tool, args, why, "", int((time.monotonic() - t0) * 1000)))
-            if tool == "cannot_judge" or CANNOT_JUDGE in f"{summary} {why}".lower():
+            if tool == "cannot_judge":
                 # it needs an age, which is never judged: a person sees the moment, unchecked, and no age is stated
                 return Verdict("unverified", plain(f"{c.watch_name}: the AI can't judge this, it would need an age."),
                                trace)
-            if mentions_age(summary):
-                summary = neutral_text(summary)  # the agent never states anyone's age or calls anyone a child
+            places = _places(ctx)
+
+            def safe(words: str) -> str:  # the agent never states anyone's age or calls anyone a child
+                return neutral_text(words, places) if mentions_age(words, places) else words
+            summary = safe(summary)
             status = {"raise_alert": "alert", "dismiss": "dismissed", "ask_human": "awaiting_human"}[tool]
             grade = str(args.get("severity") or "").strip().lower()
             if tool == "raise_alert" and grade in GRADES:
-                return Verdict(status, summary, trace, grade, plain(str(args.get("reason") or "")))
+                return Verdict(status, summary, trace, grade, safe(plain(str(args.get("reason") or ""))))
             return Verdict(status, summary, trace)
         result = run_tool(ctx, tool, args)
         trace.append(TraceStep(n, tool, args, why, result.text, int((time.monotonic() - t0) * 1000)))

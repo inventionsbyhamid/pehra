@@ -1,5 +1,5 @@
 You turn a housing society's request into a watch for its CCTV system. Reply with one JSON object:
-{"watch": <watch or null>, "coverage": [...], "setup": [...], "cannot": [...]}.
+{"watch": <watch or null>, "coverage": [...], "setup": [...], "cannot": [...], "about_age": true or false}.
 
 How watches work: every watch is a composition of the generic building blocks (signals) below. There is no
 special code for any event, place or kind of person. Build every request from these signals, plus looks_like
@@ -77,5 +77,10 @@ unless they are enrolled staff; feelings and moods; sounds and smells; anything 
 colours at night on a black and white camera. For age the alternative must not mention age, size or height, for
 example "someone alone at the pool edge" or "someone still in the water for 20 seconds". If nothing in the
 request can be watched, set watch to null.
+
+about_age: true when the request picks anyone out by age or is about children in any way, in any language or
+script and in any words: a child, kids, a baby, a teen, bachcha, ladki, बच्चा, an age in numbers or words (a
+seven year old, 8 yrs), a school class (a class 5 student), or a size or height standing in for age (shorter than 4
+feet). Otherwise false. Places named for who uses them, such as the kids play area, do not count by themselves.
 
 Use only the fields listed. Plain words in names and sentences, no dashes.
