@@ -10,6 +10,19 @@ Built for the OpenCV AI Competition 2026 with OpenCV 5 and AWS by Hamid Mahmood 
 [agent workflow](docs/agent-workflow.svg).
 
 <!-- try start -->
+## Try it
+
+* Live demo: https://arising-draw-database-kelkoo.trycloudflare.com
+  Press Try the demo for a private sandbox society for a day. It opens the control room with the Plaza demo camera
+  (OpenCV's sample clip), an open critical incident with its picture and the Telegram message the society's group
+  would get. Add your laptop or phone as a camera from the demo bar, type a watch such as "someone in front of the
+  camera", and see it fire.
+* Video: not set yet
+* Website: not set yet
+* Code: not set yet
+
+The demo runs on our test server today (see "Run it on our test server" below). The AWS deployment is described below
+and in the report.
 <!-- try end -->
 
 ## What it does
@@ -30,6 +43,20 @@ Built for the OpenCV AI Competition 2026 with OpenCV 5 and AWS by Hamid Mahmood 
   any laptop or phone as a camera (faces blurred in the browser by OpenCV.js before sending), and uploads.
 
 <!-- pricing start -->
+## Pricing
+
+Pehra is sold to housing societies in India per watched camera, charged in rupees through Polar, our merchant of
+record. A society picks which of its cameras Pehra watches. Prices exclude GST. Dollar amounts are approximate, at
+[₹94.94](backend/watchful/data/plans.json "usd_inr.rate") to the dollar (RBI reference rate, [23 October 2026](backend/watchful/data/plans.json "usd_inr.date")); the site shows them to visitors outside India.
+
+| Plan | A month | A year | Watched cameras | Footage kept |
+| --- | --- | --- | --- | --- |
+| Free | [₹0](backend/watchful/data/plans.json "plans.free.price_month_inr") | | [2](backend/watchful/data/plans.json "plans.free.limits.watched_cameras") | [7](backend/watchful/data/plans.json "plans.free.limits.retention_days") days |
+| Society | [₹699](backend/watchful/data/plans.json "plans.society.price_month_inr") a camera (about [$7](backend/watchful/data/plans.json "plans.society.price_month_inr in plans.json over usd_inr.rate in plans.json")) | [₹6,990](backend/watchful/data/plans.json "plans.society.price_year_inr") a camera (about [$74](backend/watchful/data/plans.json "plans.society.price_year_inr in plans.json over usd_inr.rate in plans.json")) | up to [49](backend/watchful/data/plans.json "plans.society.limits.watched_cameras") | [30](backend/watchful/data/plans.json "plans.society.limits.retention_days") days |
+| Large sites | By agreement | | [50](backend/watchful/data/plans.json "plans.large.limits.min_cameras") or more | by agreement |
+
+What one camera costs us on AWS is not measured yet (report section 6); running the instance is estimated at about
+[$105.00](eval/results/build_measurements.json "estimates.aws_month_usd") (about [₹10,000](eval/results/build_measurements.json "estimates.aws_month_usd in build_measurements.json times usd_inr.rate in plans.json")) a month (report section 5).
 <!-- pricing end -->
 
 ## Run it on your computer
@@ -128,6 +155,29 @@ python3 docs/fill.py                                           # every measured 
 How to record the society clips the evaluation is waiting for is in `eval/record_checklist.md`.
 
 <!-- results start -->
+## Results
+
+From the evaluation on OpenCV's Plaza clip, labelled by eye by us (one labeller), at 2 analysed frames a
+second; the plate reader on real photos; and the camera pool on our x86 dev box. The COOL benchmark on AWS Graviton
+has not run yet. Each number links to its file in [eval/results](eval/results); one not measured yet says so.
+
+| Plaza clip, 2 fps | Labelled | Matched | False alarms | Missed | Precision | Recall |
+| --- | --- | --- | --- | --- | --- | --- |
+| Enters the left walkway | [19](eval/results/eval-plaza.json "runs.fps_2.watches.enter.truth") | [14](eval/results/eval-plaza.json "runs.fps_2.watches.enter.tp") | [2](eval/results/eval-plaza.json "runs.fps_2.watches.enter.fp") | [5](eval/results/eval-plaza.json "runs.fps_2.watches.enter.fn") | [88%](eval/results/eval-plaza.json "runs.fps_2.watches.enter.precision.value") | [74%](eval/results/eval-plaza.json "runs.fps_2.watches.enter.recall.value") |
+| Crosses the edge going in | [18](eval/results/eval-plaza.json "runs.fps_2.watches.cross_in.truth") | [13](eval/results/eval-plaza.json "runs.fps_2.watches.cross_in.tp") | [2](eval/results/eval-plaza.json "runs.fps_2.watches.cross_in.fp") | [5](eval/results/eval-plaza.json "runs.fps_2.watches.cross_in.fn") | [87%](eval/results/eval-plaza.json "runs.fps_2.watches.cross_in.precision.value") | [72%](eval/results/eval-plaza.json "runs.fps_2.watches.cross_in.recall.value") |
+| Crosses the edge going out | [12](eval/results/eval-plaza.json "runs.fps_2.watches.cross_out.truth") | [9](eval/results/eval-plaza.json "runs.fps_2.watches.cross_out.tp") | [2](eval/results/eval-plaza.json "runs.fps_2.watches.cross_out.fp") | [3](eval/results/eval-plaza.json "runs.fps_2.watches.cross_out.fn") | [82%](eval/results/eval-plaza.json "runs.fps_2.watches.cross_out.precision.value") | [75%](eval/results/eval-plaza.json "runs.fps_2.watches.cross_out.recall.value") |
+
+| Measure | Result |
+| --- | --- |
+| Every watch together at 2 fps, precision and recall | [86%](eval/results/eval-plaza.json "runs.fps_2.all.precision.value") ([72% to 93%](eval/results/eval-plaza.json "runs.fps_2.all.precision.wilson95")), [73%](eval/results/eval-plaza.json "runs.fps_2.all.recall.value") ([60% to 84%](eval/results/eval-plaza.json "runs.fps_2.all.recall.wilson95")) |
+| Line crossings going in at 1 fps, recall before and after the tracker fix | [0%](eval/results/eval-plaza_before_fix.json "runs.fps_1.watches.cross_in.recall.value"), [83%](eval/results/eval-plaza.json "runs.fps_1.watches.cross_in.recall.value") |
+| Plates read exactly, of real photos the grammar covers (not gate CCTV) | [5](eval/results/plates-commons.json "all.exact") of [7](eval/results/plates-commons.json "all.plates"); wrong [1](eval/results/plates-commons.json "all.wrong"), unread [1](eval/results/plates-commons.json "all.unread") |
+| Analysed frames a second per camera, 8 cameras on 2 CPUs of the dev box | [0.51](eval/results/bench-devbox_no_text.json "fps.per_camera.median") |
+| The same on c8g.large with COOL, and with stock OpenCV | not measured yet, not measured yet |
+| COOL over stock OpenCV on the same Graviton instance | not measured yet |
+| Memory of the whole app on the dev box, 8 cameras, median | [2,416 MB](eval/results/bench-devbox_no_text.json "memory_mb.total_median") |
+
+Failure cases and limitations are in sections 8.6, 11 and 12 of the [report](docs/report.md).
 <!-- results end -->
 
 ## Models and their licences

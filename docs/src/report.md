@@ -760,13 +760,19 @@ logged one in and one out paired by plate, at confidences {{build.plates.gate_co
 {{bench.devbox_no_text.cameras}} cameras on {{bench.devbox_no_text.vcpus}} CPUs, as a c8g.large would have, with a
 stand in AI. These are dev box numbers, not Graviton ones.
 
-| Dev box, {{bench.devbox_no_text.cameras}} cameras on {{bench.devbox_no_text.vcpus}} CPUs | App defaults without a watch in words (index on) | Lean (index off) |
-| --- | --- | --- |
-| Analysed frames a second per camera, median | {{bench.devbox_no_text.fps_per_camera|bare}} | {{bench.devbox_lean.fps_per_camera|bare}} |
-| Frame latency, median and 95th percentile | {{bench.devbox_no_text.latency_p50}}, {{bench.devbox_no_text.latency_p95}} | {{bench.devbox_lean.latency_p50}}, {{bench.devbox_lean.latency_p95}} |
-| Memory of the app and everything it started, median and peak | {{bench.devbox_no_text.memory_total}}, {{bench.devbox_no_text.memory_peak}} | {{bench.devbox_lean.memory_total}}, {{bench.devbox_lean.memory_peak}} |
-| Largest camera process | {{bench.devbox_no_text.memory_camera_process}} | {{bench.devbox_lean.memory_camera_process}} |
-| Cameras this box gives {{say:2 frames a second}} | {{bench.devbox_no_text.cameras_at_2fps}} | {{bench.devbox_lean.cameras_at_2fps}} |
+| Dev box, {{bench.devbox_no_text.cameras}} cameras on {{bench.devbox_no_text.vcpus}} CPUs | App defaults with a watch in words on every camera | App defaults without one (index on) | Lean (index off) |
+| --- | --- | --- | --- |
+| Analysed frames a second per camera, median | {{bench.devbox.fps_per_camera|bare}} | {{bench.devbox_no_text.fps_per_camera|bare}} | {{bench.devbox_lean.fps_per_camera|bare}} |
+| Frame latency, median and 95th percentile | {{bench.devbox.latency_p50}}, {{bench.devbox.latency_p95}} | {{bench.devbox_no_text.latency_p50}}, {{bench.devbox_no_text.latency_p95}} | {{bench.devbox_lean.latency_p50}}, {{bench.devbox_lean.latency_p95}} |
+| Memory of the app and everything it started, median and peak | {{bench.devbox.memory_total}}, {{bench.devbox.memory_peak}} | {{bench.devbox_no_text.memory_total}}, {{bench.devbox_no_text.memory_peak}} | {{bench.devbox_lean.memory_total}}, {{bench.devbox_lean.memory_peak}} |
+| The app process alone, median | {{bench.devbox.memory_app}} | {{bench.devbox_no_text.memory_app}} | {{bench.devbox_lean.memory_app}} |
+| Largest camera process | {{bench.devbox.memory_camera_process}} | {{bench.devbox_no_text.memory_camera_process}} | {{bench.devbox_lean.memory_camera_process}} |
+| Cameras this box gives {{say:2 frames a second}} | {{bench.devbox.cameras_at_2fps}} | {{bench.devbox_no_text.cameras_at_2fps}} | {{bench.devbox_lean.cameras_at_2fps}} |
+| Engine commit | {{bench.devbox.engine}} | {{bench.devbox_no_text.engine}} | {{bench.devbox_lean.engine}} |
+
+With a watch in words on every camera the run measured the first minutes after start, while the app still held the
+text tower (it is dropped after {{say:5 minutes}} unused), so its memory was over the {{say:3,072 MB}} budget of a
+c8g.large; see the steady state below.
 
 Measured while building, in a container shaped like a c8g.large ({{say:2 pinned CPUs, 4 GB; 8 Plaza cameras for 75 s}}; index
 off, no watch in words, a stand in AI): the shared pool used {{build.pool.c8g_shape.pool_steady_mb_run1}} and

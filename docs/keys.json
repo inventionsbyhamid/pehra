@@ -647,5 +647,304 @@
   ],
   "unit": "times",
   "means": "c8g with COOL over c7i with stock OpenCV, same size, without the description watch"
+ },
+ "eval.*.fps_*.analysis_fps": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.analysis_fps",
+  "unit": "fps",
+  "means": "the analysis rate of this run"
+ },
+ "eval.*.cpu": {
+  "from": "eval-{1}",
+  "path": "machine.cpu",
+  "unit": "text",
+  "means": "the CPU that scored the clip"
+ },
+ "eval.*.opencv": {
+  "from": "eval-{1}",
+  "path": "machine.opencv",
+  "unit": "text",
+  "means": "the OpenCV version that scored the clip"
+ },
+ "eval.*.cool": {
+  "from": "eval-{1}",
+  "path": "machine.cool",
+  "unit": "bool",
+  "means": "whether the clip was scored with COOL's OpenCV"
+ },
+ "bench.*.cpu": {
+  "from": "bench:{1}",
+  "path": "machine.cpu",
+  "unit": "text",
+  "means": "the CPU it ran on"
+ },
+ "bench.*.arch": {
+  "from": "bench:{1}",
+  "path": "machine.arch",
+  "unit": "text",
+  "means": "the CPU architecture"
+ },
+ "bench.*.kleidicv": {
+  "from": "bench:{1}",
+  "path": "machine.kleidicv",
+  "unit": "bool",
+  "means": "whether KleidiCV was in the OpenCV build it loaded"
+ },
+ "bench.*.processes": {
+  "from": "bench:{1}",
+  "path": "scenario.processes",
+  "unit": "int",
+  "means": "camera processes in the run"
+ },
+ "bench.*.index": {
+  "from": "bench:{1}",
+  "path": "scenario.index_embeddings",
+  "unit": "bool",
+  "means": "whether the search index was on"
+ },
+ "plans.free.days": {
+  "from": "plans",
+  "path": "plans.free.limits.retention_days",
+  "unit": "int",
+  "means": "days the free plan keeps footage"
+ },
+ "plans.society.days": {
+  "from": "plans",
+  "path": "plans.society.limits.retention_days",
+  "unit": "int",
+  "means": "days the society plan keeps footage"
+ },
+ "plans.free.ai_checks": {
+  "from": "plans",
+  "path": "plans.free.limits.ai_checks_day",
+  "unit": "int",
+  "means": "AI checks a day for a free society"
+ },
+ "plans.society.ai_checks": {
+  "from": "plans",
+  "path": "plans.society.limits.ai_checks_day",
+  "unit": "int",
+  "means": "AI checks a day per watched camera on the society plan"
+ },
+ "plans.free.staff": {
+  "from": "plans",
+  "path": "plans.free.limits.enrolled_staff",
+  "unit": "int",
+  "means": "staff a free society may enrol"
+ },
+ "plans.society.staff": {
+  "from": "plans",
+  "path": "plans.society.limits.enrolled_staff",
+  "unit": "int",
+  "means": "staff a society on the paid plan may enrol"
+ },
+ "plans.large.min_cameras": {
+  "from": "plans",
+  "path": "plans.large.limits.min_cameras",
+  "unit": "int",
+  "means": "cameras from which a site is a large site"
+ },
+ "plans.refund_days": {
+  "from": "plans",
+  "path": "refund_days_yearly",
+  "unit": "int",
+  "means": "days in which a yearly plan can be refunded in full"
+ },
+ "plans.society.year_usd": {
+  "ratio": [
+   "plans.society.year",
+   "plans.rate"
+  ],
+  "unit": "usd_about",
+  "means": "the society plan a year in dollars, about"
+ },
+ "aws.region": {
+  "from": "aws",
+  "path": "region",
+  "unit": "text",
+  "means": "AWS region of the deploy"
+ },
+ "aws.instance_type": {
+  "from": "aws",
+  "path": "instance_type",
+  "unit": "text",
+  "means": "EC2 instance type of the deploy"
+ },
+ "aws.deployed_at": {
+  "from": "aws",
+  "path": "deployed_at",
+  "unit": "text",
+  "means": "when the deploy finished"
+ },
+ "aws.code": {
+  "from": "aws",
+  "path": "code",
+  "unit": "text",
+  "means": "the commit deployed"
+ },
+ "aws.url": {
+  "from": "aws",
+  "path": "url",
+  "unit": "text",
+  "means": "the public address of the deploy"
+ },
+ "aws.opencv": {
+  "from": "aws",
+  "path": "opencv",
+  "unit": "text",
+  "means": "OpenCV version deploy/cv2_info.py printed on the instance"
+ },
+ "aws.cv2_file": {
+  "from": "aws",
+  "path": "cv2_file",
+  "unit": "text",
+  "means": "the cv2 module file deploy/cv2_info.py printed on the instance"
+ },
+ "aws.cool": {
+  "from": "aws",
+  "path": "cool",
+  "unit": "bool",
+  "means": "cv2 loaded from under /opt/cool: the proof that COOL runs"
+ },
+ "aws.kleidicv": {
+  "from": "aws",
+  "path": "kleidicv",
+  "unit": "bool",
+  "means": "KleidiCV in the loaded OpenCV build, from deploy/cv2_info.py"
+ },
+ "aws.healthz_opencv": {
+  "from": "aws",
+  "path": "healthz.opencv",
+  "unit": "text",
+  "means": "the OpenCV version the running app reported on /healthz"
+ },
+ "aws.healthz_kleidicv": {
+  "from": "aws",
+  "path": "healthz.kleidicv",
+  "unit": "bool",
+  "means": "KleidiCV in the running app's OpenCV, from /healthz"
+ },
+ "aws.worker_beat": {
+  "from": "aws",
+  "path": "healthz.worker_beat_fresh",
+  "unit": "bool",
+  "means": "the job worker's heartbeat was fresh at the end of the deploy"
+ },
+ "aws.memory_mb": {
+  "from": "aws",
+  "path": "memory_mb",
+  "unit": "mb",
+  "means": "deploy/check_memory.py total on the instance"
+ },
+ "aws.memory_budget_mb": {
+  "from": "aws",
+  "path": "memory_budget_mb",
+  "unit": "mb",
+  "means": "the memory budget deploy/check_memory.py checked against"
+ },
+ "aws.memory_ok": {
+  "from": "aws",
+  "path": "memory_ok",
+  "unit": "bool",
+  "means": "whether the instance was inside its memory budget"
+ },
+ "cost.aws_month_inr": {
+  "times": [
+   "build.estimates.aws_month_usd",
+   "plans.rate"
+  ],
+  "unit": "inr_about",
+  "means": "the estimated AWS cost a month in rupees, at the plans file's rate"
+ },
+ "agent.*.model": {
+  "from": "agent-trace-{1}",
+  "path": "model",
+  "unit": "text",
+  "means": "the AI provider and model of the trace"
+ },
+ "agent.*.date": {
+  "from": "agent-trace-{1}",
+  "path": "date",
+  "unit": "day",
+  "means": "the day the trace ran"
+ },
+ "agent.*.code": {
+  "from": "agent-trace-{1}",
+  "path": "code",
+  "unit": "text",
+  "means": "the commit the trace ran"
+ },
+ "agent.*.moment_s": {
+  "from": "agent-trace-{1}",
+  "path": "moment_s",
+  "unit": "s",
+  "means": "the flagged moment's time in the clip"
+ },
+ "agent.*.dark": {
+  "from": "agent-trace-{1}",
+  "path": "dark",
+  "unit": "pct",
+  "means": "the share of brightness the frames kept"
+ },
+ "agent.*.runs": {
+  "from": "agent-trace-{1}",
+  "path": "runs",
+  "op": "len",
+  "unit": "int",
+  "means": "AI checks run on the moment"
+ },
+ "agent.*.r*.verdict": {
+  "from": "agent-trace-{1}",
+  "path": "runs.{2}.verdict",
+  "unit": "text",
+  "means": "the verifier's verdict on that run"
+ },
+ "agent.*.r*.severity": {
+  "from": "agent-trace-{1}",
+  "path": "runs.{2}.severity",
+  "unit": "text",
+  "means": "the grade the model gave"
+ },
+ "agent.*.r*.summary": {
+  "from": "agent-trace-{1}",
+  "path": "runs.{2}.summary",
+  "unit": "text",
+  "means": "the model's summary"
+ },
+ "agent.*.r*.tools": {
+  "from": "agent-trace-{1}",
+  "path": "runs.{2}.tools",
+  "unit": "text",
+  "means": "the steps the model took, in order"
+ },
+ "agent.*.r*.s*.tool": {
+  "from": "agent-trace-{1}",
+  "path": "runs.{2}.steps.{3}.tool",
+  "unit": "text",
+  "means": "the tool of that step"
+ },
+ "agent.*.r*.s*.why": {
+  "from": "agent-trace-{1}",
+  "path": "runs.{2}.steps.{3}.why",
+  "unit": "text",
+  "means": "the model's reason for that step"
+ },
+ "agent.*.r*.s*.result": {
+  "from": "agent-trace-{1}",
+  "path": "runs.{2}.steps.{3}.result",
+  "unit": "text",
+  "means": "what the OpenCV tool returned"
+ },
+ "agent.*.r*.s*.ms": {
+  "from": "agent-trace-{1}",
+  "path": "runs.{2}.steps.{3}.ms",
+  "unit": "ms",
+  "means": "that step's time, the model's reply included"
+ },
+ "agent.*.r*.reason": {
+  "from": "agent-trace-{1}",
+  "path": "runs.{2}.reason",
+  "unit": "text",
+  "means": "the model's reason for its grade"
  }
 }
