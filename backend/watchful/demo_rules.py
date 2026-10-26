@@ -119,11 +119,17 @@ def sandbox_search(ws, photo: bool, person: bool) -> str | None:
     return PHOTO_OFF if in_demo(ws) and (photo or person) else None
 
 
+_KIND: dict[str, bool] = {}  # whether a society is a sandbox, which never changes for its id
+
+
 def is_sandbox(db, workspace_id: str | None) -> bool:
     if not workspace_id:
         return False
-    with db.tx() as s:
-        return s.scalar(select(m.Workspace.demo).where(m.Workspace.id == workspace_id)) == SANDBOX
+    if workspace_id not in _KIND:
+        with db.tx() as s:
+            kind = s.scalar(select(m.Workspace.demo).where(m.Workspace.id == workspace_id))
+        _KIND[workspace_id] = kind == SANDBOX  # ids are never reused, so a society made later is not this one
+    return _KIND[workspace_id]
 
 
 def in_sandbox(repo) -> bool:
@@ -145,3 +151,4 @@ def last_seen(workspace_id: str, default: float) -> float:
 
 def forget(workspace_id: str) -> None:
     _SEEN.pop(workspace_id, None)
+    _KIND.pop(workspace_id, None)

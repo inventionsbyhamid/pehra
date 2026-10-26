@@ -325,7 +325,7 @@ def test_a_visitors_own_camera_and_its_watch(tmp_path):
         deadline = time.time() + 5
         while phone["id"] not in manager.pushed and time.time() < deadline:
             time.sleep(0.05)
-    assert phone["id"] in manager.pushed and phone["id"] in manager.started
+        assert phone["id"] in manager.pushed and phone["id"] in manager.started
 
     typed = {"name": "Two or more people", "conditions": [{"signal": "count", "op": ">=", "value": 2}],
              "severity": "warning", "verify": "Are there two or more people?"}
