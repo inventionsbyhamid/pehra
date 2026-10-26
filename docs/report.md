@@ -6,7 +6,7 @@ Pehra is an AI control room for the CCTV cameras Indian housing societies alread
 This short report covers how it is built, how OpenCV is used, how we evaluated it, and what it cannot do yet.
 
 * Live demo: https://pehra.dijmo.com (press Try the demo)
-* Video: not set yet
+* Video: https://youtu.be/nlv7qOpzlyI
 * Code: https://github.com/inventionsbyhamid/pehra
 
 Every measured number here is filled in by `docs/fill.py` from a file in `eval/results/` and links to it. A number we

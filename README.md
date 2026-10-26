@@ -9,7 +9,7 @@ Pehra (पहरा, "the watch") is an AI control room for the CCTV cameras an 
   the control room with the Plaza demo camera (OpenCV's sample clip) and an open critical incident, with the Telegram
   message the society's group would get. Add your laptop or phone as a camera from the demo bar, type a watch such as
   "someone in front of the camera", and see it fire.
-* Video: not set yet
+* Video: https://youtu.be/nlv7qOpzlyI
 * Code: https://github.com/inventionsbyhamid/pehra
 
 The live demo runs on our own server, with stock OpenCV and an OpenRouter model.

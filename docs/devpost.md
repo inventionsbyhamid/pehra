@@ -29,7 +29,7 @@ top of the feed (3:2, JPG or PNG under 5 MB). Only the demo's sample clip or con
 
 ## Video demo link
 
-not set yet
+https://youtu.be/nlv7qOpzlyI
 
 ## Special awards
 
