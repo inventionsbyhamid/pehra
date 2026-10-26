@@ -120,9 +120,11 @@ def summarize(frames0: dict, frames1: dict, elapsed_s: float, latency: dict, mem
 class Sampler:
     """Every few seconds: the host load and the memory of this process and everything it started."""
 
-    def __init__(self, roles, every_s: float = 2.0):
+    def __init__(self, roles, every_s: float = 2.0, guard_mb: float = 0):
         from check_memory import processes
         self._processes, self.roles, self.every_s = processes, roles, every_s
+        self.guard_mb = guard_mb  # stop the run when the container's memory in use passes this (a shared host)
+        self.over: str | None = None
         self.loads: list[float] = []
         self.rows: list[tuple[float, list]] = []
         self.cpu: list[tuple[float, dict, float | None]] = []
@@ -144,7 +146,18 @@ class Sampler:
             self.loads.append(os.getloadavg()[0])
             self.rows.append((now, rows))
             self.cpu.append((now, {pid: cpu_s(pid) for pid, _, _ in rows}, throttled_s()))
+            used = container_mb()
+            if self.guard_mb and used is not None and used > self.guard_mb:
+                self.over = f"the container holds {used:.0f} MB, over {self.guard_mb:.0f} MB: stopped, others need it"
             self._stop.wait(self.every_s)
+
+    def wait(self, seconds: float) -> None:
+        """Sleeps, unless the memory guard trips."""
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            if self.over:
+                raise SystemExit(self.over)
+            time.sleep(min(0.5, max(0.0, end - time.monotonic())))
 
     def cpu_use(self) -> dict:
         """CPU seconds each role used in the measured window, as a share of the window, and how long the container's
@@ -199,6 +212,15 @@ def cpu_s(pid: int) -> float | None:
         return None
 
 
+def container_mb() -> float | None:
+    """Memory the container's processes hold (cgroup v2 anon), not counting the page cache."""
+    try:
+        stat = dict(line.split() for line in Path("/sys/fs/cgroup/memory.stat").read_text().splitlines())
+        return int(stat["anon"]) / 2 ** 20
+    except (OSError, KeyError, ValueError):
+        return None
+
+
 def throttled_s() -> float | None:
     """Seconds the container's CPU quota has held its processes back so far (cgroup v2), when there is a quota."""
     try:
@@ -239,7 +261,7 @@ def loop_clip(clip: Path) -> Path:
 
 
 def run(cameras: int, processes: int, cpus: int, seconds: float, clip: Path, work: Path, text: bool, index: bool,
-        warmup_max_s: float, prices: dict, instance: str | None, cool: bool) -> dict:
+        warmup_max_s: float, prices: dict, instance: str | None, cool: bool, guard_mb: float = 0) -> dict:
     from watchful.components import make_blobs
     from watchful.tuning import Tuning
     from watchful.workers import WorkerManager
@@ -270,7 +292,7 @@ def run(cameras: int, processes: int, cpus: int, seconds: float, clip: Path, wor
     def frames() -> dict:
         return {c: (manager.status(c).stats or {}).get("frames", 0) for c in ids}
 
-    sampler = Sampler(roles).start()
+    sampler = Sampler(roles, guard_mb=guard_mb).start()
     started = time.monotonic()
     try:
         for i in range(cameras):
@@ -278,18 +300,18 @@ def run(cameras: int, processes: int, cpus: int, seconds: float, clip: Path, wor
             ids.append(cam.id)
             manager.start(cam.id)
         while time.monotonic() - started < warmup_max_s and not all(frames().values()):
-            time.sleep(5)
+            sampler.wait(5)
             say(f"warming up: {sum(1 for n in frames().values() if n)} of {cameras} cameras analysing, "
                 f"{time.monotonic() - started:.0f} s")
         ready_s = time.monotonic() - started
         if not all(frames().values()):
             raise SystemExit(f"cameras without a frame after {warmup_max_s:.0f} s: "
                              + ", ".join(c for c, n in frames().items() if not n))
-        time.sleep(10)  # every camera running: let the queues and the scan pool settle
+        sampler.wait(10)  # every camera running: let the queues and the scan pool settle
         say(f"measuring {cameras} cameras for {seconds:.0f} s")
         t0, f0, calls0 = time.monotonic(), frames(), ai.calls
         sampler.window = (t0, t0 + seconds)
-        time.sleep(seconds)
+        sampler.wait(seconds)
         t1, f1 = time.monotonic(), frames()
         latency = {c: ((manager.status(c).stats or {}).get("latency_p50_ms"),
                        (manager.status(c).stats or {}).get("latency_p95_ms")) for c in ids}
@@ -330,6 +352,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--confirm", action="store_true",
                     help="run again with the cameras the first run says fit at 2 frames a second, and report what "
                          "each got")
+    ap.add_argument("--memory-guard-mb", type=float, default=0,
+                    help="on a shared host: stop the run when the container's memory in use passes this")
     ap.add_argument("--out", default=str(ROOT / "eval" / "results"))
     ap.add_argument("--recost", metavar="RESULTS", help="only work out a results file's capacity and cost again "
                                                           "from its measured rate and today's prices")
@@ -369,11 +393,11 @@ def main(argv: list[str] | None = None) -> None:
                            "command": "python eval/bench.py " + " ".join(argv if argv is not None else sys.argv[1:])}}
     try:
         result.update(run(a.cameras, processes, cpus, a.seconds, clip, work / "run", not a.no_text, not a.no_index,
-                          a.warmup_max, prices, a.instance, cool))
+                          a.warmup_max, prices, a.instance, cool, a.memory_guard_mb))
         if a.confirm and result["capacity"]["at_2fps"] >= 1:
             n = result["capacity"]["at_2fps"]
             again = run(n, processes, cpus, a.seconds, clip, work / "confirm", not a.no_text, not a.no_index,
-                        a.warmup_max, prices, a.instance, cool)
+                        a.warmup_max, prices, a.instance, cool, a.memory_guard_mb)
             result["confirm"] = {"cameras": n, "fps": again["fps"], "latency_ms": again["latency_ms"],
                                  "memory_mb": {k: v for k, v in again["memory_mb"].items() if k != "processes"},
                                  "host": again["host"],
