@@ -4,6 +4,7 @@ import json
 import os
 import platform
 import secrets
+import signal
 import socket
 import subprocess
 import sys
@@ -20,6 +21,41 @@ from watchful.store.db import Camera, WatchRow  # noqa: E402
 from watchful.vision.zones import Zone  # noqa: E402
 
 DEMO = ROOT / "deploy" / "demo.json"
+RUN_MARK = "EVAL_RUN"  # in the environment of every process a run starts, so its watcher can find them
+
+# Outside the run: waits for the run's process to end however it ends (finished, stopped, killed, out of memory),
+# then kills every process still carrying the run's mark. Processes started by anything else lack the mark.
+WATCHER = r"""
+import os, signal, sys, time
+parent, mark = int(sys.argv[1]), sys.argv[2].encode()
+
+def state(pid):
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return None
+
+def marked():
+    for name in os.listdir("/proc"):
+        if name.isdigit() and int(name) != os.getpid():
+            try:
+                with open(f"/proc/{name}/environ", "rb") as f:
+                    if mark in f.read().split(b"\0"):
+                        yield int(name)
+            except OSError:
+                pass
+
+while state(parent) not in (None, "Z", "X"):
+    time.sleep(1)
+for _ in range(3):
+    for pid in marked():
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    time.sleep(0.5)
+"""
 REAL = json.dumps({"tool": "raise_alert", "args": {"summary": "Checked: it is happening."}, "why": "stand in"})
 
 
@@ -35,6 +71,23 @@ class StandInAI:
         with self._lock:
             self.calls += 1
         return REAL
+
+
+def guard_children(name: str) -> str | None:
+    """Every process this run starts ends with it, on every way out. SIGTERM and SIGHUP unwind the run, so its finally
+    blocks stop the camera pool; and a small watcher, outside the run, kills whatever still carries the run's mark once
+    the run's process is gone, which covers SIGKILL and the out of memory killer too. Linux only (it reads /proc);
+    returns the mark, or None where there is no /proc."""
+    if not Path("/proc/self/environ").exists():
+        return None
+    mark = f"{RUN_MARK}={name}-{os.getpid()}-{secrets.token_hex(4)}"
+    os.environ[RUN_MARK] = mark.split("=", 1)[1]
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda signum, _: sys.exit(128 + signum))
+    env = {k: v for k, v in os.environ.items() if k != RUN_MARK}
+    subprocess.Popen([sys.executable, "-I", "-c", WATCHER, str(os.getpid()), mark], env=env, start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return mark
 
 
 def run_settings(data_dir: Path, **changes) -> Settings:

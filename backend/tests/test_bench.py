@@ -5,8 +5,11 @@ number into the documents without a results file behind it."""
 import importlib.util
 import json
 import os
+import signal
 import subprocess
+import sys
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -160,6 +163,69 @@ def test_evaluation_runs_the_live_engine_and_saves_failure_pictures(tmp_path):
                     w["missed_at"] if kind == "first_miss" else w["false_alarms_at"])
                 failures += 1
     assert failures >= 1
+
+
+# a run leaves nothing behind
+
+RUN = """
+import subprocess, sys, time
+sys.path.insert(0, sys.argv[1])
+from harness import guard_children
+guard_children("test")
+quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+child = subprocess.Popen([sys.executable, "-c", "import subprocess, time; subprocess.Popen(['sleep', '120']); "
+                          "time.sleep(120)"], **quiet)
+unmarked = subprocess.Popen(["sleep", "120"], env={"PATH": "/usr/bin:/bin"}, **quiet)  # without the run's mark
+print(child.pid, unmarked.pid, flush=True)
+try:
+    time.sleep(120)
+finally:
+    print("unwound", flush=True)
+"""
+
+
+def _running(pid: int) -> bool:
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] not in ("Z", "X")
+    except (OSError, IndexError):
+        return False
+
+
+def _descendants(pid: int) -> set[int]:
+    out = set()
+    for d in Path("/proc").iterdir():
+        if d.name.isdigit():
+            try:
+                if int(d.joinpath("stat").read_text().rsplit(")", 1)[1].split()[1]) == pid:
+                    out |= {int(d.name)} | _descendants(int(d.name))
+            except (OSError, IndexError, ValueError):
+                pass
+    return out
+
+
+@pytest.mark.skipif(not Path("/proc/self/environ").exists(), reason="the watcher reads /proc (Linux)")
+@pytest.mark.parametrize("how", [signal.SIGKILL, signal.SIGTERM])
+def test_a_run_leaves_no_process_behind(tmp_path, how):
+    """Killed outright (as the out of memory killer does) or stopped, a run's processes all end with it."""
+    script = tmp_path / "run.py"
+    script.write_text(RUN)
+    run = subprocess.Popen([sys.executable, str(script), str(ROOT / "eval")], stdout=subprocess.PIPE, text=True)
+    child, unmarked = (int(x) for x in run.stdout.readline().split())
+    deadline = time.monotonic() + 10
+    while len(_descendants(child)) < 1 and time.monotonic() < deadline:
+        time.sleep(0.1)
+    grandchildren = _descendants(child)
+    assert grandchildren and _running(child)
+    os.kill(run.pid, how)
+    rest = run.stdout.read()
+    run.wait(10)
+    assert ("unwound" in rest) == (how == signal.SIGTERM)  # a stop runs the finally blocks
+    deadline = time.monotonic() + 15
+    while (_running(child) or any(_running(p) for p in grandchildren)) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    assert not _running(child) and not any(_running(p) for p in grandchildren)
+    assert _running(unmarked)  # the watcher kills only what carries the run's mark
+    os.kill(unmarked, signal.SIGKILL)
 
 
 # the AWS benchmark

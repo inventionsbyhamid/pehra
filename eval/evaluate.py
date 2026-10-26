@@ -28,8 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from eval_metrics import match_events, motion_baseline_alerts, percentile, proportion  # noqa: E402
-from harness import (ROOT, StandInAI, add_camera, clip_path, engine_sha, git_sha, machine, run_settings,  # noqa: E402
-                     society, zones_of)
+from harness import (ROOT, StandInAI, add_camera, clip_path, engine_sha, git_sha, guard_children, machine,  # noqa: E402
+                     run_settings, society, zones_of)
 
 EVENT = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -135,16 +135,18 @@ def replay(setup: dict, fps: float, work: Path) -> dict:
         return after(frame, arrived, result)
 
     runner.engine.on_tick, runner.after = record_candidates, record_tracks
-    start = time.perf_counter()
-    while cam.id in worker.cameras:
-        worker.step()
-    wall = time.perf_counter() - start
-    deadline = time.monotonic() + 120
-    while manager._inflight and time.monotonic() < deadline:  # checks still running in the app's check pool
-        time.sleep(0.2)
-    incidents = len(incidents_.list_incidents(repo, None, cam.id, limit=10000))
-    manager.shutdown()
-    worker.close()
+    try:
+        start = time.perf_counter()
+        while cam.id in worker.cameras:
+            worker.step()
+        wall = time.perf_counter() - start
+        deadline = time.monotonic() + 120
+        while manager._inflight and time.monotonic() < deadline:  # checks still running in the app's check pool
+            time.sleep(0.2)
+        incidents = len(incidents_.list_incidents(repo, None, cam.id, limit=10000))
+    finally:
+        worker.close()
+        manager.shutdown()
     ids = {tid for _, _, tracks in ticks for tid, cls, _ in tracks if cls == "person"}
     return {"watches": watches, "fired": fired, "ticks": ticks, "frames": len(ticks), "wall_s": wall,
             "checks": ai.calls, "incidents": incidents, "person_ids": len(ids)}
@@ -270,6 +272,7 @@ def main(argv: list[str] | None = None) -> None:
     a = ap.parse_args(argv)
     import logging
     logging.basicConfig(level=logging.WARNING)
+    guard_children("evaluate")
     rates = [float(x) for x in a.fps.split(",") if x.strip()]
     out = Path(a.out)
     for path in a.labels:

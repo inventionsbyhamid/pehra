@@ -27,8 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from harness import (ROOT, StandInAI, add_camera, demo_camera, engine_sha, git_sha, machine, run_settings,  # noqa: E402
-                     society, zones_of)
+from harness import (ROOT, StandInAI, add_camera, demo_camera, engine_sha, git_sha, guard_children,  # noqa: E402
+                     machine, run_settings, society, zones_of)
 
 sys.path.insert(0, str(ROOT / "deploy"))
 FLOORS = (2.0, 5.0)  # analysed frames a second a camera must get: the design's floor, and the default analysis_fps
@@ -297,7 +297,10 @@ def run(cameras: int, processes: int, cpus: int, seconds: float, clip: Path, wor
         checks = ai.calls - calls0
     finally:
         sampler.stop()
-        manager.shutdown()
+        try:
+            manager.shutdown()
+        finally:
+            manager.pool.close()  # again, in case shutdown stopped short of it
     out = summarize(f0, f1, t1 - t0, latency, sampler.memory(), cpus, prices, instance, cool)
     out["timing"] = {"warmup_s": round(ready_s, 1), "settle_s": 10, "measured_s": round(t1 - t0, 1)}
     out["host"] = sampler.host_load()
@@ -341,10 +344,8 @@ def main(argv: list[str] | None = None) -> None:
     if argv is None and os.environ.get("MALLOC_ARENA_MAX") is None:  # as the systemd units run the app
         os.execve(sys.executable, [sys.executable, *sys.argv], {**os.environ, "MALLOC_ARENA_MAX": "2"})
     import logging
-    import signal
     logging.basicConfig(level=logging.WARNING)
-    # stopped from outside (timeout, kill): unwind, so the camera processes stop with the run and are not left behind
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    guard_children("bench")  # no camera process outlives the run, however it ends
     os.chdir(ROOT)
     cores = pin_cpus(a.cpus) if hasattr(os, "sched_setaffinity") else []
     cpus = len(cores) or a.cpus or os.cpu_count() or 1
