@@ -478,3 +478,43 @@ def test_queue_sizes_and_waits_come_from_tuning(tmp_path):
         assert [sub.get_nowait()["n"] for _ in range(3)] == [0, 1, 2]
     finally:
         m.shutdown()
+
+
+# Also: the AI's flow tool measures a walking person, between frames a short gap apart, in the box of that moment
+
+def _walk(times, speed_px_s=24.0, w=40, h=80):
+    import cv2
+    rng = np.random.default_rng(7)
+    person = rng.integers(0, 255, (h, w, 3), dtype=np.uint8)
+    ground = cv2.GaussianBlur(rng.integers(60, 200, (240, 320, 3), dtype=np.uint8), (0, 0), 3)
+    frames, boxes = [], []
+    for t in times:
+        x = int(40 + speed_px_s * (t - times[0]))
+        img = ground.copy()
+        img[100:100 + h, x:x + w] = person
+        frames.append((t, cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])[1].tobytes()))
+        boxes.append((t, (float(x), 100.0, float(w), float(h))))
+    return frames, boxes
+
+
+def _flow(frames, boxes, moment, **kw):
+    from watchful.agent.tools import flow
+    from watchful.evidence import EvidencePack, evidence_context
+    c = _cand()
+    c.ts = moment
+    return flow(evidence_context(EvidencePack(c, frames, boxes), None, None), **kw).text
+
+
+def test_the_flow_tool_sees_a_walking_person_move():
+    times = [100.0 + 0.5 * i for i in range(8)]  # the live evidence: 2 frames a second
+    frames, boxes = _walk(times)
+    text = _flow(frames, boxes, times[-2], from_s=-3, to_s=0.5)
+    side = float(text.split("downward, ")[1].split(" sideways")[0])
+    assert 0.15 <= side <= 0.45, text  # 24 px a second for an 80 px tall person: 0.3 body heights a second
+    assert "0.5 s apart" in text
+
+
+def test_the_flow_tool_says_when_frames_are_too_far_apart():
+    times = [100.0 + 2.0 * i for i in range(4)]
+    frames, boxes = _walk(times)
+    assert "too far apart" in _flow(frames, boxes, times[-1], from_s=-6, to_s=0)

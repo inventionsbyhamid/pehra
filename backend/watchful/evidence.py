@@ -112,7 +112,7 @@ def overlay(jpeg: bytes, zones: list[tuple[str, list]], box: Box | None) -> byte
     return cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes()
 
 
-def evidence_context(pack: EvidencePack, repo, blobs) -> ToolContext:
+def evidence_context(pack: EvidencePack, repo, blobs, cfg: EvidenceTuning = EvidenceTuning()) -> ToolContext:
     """The AI check's tools for one candidate, bound to the camera's society: its repository and its pictures."""
     if pack.workspace_id and pack.workspace_id != repo.workspace_id:
         raise ValueError("an evidence pack is checked with its own society's repository")
@@ -145,5 +145,9 @@ def evidence_context(pack: EvidencePack, repo, blobs) -> ToolContext:
     def poses(track_id: int, seconds: float) -> list[dict]:
         return [p for p in pack.poses if p["ts"] >= pack.candidate.ts - seconds]
 
+    def stills(t0: float, t1: float) -> list[tuple[float, bytes]]:
+        return [(ts, j) for ts, j in frames if t0 <= ts <= t1]
+
     return ToolContext(repo, blobs, pack.candidate.camera_id, get_frames, crops, poses, lambda tid: pack.boxes,
-                       moment=pack.candidate.ts, track_id=pack.candidate.track_id)
+                       moment=pack.candidate.ts, track_id=pack.candidate.track_id, stills=stills,
+                       flow_gap_s=cfg.flow_gap_s)

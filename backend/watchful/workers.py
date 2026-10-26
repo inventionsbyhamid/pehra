@@ -609,7 +609,8 @@ class WorkerManager:
     def _verify_and_store(self, pack: EvidencePack, incident_id: str | None = None, live: bool = False) -> str | None:
         c = pack.candidate
         try:
-            verdict = verify(c, evidence_context(pack, self._repo(c.camera_id), self.blobs), self._llm(c.camera_id))
+            verdict = verify(c, evidence_context(pack, self._repo(c.camera_id), self.blobs, self.tuning.evidence),
+                             self._llm(c.camera_id))
         except Exception:
             log.exception("verifying %s failed", c.fingerprint)
             verdict = _fallback(c, [], "the check failed")

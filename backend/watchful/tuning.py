@@ -197,6 +197,9 @@ class EvidenceTuning(_Section):
     after_s: float = 1.5  # a candidate waits this long so the AI also sees what came next
     fps: float = 2.0
     width: int = 640
+    # the AI's flow tool compares two frames at most this far apart: over more, a walking person leaves the box and
+    # optical flow reads nothing (Task 14's traces measured 0.00 for someone walking across frames 1.5 s apart)
+    flow_gap_s: float = 0.6
 
 
 class ScanTuning(_Section):

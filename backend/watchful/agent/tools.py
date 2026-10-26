@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from watchful.store.blobs import BlobStore
+from watchful.tuning import EvidenceTuning
 
 
 @dataclass
@@ -26,6 +27,8 @@ class ToolContext:
     moment: float = 0.0  # the flagged moment; tools take seconds relative to it
     track_id: int | None = None  # the flagged object's track
     images: dict[str, bytes] = field(default_factory=dict)
+    stills: Callable[[float, float], list[tuple[float, bytes]]] = lambda t0, t1: []  # (time, JPEG), nothing drawn
+    flow_gap_s: float = EvidenceTuning().flow_gap_s  # Tuning evidence.flow_gap_s
 
     def add_image(self, data: bytes) -> str:
         ref = f"img{len(self.images) + 1}"
@@ -92,21 +95,39 @@ def motion_trail(ctx: ToolContext) -> ToolResult:
 
 
 def flow(ctx: ToolContext, from_s: float = -1, to_s: float = 0.5) -> ToolResult:
+    """Optical flow inside the object's box between each two neighbouring frames of the window that are at most
+    Tuning evidence.flow_gap_s apart, in the box of that moment (not the track's last one), on frames with nothing
+    drawn on them; the median over those pairs. Frames further apart say so rather than reading 0.00."""
     t0, t1 = ctx.moment + float(from_s), ctx.moment + float(to_s)
-    frames = ctx.frames(t0, t1, 2)
+    stills = sorted(ctx.stills(t0, t1), key=lambda f: f[0]) if t1 > t0 else []
     path = ctx.boxes(ctx.track_id)
-    if len(frames) < 2 or not path or t1 <= t0:
+    if len(stills) < 2 or not path:
         return ToolResult("not enough frames to measure motion")
-    a, b = (cv2.cvtColor(_decode(f), cv2.COLOR_BGR2GRAY) for f in frames[:2])
-    field_ = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST).calc(a, b, None)
-    x, y, w, h = (int(v) for v in path[-1][1])
-    region = field_[max(0, y):y + h, max(0, x):x + w]
-    if region.size == 0:
-        return ToolResult("the track is outside the frame")
-    down = float(np.median(region[..., 1])) / max(h, 1) / (t1 - t0)
-    side = float(np.median(region[..., 0])) / max(h, 1) / (t1 - t0)
-    return ToolResult(f"median motion inside the box: {down:+.2f} body heights per second downward, "
-                      f"{side:+.2f} sideways")
+    pairs = [(a, b) for a, b in zip(stills, stills[1:]) if 0 < b[0] - a[0] <= ctx.flow_gap_s]
+    if not pairs:
+        return ToolResult(f"the frames are too far apart to measure motion (more than {ctx.flow_gap_s:g} s); "
+                          "compare frames from get_frames instead")
+    dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
+    downs, sides, gaps = [], [], []
+    for (ta, ja), (tb, jb) in pairs:
+        when, box = min(path, key=lambda p: abs(p[0] - ta))
+        if abs(when - ta) > ctx.flow_gap_s:
+            continue  # no box of the object near this frame
+        a, b = (cv2.cvtColor(_decode(j), cv2.COLOR_BGR2GRAY) for j in (ja, jb))
+        if a.shape != b.shape:
+            continue
+        x, y, w, h = (int(v) for v in box)
+        region = dis.calc(a, b, None)[max(0, y):y + h, max(0, x):x + w]
+        if region.size == 0:
+            continue
+        downs.append(float(np.median(region[..., 1])) / max(h, 1) / (tb - ta))
+        sides.append(float(np.median(region[..., 0])) / max(h, 1) / (tb - ta))
+        gaps.append(tb - ta)
+    if not downs:
+        return ToolResult("the object's box is not near those frames")
+    return ToolResult(f"median motion inside the box over {len(downs)} pair{'s' if len(downs) != 1 else ''} of frames "
+                      f"{float(np.median(gaps)):.1f} s apart: {float(np.median(downs)):+.2f} body heights per second "
+                      f"downward, {float(np.median(sides)):+.2f} sideways")
 
 
 def pose_history(ctx: ToolContext, seconds: float = 6) -> ToolResult:
