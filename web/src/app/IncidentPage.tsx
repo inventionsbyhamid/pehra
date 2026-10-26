@@ -5,7 +5,8 @@ import { at, clock, dayLabel, epoch, plain } from "../format";
 import { useLoad, useTitle } from "../hooks";
 import brand from "../site/brand";
 import type { IncidentDetail, IncidentStep } from "../types";
-import { useCan } from "./session";
+import { useCan, useSession } from "./session";
+import { TelegramPreview } from "./TelegramPreview";
 import { Page, PageHead, Problem, Section } from "./ui/Page";
 import { SeverityTag } from "./ui/Severity";
 import { isActive, sentence, statusWords } from "./words";
@@ -63,6 +64,7 @@ function Steps({ inc, camera }: { inc: IncidentDetail; camera?: string }) {
 export default function IncidentPage() {
   const { id = "" } = useParams();
   const supervisor = useCan("supervisor");
+  const { me } = useSession();
   const incident = useLoad(() => api.incident(id), [id], 10_000);
   const cameras = useLoad(() => api.cameras(), []);
   const [busy, setBusy] = useState(false);
@@ -154,6 +156,9 @@ export default function IncidentPage() {
             {inc.count > 1 && isActive(inc) && (
               <p className="small muted">Repeats of this are counted here instead of sending a new alert each time.</p>
             )}
+          </Section>
+          <Section title="On Telegram" id="telegram-title">
+            <TelegramPreview incidentId={inc.id} version={`${inc.status}|${inc.count}|${inc.ack_at ?? ""}`} demo={!!me.user.demo} />
           </Section>
         </div>
       </div>

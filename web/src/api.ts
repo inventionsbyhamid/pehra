@@ -58,6 +58,32 @@ const get = <T>(path: string) => request<T>("GET", path);
 const post = <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {});
 const del = <T>(path: string) => request<T>("DELETE", path);
 
+// the judges' demo (api/demo.py)
+export interface DemoInfo {
+  sandbox_id: string;
+  expires_at: string;
+  ended: boolean;
+  clips: { camera: string; source: string }[];
+  own_cameras: number;
+  own_cameras_allowed: number;
+}
+
+// the message a society's Telegram group gets for an incident, as alerts/telegram.py makes it
+export interface TelegramMessage {
+  caption: string;
+  buttons: { text: string; url: string | null }[][];
+  photo: string | null;
+  goes_to_telegram: boolean;
+  sent: boolean;
+  connected: boolean;
+}
+
+export interface DeviceLink {
+  token: string;
+  url: string;
+  qr_url: string;
+}
+
 export interface WatchBody {
   text: string;
   watch?: Watch;
@@ -131,6 +157,11 @@ export const api = {
   forget: (id: string) => del<{ ok: boolean }>(`/api/people/${id}`),
 
   metrics: () => get<Metrics>("/api/metrics"),
+
+  deviceLink: (cameraId: string) => post<DeviceLink>(`/api/cameras/${cameraId}/device-token`),
+  demo: () => get<DemoInfo>("/api/demo"),
+  demoLogin: (signOut = false) => post<{ next: string }>("/api/demo/login", { sign_out: signOut }),
+  telegramPreview: (incidentId: string) => get<TelegramMessage>(`/api/incidents/${incidentId}/telegram`),
 };
 
 export function wsUrl(path: string): string {

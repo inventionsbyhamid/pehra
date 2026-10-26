@@ -10,6 +10,7 @@ import SiteLogin from "./site/Login";
 // The public pages load at once (they are prerendered); the signed in app loads when opened. The device page
 // (/cam/{token}) is its own build, cam.html, served by the backend.
 const Workspace = lazy(() => import("./app/Workspace"));
+const DemoStart = lazy(() => import("./app/DemoBar"));
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/refunds" element={<Refunds />} />
       <Route path="/login" element={<SiteLogin />} />
+      <Route path="/demo" element={<Suspense fallback={null}><DemoStart /></Suspense>} />
       <Route path="*" element={<Suspense fallback={null}><Workspace /></Suspense>} />
     </Routes>
   );

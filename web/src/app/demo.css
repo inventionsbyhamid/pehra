@@ -1,0 +1,34 @@
+/* The demo bar over a demo society, and the Telegram message preview on an incident. Quiet: no colour of its own. */
+
+.demo-bar { border-bottom: 1px solid var(--line); background: var(--tint); font-size: var(--t-sm); }
+.demo-bar-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 20px; padding-block: 10px;
+}
+.demo-bar-row p { color: var(--ink-2); }
+.demo-bar-row strong { color: var(--ink); }
+.demo-bar .row { gap: 8px; }
+.demo-about { padding-bottom: 12px; color: var(--ink-2); }
+.demo-about ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.demo-about strong { color: var(--ink); }
+.linkish {
+  padding: 0; border: 0; background: none; color: var(--brand); font: inherit; font-weight: 700; text-decoration: underline;
+  text-underline-offset: 0.2em; cursor: pointer;
+}
+.linkish:hover { color: var(--brand-deep); }
+.demo-qr { width: 220px; height: 220px; padding: 10px; background: #fff; border: 1px solid var(--line); border-radius: var(--r-md); }
+
+.tg { display: flex; flex-direction: column; gap: 10px; }
+.tg-message {
+  margin: 0; max-width: 26rem; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.tg-photo { display: block; width: 100%; height: auto; max-height: 20rem; object-fit: cover; background: var(--stage); }
+.tg-nophoto { padding: 12px 14px 0; color: var(--ink-3); }
+.tg-text { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.tg-from { color: var(--brand); font-size: var(--t-sm); font-weight: 700; }
+.tg-buttons { list-style: none; margin: 0; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 6px; }
+.tg-buttons li { display: flex; gap: 6px; }
+.tg-button {
+  flex: 1; padding: 8px 10px; border-radius: var(--r-md); background: var(--tint); color: var(--ink); font-size: var(--t-sm);
+  font-weight: 700; text-align: center;
+}

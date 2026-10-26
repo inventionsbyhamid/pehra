@@ -2,6 +2,7 @@ import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { Link, useLocation, useNavigationType } from "react-router-dom";
 import { Mark } from "../components/Mark";
 import brand from "../site/brand";
+import { DemoBar } from "./DemoBar";
 import { useCan, useSession } from "./session";
 
 const ROOM = ["/app/cameras", "/app/watches", "/app/incidents"];
@@ -36,6 +37,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <Link to="/app/settings/society" className="app-society">{me.workspace?.name}</Link>
         </div>
       </header>
+      {me.user.demo && <DemoBar />}
       <main id="main" tabIndex={-1}>{children}</main>
     </div>
   );
