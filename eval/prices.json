@@ -1,9 +1,66 @@
 {
-  "_note": "us-east-1 on demand USD per hour; check against the AWS price list before quoting",
-  "c8g.large": 0.07976,
-  "c8g.xlarge": 0.15952,
-  "c8g.2xlarge": 0.31904,
-  "c7i.large": 0.08925,
-  "c7i.xlarge": 0.1785,
-  "cool_software_per_hour_xlarge": 0.01
+ "about": "Prices for the cost per camera a month in eval/bench.py and the expected cost eval/bench_aws.sh prints. AWS Mumbai (ap-south-1), Linux, on demand, USD. Every price names where it was read and when; recheck before quoting after the day in 'checked'. The rupee rate is plans.json's usd_inr, the one the site uses.",
+ "region": "ap-south-1",
+ "hours_per_month": 730,
+ "instances": {
+  "c8g.large": {
+   "usd_per_hour": 0.05398,
+   "vcpus": 2,
+   "memory_gib": 4,
+   "cpu": "AWS Graviton4",
+   "source": "AWS EC2 on demand price file for Asia Pacific (Mumbai), Linux (b0.p.awsstatic.com ec2-ondemand-without-sec-sel, publication 2026-10-23T22:13:55Z), rate code MMGWPRU3A6NPXDK8.JRTCKXETXF.6YS6EN2CT7",
+   "checked": "2026-10-26"
+  },
+  "c8g.xlarge": {
+   "usd_per_hour": 0.10796,
+   "vcpus": 4,
+   "memory_gib": 8,
+   "cpu": "AWS Graviton4",
+   "source": "AWS EC2 on demand price file for Asia Pacific (Mumbai), Linux (b0.p.awsstatic.com ec2-ondemand-without-sec-sel, publication 2026-10-23T22:13:55Z), rate code NGMX98JQXJ3A8FJW.JRTCKXETXF.6YS6EN2CT7",
+   "checked": "2026-10-26"
+  },
+  "c7i.large": {
+   "usd_per_hour": 0.08925,
+   "vcpus": 2,
+   "memory_gib": 4,
+   "cpu": "Intel Xeon Scalable (Sapphire Rapids)",
+   "source": "AWS EC2 on demand price file for Asia Pacific (Mumbai), Linux (b0.p.awsstatic.com ec2-ondemand-without-sec-sel, publication 2026-10-23T22:13:55Z), rate code CU8BWZDRHXRNSD9Y.JRTCKXETXF.6YS6EN2CT7",
+   "checked": "2026-10-26"
+  },
+  "c7i.xlarge": {
+   "usd_per_hour": 0.1785,
+   "vcpus": 4,
+   "memory_gib": 8,
+   "cpu": "Intel Xeon Scalable (Sapphire Rapids)",
+   "source": "AWS EC2 on demand price file for Asia Pacific (Mumbai), Linux (b0.p.awsstatic.com ec2-ondemand-without-sec-sel, publication 2026-10-23T22:13:55Z), rate code SMKC8Z3MF4HJNNCA.JRTCKXETXF.6YS6EN2CT7",
+   "checked": "2026-10-26"
+  }
+ },
+ "software": {
+  "cool": {
+   "usd_per_hour": {
+    "c8g.large": 0.01,
+    "c8g.xlarge": 0.01,
+    "c8g.2xlarge": 0.02
+   },
+   "listing": "Cloud Optimized OpenCV For AWS Graviton4, AWS Marketplace prodview-fdvbfiewzuehs",
+   "version": "3.1",
+   "ami": {
+    "ap-south-1": "ami-05a336eb12c47d427"
+   },
+   "source": "the AWS Marketplace listing page (usage costs table, version 3.1 and its AMI id for ap-south-1), read for Packsure on 2026-10-25 (packsure e97a509 eval/prices.json)",
+   "checked": "2026-10-25"
+  }
+ },
+ "ebs": {
+  "gp3_gb_month": 0.0912,
+  "volume_gb": 40,
+  "source": "AWS Price List API, AmazonEC2 offer for ap-south-1 (publication 2026-10-23T22:13:55Z), usage type APS3-EBS:VolumeUsage.gp3, read for Packsure on 2026-10-25; volume_gb: deploy/params.env.example VOLUME_GB",
+  "checked": "2026-10-25"
+ },
+ "public_ipv4": {
+  "usd_per_hour": 0.005,
+  "source": "AWS Price List API, AmazonVPC offer for ap-south-1 (publication 2026-10-16T22:43:21Z), usage type APS3-PublicIPv4:InUseAddress, read for Packsure on 2026-10-25",
+  "checked": "2026-10-25"
+ }
 }

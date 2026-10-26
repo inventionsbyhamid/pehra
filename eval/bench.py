@@ -1,102 +1,359 @@
-"""Speed on this machine: live pipeline frames per second and seconds to scan a minute of 1080p video.
+"""The live pool under load. N cameras play a clip in real time through the app's own WorkerManager and its shared
+camera processes, with the app's default settings: indexing on, the scan pool warmed at start, a watch with a
+description (so the image model runs on crops and its text tower in the app), the real models, and a stand in for the
+AI check that calls every flagged moment real. After a warm up it measures, for --seconds:
 
-usage: python eval/bench.py --label graviton-cool --instance c8g.xlarge
+  analysed frames a second per camera and per vCPU, frame latency p50 and p95 (frame in to rules done, each camera's
+  last frames), the memory of the app and of every process it started, cameras per instance at 2 and at 5 analysed
+  frames a second, and the compute cost per camera a month from eval/prices.json.
+
+The host load is sampled all along and written next to the numbers. Results go to eval/results/bench-<setup>.json.
+
+  python eval/bench.py --setup devbox --cameras 8 --cpus 2
+  python eval/bench.py --setup c8g_cool --instance c8g.large --cameras 12 --confirm    (eval/bench_aws.sh runs this)
 """
 import argparse
 import json
+import math
 import os
-import platform
-import socket
+import shutil
+import statistics
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import (ROOT, StandInAI, add_camera, demo_camera, git_sha, machine, run_settings, society,  # noqa: E402
+                     zones_of)
 
-import cv2  # noqa: E402
-
-from watchful.config import Settings, available_cpus  # noqa: E402
-from watchful.ingest.sources import FileSource  # noqa: E402
-from watchful.rules.presets import preset  # noqa: E402
-from watchful.store.blobs import LocalBlobStore  # noqa: E402
-from watchful.store.db import Camera, SqliteRepository  # noqa: E402
-from watchful.tuning import Tuning  # noqa: E402
-from watchful.vision.perceive import Needs  # noqa: E402
-from watchful.vision.pipeline import CameraPipeline  # noqa: E402
-from watchful.vision.scan import ScanPool, scan_file  # noqa: E402
-from watchful.vision.zones import Zone  # noqa: E402
-
-LEFT = Zone("z1", "left", [(0, 0), (0.5, 0), (0.5, 1), (0, 1)])
+sys.path.insert(0, str(ROOT / "deploy"))
+FLOORS = (2.0, 5.0)  # analysed frames a second a camera must get: the design's floor, and the default analysis_fps
+TEXT_WATCH = {"preset": "lookout", "fill": {"text": "a person in a red jacket"}}
+LOOP_CLIP = "data/samples/vtest_x4.avi"  # vtest.avi four times over (318 s), so no camera reaches its end
+DEVBOX = "dev box (2013 Xeon, no AVX2, shared host)"
 
 
-def machine() -> dict:
-    cpu = platform.processor()
+def load_prices(path: Path = ROOT / "eval" / "prices.json") -> dict:
+    """The price file with the plans file's rupee rate, the one the site uses."""
+    prices = json.loads(path.read_text())
+    plans = json.loads((ROOT / "backend" / "watchful" / "data" / "plans.json").read_text())
+    prices["usd_inr"] = plans["usd_inr"]
+    return prices
+
+
+def instance_cost(prices: dict, instance: str, cameras: int, cool: bool) -> dict:
+    """What one instance costs a month (on demand, its public IPv4 and its EBS volume, the COOL fee on Graviton with
+    COOL), shared by the cameras it can watch. Compute only: AI checks, storage and transfer are not in it."""
+    inst, hours = prices["instances"][instance], prices["hours_per_month"]
+    fee = prices["software"]["cool"]["usd_per_hour"].get(instance, 0.0) if cool and instance.startswith("c8g") else 0.0
+    ebs = prices["ebs"]["gp3_gb_month"] * prices["ebs"]["volume_gb"] / hours
+    hourly = inst["usd_per_hour"] + fee + prices["public_ipv4"]["usd_per_hour"] + ebs
+    month = hourly * hours
+    per_camera = month / cameras if cameras >= 1 else None
+    rate = prices["usd_inr"]["rate"]
+    return {"instance": instance, "vcpus": inst["vcpus"], "cameras": cameras, "cool_fee_usd_per_hour": fee,
+            "usd_per_month": round(month, 2),
+            "usd_per_camera_month": None if per_camera is None else round(per_camera, 2),
+            "inr_per_camera_month": None if per_camera is None else round(per_camera * rate)}
+
+
+def capacity(total_fps: float, vcpus: int, target_vcpus: int, floor: float) -> int:
+    """Whole cameras that each get `floor` analysed frames a second from this throughput, on target_vcpus."""
+    return math.floor(total_fps / vcpus * target_vcpus / floor + 1e-9)
+
+
+def spread(values: list[float], digits: int = 2) -> dict:
+    if not values:
+        return {"n": 0, "median": None, "min": None, "max": None}
+    return {"n": len(values), "median": round(statistics.median(values), digits),
+            "min": round(min(values), digits), "max": round(max(values), digits)}
+
+
+def summarize(frames0: dict, frames1: dict, elapsed_s: float, latency: dict, memory: dict, vcpus: int,
+              prices: dict, instance: str | None, cool: bool) -> dict:
+    """The measured window as the results file holds it. frames0 and frames1: analysed frames per camera at the
+    window's start and end; latency: camera id to (p50, p95) ms; memory: from Sampler.memory(). Cost rows for an
+    instance this did not run on are marked measured false: they apply this machine's rate per vCPU."""
+    per_camera = [(frames1[c] - frames0.get(c, 0)) / elapsed_s for c in frames1]
+    total = sum(per_camera)
+    per_vcpu = total / vcpus if vcpus else None
+    p50 = [v[0] for v in latency.values() if v[0] is not None]
+    p95 = [v[1] for v in latency.values() if v[1] is not None]
+    out = {
+        "fps": {"per_camera": spread(per_camera), "total": round(total, 2),
+                "per_vcpu": None if per_vcpu is None else round(per_vcpu, 2)},
+        "latency_ms": {"p50": spread(p50, 0)["median"], "p95": spread(p95, 0)["median"],
+                       "p95_worst_camera": spread(p95, 0)["max"]},
+        "memory_mb": memory,
+        "capacity": {}, "cost": {}}
+    for floor in FLOORS:
+        key = f"at_{floor:g}fps"
+        out["capacity"][key] = capacity(total, vcpus, vcpus, floor)
+        rows = {}
+        for name, inst in prices["instances"].items():
+            n = capacity(total, vcpus, inst["vcpus"], floor)
+            rows[name.replace(".", "_")] = {**instance_cost(prices, name, n, cool), "measured": name == instance}
+        out["cost"][key] = rows
+    return out
+
+
+class Sampler:
+    """Every few seconds: the host load and the memory of this process and everything it started."""
+
+    def __init__(self, roles, every_s: float = 2.0):
+        from check_memory import processes
+        self._processes, self.roles, self.every_s = processes, roles, every_s
+        self.loads: list[float] = []
+        self.rows: list[tuple[float, list]] = []
+        self.cpu: list[tuple[float, dict, float | None]] = []
+        self.window: tuple[float, float] | None = None
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(10)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            now, rows = time.monotonic(), self._processes([os.getpid()])
+            self.loads.append(os.getloadavg()[0])
+            self.rows.append((now, rows))
+            self.cpu.append((now, {pid: cpu_s(pid) for pid, _, _ in rows}, throttled_s()))
+            self._stop.wait(self.every_s)
+
+    def cpu_use(self) -> dict:
+        """CPU seconds each role used in the measured window, as a share of the window, and how long the container's
+        quota held it back meanwhile (other work in the same container counts against the same quota)."""
+        inside = [c for c in self.cpu if self.window and self.window[0] <= c[0] <= self.window[1] + self.every_s]
+        if len(inside) < 2:
+            return {}
+        (t0, a, th0), (t1, b, th1) = inside[0], inside[-1]
+        roles: dict[str, float] = {}
+        names = {pid: role for _, rows in self.rows for pid, cmd, _ in rows for role in [self.roles(pid, cmd)]}
+        for pid, end in b.items():
+            if end is not None:
+                roles[names.get(pid, "other")] = roles.get(names.get(pid, "other"), 0.0) + end - (a.get(pid) or 0.0)
+        span = t1 - t0
+        return {"window_s": round(span, 1), "cpus_used": {r: round(v / span, 2) for r, v in sorted(roles.items())},
+                "throttled_s": None if th0 is None or th1 is None else round(th1 - th0, 1)}
+
+    def memory(self) -> dict:
+        """Totals over the measured window (median and peak) and over the whole run (peak), the app's own, and the
+        peak of each process by its role."""
+        inside = [rows for t, rows in self.rows if self.window and self.window[0] <= t <= self.window[1]] or \
+            [rows for _, rows in self.rows]
+        totals = [sum(r[2] for r in rows) for rows in inside]
+        app = [next((r[2] for r in rows if r[0] == os.getpid()), 0.0) for rows in inside]
+        peak_all = max((sum(r[2] for r in rows) for _, rows in self.rows), default=0.0)
+        by_pid: dict[int, dict] = {}
+        for _, rows in self.rows:
+            for pid, cmd, rss in rows:
+                d = by_pid.setdefault(pid, {"pid": pid, "role": self.roles(pid, cmd), "max_mb": 0})
+                d["max_mb"] = round(max(d["max_mb"], rss))
+        camera = [d["max_mb"] for d in by_pid.values() if d["role"] == "camera process"]
+        return {"total_median": round(statistics.median(totals)) if totals else None,
+                "total_max": round(max(totals)) if totals else None, "total_max_whole_run": round(peak_all),
+                "app_median": round(statistics.median(app)) if app else None,
+                "camera_process_max": max(camera, default=None),
+                "processes": sorted(by_pid.values(), key=lambda d: (d["role"], d["pid"]))}
+
+    def host_load(self) -> dict:
+        return {"load_1m": spread(self.loads), "host_cores": os.cpu_count(), **self.cpu_use()}
+
+
+def say(text: str) -> None:
+    print(f"bench: {text}", file=sys.stderr, flush=True)
+
+
+def cpu_s(pid: int) -> float | None:
+    """CPU seconds a process has used, user and system (Linux)."""
     try:
-        out = subprocess.run(["lscpu"], capture_output=True, text=True).stdout
-        cpu = next((l.split(":", 1)[1].strip() for l in out.splitlines() if l.startswith("Model name")), cpu)
-    except OSError:
-        pass
-    info = cv2.getBuildInformation()
-    return {"host": socket.gethostname(), "arch": platform.machine(), "cpu": cpu, "cores": available_cpus(),
-            "opencv": cv2.__version__, "kleidicv": "kleidicv" in info.lower(),
-            "cool": Path("/opt/cool").exists()}
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
+    except (OSError, IndexError, ValueError):
+        return None
 
 
-def live(settings: Settings, clip: Path, tmp: Path, seconds: float) -> dict:
-    cam = Camera("bench", "bench", "file", str(clip), [LEFT])
-    pipe = CameraPipeline(cam, SqliteRepository(tmp / "b.db"), LocalBlobStore(tmp), None, settings, Tuning(),
-                          Needs(classes={"person"}, posture=True))
-    src = FileSource(clip, settings.analysis_fps, start_epoch=0)
-    start, n = time.perf_counter(), 0
-    while (f := src.read()) is not None and f.ts < seconds:
-        pipe.process(f)
-        n += 1
-    wall = time.perf_counter() - start
-    stats = pipe.stats()
-    return {"frames": n, "fps": n / wall, "ms_per_frame": stats["ms_per_frame"],
-            "skipped_share": stats["frames_skipped"] / max(n, 1), "detector_runs": stats["detector_runs"]}
+def throttled_s() -> float | None:
+    """Seconds the container's CPU quota has held its processes back so far (cgroup v2), when there is a quota."""
+    try:
+        stat = dict(line.split() for line in Path("/sys/fs/cgroup/cpu.stat").read_text().splitlines())
+        return round(int(stat["throttled_usec"]) / 1e6, 1)
+    except (OSError, KeyError, ValueError):
+        return None
 
 
-def scan(settings: Settings, clip: Path, tmp: Path, workers: int | None) -> dict:
-    cam = Camera("bench", "bench", "file", str(clip), [LEFT])
-    watches = [("w1", preset("enters", zone="left")), ("w2", preset("fall"))]
-    with ScanPool(settings, Tuning(), workers) as pool:
-        pool.warm()
-        r = scan_file(clip, cam, watches, pool, LocalBlobStore(tmp), settings, Tuning(), start_epoch=0)
-    return {"clip": clip.name, "duration_s": r.stats.duration_s, "wall_s": r.stats.wall_s,
-            "x_realtime": r.stats.x_realtime, "seconds_per_minute": r.stats.wall_s / (r.stats.duration_s / 60),
-            "workers": r.stats.workers, "stages": r.stats.stages}
+def pin_cpus(n: int) -> list[int]:
+    """Runs this process and every process it starts on the n least busy CPUs it may use (Linux)."""
+    allowed = sorted(os.sched_getaffinity(0))
+    if n <= 0 or n >= len(allowed):
+        return allowed
+
+    def idle() -> dict[int, int]:
+        out = {}
+        for line in Path("/proc/stat").read_text().splitlines():
+            if line.startswith("cpu") and line[3].isdigit():
+                parts = line.split()
+                out[int(parts[0][3:])] = int(parts[4]) + int(parts[5])
+        return out
+
+    a = idle()
+    time.sleep(1.0)
+    b = idle()
+    cores = sorted(allowed, key=lambda c: b.get(c, 0) - a.get(c, 0), reverse=True)[:n]
+    os.sched_setaffinity(0, cores)
+    return sorted(cores)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--label", required=True)
-    ap.add_argument("--instance", default=None)
-    ap.add_argument("--clip", default="data/samples/vtest.avi")
-    ap.add_argument("--scan-clip", default="data/samples/speed_1080p.mp4")
-    ap.add_argument("--workers", type=int, default=None)
-    ap.add_argument("--live-seconds", type=float, default=60)
-    a = ap.parse_args()
+def loop_clip(clip: Path) -> Path:
+    if not clip.exists():
+        src = ROOT / "data" / "samples" / "vtest.avi"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-stream_loop", "3", "-i", str(src), "-c", "copy",
+                        str(clip)], check=True)
+    return clip
+
+
+def run(cameras: int, processes: int, cpus: int, seconds: float, clip: Path, work: Path, text: bool, index: bool,
+        warmup_max_s: float, prices: dict, instance: str | None, cool: bool) -> dict:
+    from watchful.components import make_blobs
+    from watchful.tuning import Tuning
+    from watchful.workers import WorkerManager
+
+    settings = run_settings(work, camera_processes=processes, scan_workers=cpus, index_embeddings=index)
+    tuning = Tuning()
+    # each camera's latency percentiles cover its last frames only, so the warm up is not in them
+    tuning = tuning.model_copy(update={"resources": tuning.resources.model_copy(
+        update={"latency_window": max(10, int(seconds))})})
+    repo = society(settings, "Benchmark")
+    ai = StandInAI()
+    manager = WorkerManager(settings, tuning, repo, make_blobs(settings, tuning), llm=ai)
+    plaza = demo_camera()
+    watches = plaza["watches"] + ([TEXT_WATCH] if text else [])
+    ids: list[str] = []
+
+    def roles(pid: int, cmd: str) -> str:
+        if pid == os.getpid():
+            return "app"
+        if any(p.get("pid") == pid for p in list(manager.processes.values())):
+            return "camera process"
+        if "ffmpeg" in cmd:
+            return "clip encoder"
+        if "resource_tracker" in cmd:
+            return "multiprocessing helper"
+        return "scan worker" if "multiprocessing" in cmd else "other"
+
+    def frames() -> dict:
+        return {c: (manager.status(c).stats or {}).get("frames", 0) for c in ids}
+
+    sampler = Sampler(roles).start()
+    started = time.monotonic()
+    try:
+        for i in range(cameras):
+            cam, _ = add_camera(repo, f"Plaza {i + 1}", "file", str(clip), zones_of(plaza["zones"]), watches)
+            ids.append(cam.id)
+            manager.start(cam.id)
+        while time.monotonic() - started < warmup_max_s and not all(frames().values()):
+            time.sleep(5)
+            say(f"warming up: {sum(1 for n in frames().values() if n)} of {cameras} cameras analysing, "
+                f"{time.monotonic() - started:.0f} s")
+        ready_s = time.monotonic() - started
+        if not all(frames().values()):
+            raise SystemExit(f"cameras without a frame after {warmup_max_s:.0f} s: "
+                             + ", ".join(c for c, n in frames().items() if not n))
+        time.sleep(10)  # every camera running: let the queues and the scan pool settle
+        say(f"measuring {cameras} cameras for {seconds:.0f} s")
+        t0, f0, calls0 = time.monotonic(), frames(), ai.calls
+        sampler.window = (t0, t0 + seconds)
+        time.sleep(seconds)
+        t1, f1 = time.monotonic(), frames()
+        latency = {c: ((manager.status(c).stats or {}).get("latency_p50_ms"),
+                       (manager.status(c).stats or {}).get("latency_p95_ms")) for c in ids}
+        loads = {str(i): dict(p.get("loads", {})) for i, p in manager.processes.items()}
+        checks = ai.calls - calls0
+    finally:
+        sampler.stop()
+        manager.shutdown()
+    out = summarize(f0, f1, t1 - t0, latency, sampler.memory(), cpus, prices, instance, cool)
+    out["timing"] = {"warmup_s": round(ready_s, 1), "settle_s": 10, "measured_s": round(t1 - t0, 1)}
+    out["host"] = sampler.host_load()
+    out["models_loaded"] = loads
+    out["ai"] = {"checks": checks, "checks_per_camera_hour": round(checks / cameras / ((t1 - t0) / 3600), 1),
+                 "note": "the same busy plaza on every camera, so this count is of that clip, not of a society "
+                         "camera"}
+    return out
+
+
+def main(argv: list[str] | None = None) -> None:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--setup", required=True, help="names the results file: devbox, c8g_cool, c8g_stock, c7i_stock")
+    ap.add_argument("--label", default=None, help="how the docs name the machine")
+    ap.add_argument("--instance", default=None, help="the priced instance this runs on (none on the dev box)")
+    ap.add_argument("--cameras", type=int, default=8)
+    ap.add_argument("--cpus", type=int, default=0, help="run on this many CPUs (Linux); 0: every one allowed")
+    ap.add_argument("--processes", type=int, default=0, help="camera processes; 0: one per CPU")
+    ap.add_argument("--seconds", type=float, default=60)
+    ap.add_argument("--warmup-max", type=float, default=240)
+    ap.add_argument("--clip", default=LOOP_CLIP)
+    ap.add_argument("--no-text", action="store_true", help="leave out the watch with a description")
+    ap.add_argument("--no-index", action="store_true", help="indexing off (not the default)")
+    ap.add_argument("--confirm", action="store_true",
+                    help="run again with the cameras the first run says fit at 2 frames a second, and report what "
+                         "each got")
+    ap.add_argument("--out", default=str(ROOT / "eval" / "results"))
+    a = ap.parse_args(argv)
+    if argv is None and os.environ.get("MALLOC_ARENA_MAX") is None:  # as the systemd units run the app
+        os.execve(sys.executable, [sys.executable, *sys.argv], {**os.environ, "MALLOC_ARENA_MAX": "2"})
+    import logging
+    logging.basicConfig(level=logging.WARNING)
     os.chdir(ROOT)
-    if not Path(a.scan_clip).exists():
-        subprocess.run(["bash", "eval/make_speed_clip.sh"], check=True)
-    settings = Settings(session_secret="y", _env_file=None)
-    tmp = Path("data/bench")
-    tmp.mkdir(parents=True, exist_ok=True)
-    out = {"label": a.label, "machine": machine(), "detector": settings.detector, "dnn_engine": settings.dnn_engine,
-           "live": live(settings, Path(a.clip), tmp, a.live_seconds),
-           "scan": scan(settings, Path(a.scan_clip), tmp, a.workers)}
-    prices = json.loads((ROOT / "eval/prices.json").read_text())
-    if a.instance in prices:
-        cameras = max(1.0, out["live"]["fps"] * out["machine"]["cores"] / settings.analysis_fps)
-        out["cost"] = {"instance": a.instance, "usd_per_hour": prices[a.instance],
-                       "cameras_per_instance": round(cameras, 1),
-                       "usd_per_camera_hour": round(prices[a.instance] / cameras, 4)}
-    dest = ROOT / "eval/results" / f"bench-{a.label}.json"
-    dest.write_text(json.dumps(out, indent=2))
-    print(json.dumps(out, indent=2))
+    cores = pin_cpus(a.cpus) if hasattr(os, "sched_setaffinity") else []
+    cpus = len(cores) or a.cpus or os.cpu_count() or 1
+    processes = a.processes or cpus
+    prices = load_prices()
+    info = machine()
+    cool = bool(info["cool"]) and a.setup.lower().endswith("cool")
+    clip = loop_clip(ROOT / a.clip)
+    work = Path(tempfile.mkdtemp(prefix="bench-", dir=os.environ.get("DATA_DIR") or None))
+    label = a.label or (DEVBOX if a.setup == "devbox" else a.setup)
+    result = {"setup": a.setup, "label": label, "target": a.instance is not None, "instance": a.instance,
+              "date": datetime.now(timezone.utc).isoformat(timespec="seconds"), "code": git_sha(),
+              "machine": info,
+              "scenario": {"cameras": a.cameras, "processes": processes, "vcpus": cpus, "cores": cores,
+                           "clip": a.clip, "watches": [w.get("preset") for w in demo_camera()["watches"]]
+                           + ([] if a.no_text else ["lookout with a description"]),
+                           "index_embeddings": not a.no_index, "scan_pool_at_start": True,
+                           "ai": "stand in: every check real, answered at once", "analysis_fps": 5.0,
+                           "camera_threads": 1, "malloc_arena_max": os.environ.get("MALLOC_ARENA_MAX"),
+                           "command": "python eval/bench.py " + " ".join(argv if argv is not None else sys.argv[1:])}}
+    try:
+        result.update(run(a.cameras, processes, cpus, a.seconds, clip, work / "run", not a.no_text, not a.no_index,
+                          a.warmup_max, prices, a.instance, cool))
+        if a.confirm and result["capacity"]["at_2fps"] >= 1:
+            n = result["capacity"]["at_2fps"]
+            again = run(n, processes, cpus, a.seconds, clip, work / "confirm", not a.no_text, not a.no_index,
+                        a.warmup_max, prices, a.instance, cool)
+            result["confirm"] = {"cameras": n, "fps": again["fps"], "latency_ms": again["latency_ms"],
+                                 "memory_mb": {k: v for k, v in again["memory_mb"].items() if k != "processes"},
+                                 "host": again["host"],
+                                 "meets_2fps": (again["fps"]["per_camera"]["min"] or 0) >= 2.0}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    result["prices"] = {"file": "eval/prices.json", "usd_inr": prices["usd_inr"]["rate"],
+                        "checked": {k: v["checked"] for k, v in prices["instances"].items()}}
+    dest = Path(a.out) / f"bench-{a.setup}.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(result, indent=1) + "\n")
+    print(json.dumps({k: result.get(k) for k in ("setup", "fps", "latency_ms", "capacity", "host")}, indent=1))
+    print(f"wrote {dest}")
 
 
 if __name__ == "__main__":
