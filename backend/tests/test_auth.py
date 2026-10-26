@@ -344,6 +344,54 @@ def test_operator_signin_link_works_once(env, capsys):
         auth_main(["signin-link", "x@example.com", "--workspace-id", "ws_nope"], settings=env.settings)
 
 
+def test_two_signin_links_for_one_new_email_at_once(env, monkeypatch):
+    """Specs run in parallel ask for links for the same new email at the same moment: one user, one membership, and
+    every command gets its link (it failed on UNIQUE users.email)."""
+    import threading
+
+    from watchful.auth import operator
+    from watchful.tuning import load_tuning
+
+    ensure_workspace(env.db.engine, DEFAULT_WORKSPACE, "Demo society")
+    tuning = load_tuning(None)
+    start, links, errors = threading.Barrier(6), [], []
+
+    def ask():
+        start.wait()
+        try:
+            links.append(operator.make_link(env.db, env.settings, tuning, "pair@example.com",
+                                            workspace_id=DEFAULT_WORKSPACE)[0])
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=ask) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [] and len(set(links)) == 6
+    assert count(env.db, m.User, m.User.email == "pair@example.com") == 1
+    with env.db.tx() as s:
+        user = s.scalar(select(m.User.id).where(m.User.email == "pair@example.com"))
+    assert count(env.db, m.Member, m.Member.user_id == user) == 1
+
+    # the moment itself: the row appears between the look and the insert
+    looked = []
+    real = operator._made
+
+    def late(db, find, make):
+        def first_miss(s):
+            if not looked:
+                looked.append(1)
+                return None
+            return find(s)
+        return real(db, first_miss, make)
+
+    monkeypatch.setattr(operator, "_made", late)
+    url, _ = operator.make_link(env.db, env.settings, tuning, "pair@example.com", workspace_id=DEFAULT_WORKSPACE)
+    assert url.startswith(f"{BASE}/auth/link/") and count(env.db, m.User, m.User.email == "pair@example.com") == 1
+
+
 def test_settings_start_without_a_demo_password(monkeypatch):
     monkeypatch.delenv("DEMO_PASSWORD", raising=False)
     s = Settings(session_secret="y", _env_file=None)

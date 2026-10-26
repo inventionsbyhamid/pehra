@@ -15,6 +15,7 @@ import sys
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from watchful.auth.deps import ROLES
 from watchful.db import models as m
@@ -24,6 +25,21 @@ MAX_NAME = 80  # as a society named in the app
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _made(db, find, make):
+    """The row `find` finds, made by `make` when missing. Two commands at once for the same new email both make it;
+    the database keeps one (UNIQUE) and the other finds that one."""
+    with db.tx() as s:
+        if (found := find(s)) is not None:
+            return found
+    try:
+        with db.tx() as s:
+            make(s)
+    except IntegrityError:
+        pass
+    with db.tx() as s:
+        return find(s)
 
 
 def make_link(db, settings, tuning, email: str, workspace: str | None = None, workspace_id: str | None = None,
@@ -40,31 +56,32 @@ def make_link(db, settings, tuning, email: str, workspace: str | None = None, wo
         raise ValueError(f"a role is one of {', '.join(ROLES)}")
     token = secrets.token_urlsafe(32)
     until = (now or m.utcnow()) + timedelta(minutes=tuning.auth.signin_link_minutes)
-    with db.tx() as s:
-        user = s.scalar(select(m.User).where(m.User.email == email))
-        if user is None:
-            user = m.User(email=email)
-            s.add(user)
-            s.flush()
-        if user.demo:
-            raise ValueError(f"{email} is a demo visitor; demo visitors cannot sign in with a link")
-        ws_id = None
-        if workspace_id:
+    if workspace_id:
+        with db.tx() as s:
             if s.get(m.Workspace, workspace_id) is None:
                 raise LookupError(f"no society with the id {workspace_id}")
-            if s.get(m.Member, {"workspace_id": workspace_id, "user_id": user.id}) is None:
-                s.add(m.Member(workspace_id=workspace_id, user_id=user.id, role=role))
-                s.add(m.Audit(workspace_id=workspace_id, actor="operator", action="member.join",
-                              data={"user": user.id, "role": role}))
-            ws_id = workspace_id
-        elif name:
+    user_id = _made(db, lambda s: s.scalar(select(m.User.id).where(m.User.email == email)),
+                    lambda s: s.add(m.User(email=email)))
+    with db.tx() as s:
+        if s.get(m.User, user_id).demo:
+            raise ValueError(f"{email} is a demo visitor; demo visitors cannot sign in with a link")
+    if workspace_id:
+        def join(s):
+            s.add(m.Member(workspace_id=workspace_id, user_id=user_id, role=role))
+            s.add(m.Audit(workspace_id=workspace_id, actor="operator", action="member.join",
+                          data={"user": user_id, "role": role}))
+
+        _made(db, lambda s: s.get(m.Member, {"workspace_id": workspace_id, "user_id": user_id}), join)
+    with db.tx() as s:
+        ws_id = workspace_id or None
+        if not workspace_id and name:
             ws = s.scalar(select(m.Workspace).join(m.Member, m.Member.workspace_id == m.Workspace.id)
-                          .where(m.Member.user_id == user.id, m.Member.role == "owner", m.Workspace.name == name,
+                          .where(m.Member.user_id == user_id, m.Member.role == "owner", m.Workspace.name == name,
                                  m.Workspace.demo.is_(None)).order_by(m.Workspace.created_at).limit(1))
-            ws_id = (ws or add_workspace(s, user.id, name, settings.timezone)).id
-        s.add(m.SignInLink(token_hash=token_hash(token), user_id=user.id, workspace_id=ws_id, expires_at=until))
+            ws_id = (ws or add_workspace(s, user_id, name, settings.timezone)).id
+        s.add(m.SignInLink(token_hash=token_hash(token), user_id=user_id, workspace_id=ws_id, expires_at=until))
         s.add(m.Audit(workspace_id=ws_id, actor="operator", action="auth.signin_link",
-                      data={"user": user.id, "until": until.isoformat()}))
+                      data={"user": user_id, "until": until.isoformat()}))
     return f"{settings.public_base_url.rstrip('/')}/auth/link/{token}", until
 
 
