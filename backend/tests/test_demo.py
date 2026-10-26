@@ -359,7 +359,7 @@ def test_a_visitors_own_camera_and_its_watch(tmp_path):
     try:
         real.camera_ws[phone["id"]] = ws
         real._handle({"type": "candidate", "workspace_id": ws, "pack": packs[0]})
-        deadline = time.time() + 20
+        deadline = time.time() + 90  # the first check of the process loads the age guard's text tower
         while time.time() < deadline and not inc_.list_incidents(repo, camera_id=phone["id"]):
             time.sleep(0.2)
     finally:
