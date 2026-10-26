@@ -2,18 +2,98 @@
  "clip": "data/samples/vtest.avi",
  "about": "OpenCV's sample clip vtest.avi (opencv/samples/data): a busy plaza seen from above, 768x576 at 10 frames a second, 79.5 s. Not a society camera; the same scene the Plaza demo camera plays.",
  "labelled_by": "us (the Pehra team), by eye from frames of the clip, on 26 Oct 2026. One labeller, no second check. Times are to about half a second.",
- "rules": "enter: a person's feet come into the left walkway zone from outside it (across its right or top edge, or walking in from the left or bottom edge of the picture). cross_in and cross_out: a person's feet cross the walkway edge line (x = 0.5, from y = 0.3 down to the bottom) going left (in, onto the walkway side) or right (out). People already inside when the clip starts are not entries; the first skip_start_s seconds are not scored.",
+ "rules": "enter: a person's feet come into the left walkway zone from outside it (across its right edge, or walking in from the left edge of the picture; nobody crossed its top edge, the taped kerb). cross_in and cross_out: a person's feet cross the walkway edge line (x = 0.5, from y = 0.3 down to the bottom of the picture) going left, onto the walkway side (in), or right (out), and stay across it for at least a second. Someone standing on the edge with their feet across it does not count. People already on the walkway when the clip starts are not entries.",
  "zones": [
-  {"name": "left walkway", "polygon": [[0, 0.3], [0.5, 0.3], [0.5, 1], [0, 1]]},
-  {"name": "walkway edge", "kind": "line", "polygon": [[0.5, 0.3], [0.5, 1]]}
+  {
+   "name": "left walkway",
+   "polygon": [
+    [
+     0,
+     0.3
+    ],
+    [
+     0.5,
+     0.3
+    ],
+    [
+     0.5,
+     1
+    ],
+    [
+     0,
+     1
+    ]
+   ]
+  },
+  {
+   "name": "walkway edge",
+   "kind": "line",
+   "polygon": [
+    [
+     0.5,
+     0.3
+    ],
+    [
+     0.5,
+     1
+    ]
+   ]
+  }
  ],
  "watches": [
-  {"event": "enter", "preset": "enters", "fill": {"zone": "left walkway"}},
-  {"event": "cross_in", "watch": {"name": "Crosses the walkway edge going in", "subject": {"classes": ["person"]},
-   "conditions": [{"signal": "crossed", "zones": ["walkway edge"], "params": {"direction": "in"}}]}},
-  {"event": "cross_out", "watch": {"name": "Crosses the walkway edge going out", "subject": {"classes": ["person"]},
-   "conditions": [{"signal": "crossed", "zones": ["walkway edge"], "params": {"direction": "out"}}]}}
+  {
+   "event": "enter",
+   "preset": "enters",
+   "fill": {
+    "zone": "left walkway"
+   }
+  },
+  {
+   "event": "cross_in",
+   "watch": {
+    "name": "Crosses the walkway edge going in",
+    "subject": {
+     "classes": [
+      "person"
+     ]
+    },
+    "conditions": [
+     {
+      "signal": "crossed",
+      "zones": [
+       "walkway edge"
+      ],
+      "params": {
+       "direction": "in"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "event": "cross_out",
+   "watch": {
+    "name": "Crosses the walkway edge going out",
+    "subject": {
+     "classes": [
+      "person"
+     ]
+    },
+    "conditions": [
+     {
+      "signal": "crossed",
+      "zones": [
+       "walkway edge"
+      ],
+      "params": {
+       "direction": "out"
+      }
+     }
+    ]
+   }
+  }
  ],
  "skip_start_s": 3.0,
- "tolerance_s": 2.0
+ "tolerance_s": 2.0,
+ "skip_end_s": 1.0
 }

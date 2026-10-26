@@ -76,12 +76,21 @@ def demo_camera(name: str = "Plaza (OpenCV sample)") -> dict:
     return next(c for c in json.loads(DEMO.read_text())["cameras"] if c["name"] == name)
 
 
-def git_sha() -> str | None:
+def _git(*args: str) -> str:
     try:
-        out = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True)
-        return out.stdout.strip() or os.environ.get("GIT_SHA")
+        return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True).stdout.strip()
     except OSError:
-        return os.environ.get("GIT_SHA")
+        return ""
+
+
+def git_sha() -> str | None:
+    """The commit this runs (GIT_SHA where the tree has no .git, as in the dev container)."""
+    return _git("rev-parse", "--short", "HEAD") or os.environ.get("GIT_SHA")
+
+
+def engine_sha() -> str | None:
+    """The last commit that changed the app's code (backend/), so a number can be tied to the engine it measured."""
+    return _git("log", "-1", "--format=%h", "--", "backend") or os.environ.get("ENGINE_SHA")
 
 
 def machine() -> dict:

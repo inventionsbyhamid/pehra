@@ -27,8 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from harness import (ROOT, StandInAI, add_camera, demo_camera, git_sha, machine, run_settings, society,  # noqa: E402
-                     zones_of)
+from harness import (ROOT, StandInAI, add_camera, demo_camera, engine_sha, git_sha, machine, run_settings,  # noqa: E402
+                     society, zones_of)
 
 sys.path.insert(0, str(ROOT / "deploy"))
 FLOORS = (2.0, 5.0)  # analysed frames a second a camera must get: the design's floor, and the default analysis_fps
@@ -285,6 +285,9 @@ def run(cameras: int, processes: int, cpus: int, seconds: float, clip: Path, wor
     out = summarize(f0, f1, t1 - t0, latency, sampler.memory(), cpus, prices, instance, cool)
     out["timing"] = {"warmup_s": round(ready_s, 1), "settle_s": 10, "measured_s": round(t1 - t0, 1)}
     out["host"] = sampler.host_load()
+    used = sum(out["host"].get("cpus_used", {}).values())
+    # this host is shared: what the run actually got of its CPUs, and the rate per CPU it got
+    out["fps"]["per_cpu_used"] = round(out["fps"]["total"] / used, 2) if used else None
     out["models_loaded"] = loads
     out["ai"] = {"checks": checks, "checks_per_camera_hour": round(checks / cameras / ((t1 - t0) / 3600), 1),
                  "note": "the same busy plaza on every camera, so this count is of that clip, not of a society "
@@ -326,6 +329,7 @@ def main(argv: list[str] | None = None) -> None:
     label = a.label or (DEVBOX if a.setup == "devbox" else a.setup)
     result = {"setup": a.setup, "label": label, "target": a.instance is not None, "instance": a.instance,
               "date": datetime.now(timezone.utc).isoformat(timespec="seconds"), "code": git_sha(),
+              "engine": engine_sha(),
               "machine": info,
               "scenario": {"cameras": a.cameras, "processes": processes, "vcpus": cpus, "cores": cores,
                            "clip": a.clip, "watches": [w.get("preset") for w in demo_camera()["watches"]]

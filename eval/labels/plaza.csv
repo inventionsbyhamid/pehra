@@ -1,0 +1,80 @@
+# OpenCV's vtest.avi (the Plaza demo clip), labelled by us by eye from frames at 0.5 s steps (0.25 s where people
+# bunch up), 26 Oct 2026; one labeller, no second check. Rules and zones: plaza.json. The walkway edge is the left
+# walkway's right edge, so every cross_in is also an enter. Not scored: the first 3 s (a man already on the walkway
+# crosses out at about 2.3 s) and the last 1 s (a woman reaches the edge at 79.1 s as the clip ends).
+t_s,event
+# man in a long black coat, from behind the sign
+5.9,cross_in
+5.9,enter
+# the same man turns back
+10.3,cross_out
+# woman in a white hood
+15.8,cross_in
+15.8,enter
+# man in a striped jacket
+17.9,cross_in
+17.9,enter
+# balding man from the road
+22.0,cross_in
+22.0,enter
+# man in a dark jacket from the lower right
+25.3,cross_in
+25.3,enter
+# man in a long black coat from the road
+27.8,cross_in
+27.8,enter
+# man in a black leather jacket with papers
+28.9,cross_in
+28.9,enter
+# people who came in earlier walk back out, two of them together at 34.6 and 34.9
+31.1,cross_out
+33.2,cross_out
+34.6,cross_out
+34.9,cross_out
+# man in a dark jacket from behind the sign
+36.2,cross_in
+36.2,enter
+# the same man, after standing on the walkway
+46.2,cross_out
+# woman in a red jacket
+48.8,cross_in
+48.8,enter
+# a man in a red jacket and a woman in a black coat, on the grass
+52.9,cross_in
+52.9,enter
+53.2,cross_in
+53.2,enter
+# balding man from the lower right
+56.4,cross_in
+56.4,enter
+# the man in the red jacket walks back out on the grass
+59.3,cross_out
+# woman with long hair in a red jacket walks in from the left edge of the picture
+60.7,enter
+# the woman in the black coat walks down along the edge: her feet go about 2% of the width past it for 1.5 s
+61.2,cross_out
+62.7,cross_in
+62.7,enter
+# man in a dark jacket from the right
+63.9,cross_in
+63.9,enter
+# the woman in the red jacket walks out along the top of the walkway
+67.8,cross_out
+# man in a blue jacket
+68.8,cross_in
+68.8,enter
+# the balding man from 56.4 walks back out
+70.1,cross_out
+# man in a red and navy jacket from the road
+70.6,cross_in
+70.6,enter
+# the man from 63.9 walks back out
+74.5,cross_out
+# man in black from the right
+75.1,cross_in
+75.1,enter
+# man in a dark jacket from the right
+77.3,cross_in
+77.3,enter
+# the man in the red and navy jacket walks out on the grass
+78.2,cross_out

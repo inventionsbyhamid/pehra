@@ -27,8 +27,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from eval_metrics import match_events, motion_baseline_alerts, percentile, proportion  # noqa: E402
-from harness import (ROOT, StandInAI, add_camera, clip_path, git_sha, machine, run_settings, society,  # noqa: E402
-                     zones_of)
+from harness import (ROOT, StandInAI, add_camera, clip_path, engine_sha, git_sha, machine, run_settings,  # noqa: E402
+                     society, zones_of)
 
 EVENT = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -63,18 +63,24 @@ def load_setup(labels: Path) -> dict:
     return setup
 
 
-def score(fired: list[float], truth: list[float], tolerance_s: float, hours: float) -> dict:
-    """One watch at one rate: candidate times against labelled times."""
+def score(fired: list[float], truth: list[float], tolerance_s: float, lo: float = 0.0,
+          hi: float = float("inf")) -> dict:
+    """One watch at one rate: candidate times against labelled times, scored between lo and hi. A candidate just
+    outside that window may still match a label inside it; one that matches nothing there is not counted."""
+    truth = sorted(t for t in truth if lo <= t <= hi)
+    fired = sorted(t for t in fired if lo - tolerance_s <= t <= hi + tolerance_s)
     pairs = match_events(fired, truth, tolerance_s)
     tp = len(pairs)
     delays = [fired[i] - truth[j] for i, j in pairs]
     paired_f, paired_t = {i for i, _ in pairs}, {j for _, j in pairs}
-    false = sorted(t for i, t in enumerate(fired) if i not in paired_f)
-    missed = sorted(t for j, t in enumerate(truth) if j not in paired_t)
-    return {"truth": len(truth), "fired": len(fired), "tp": tp, "fp": len(fired) - tp, "fn": len(truth) - tp,
-            "precision": proportion(tp, len(fired)), "recall": proportion(tp, len(truth)),
-            "delay_s": {"n": len(delays), "median": _round(percentile(delays, 50)), "p90": _round(percentile(delays, 90))},
-            "false_alarms_per_camera_hour": round((len(fired) - tp) / hours, 1) if hours else None,
+    false = [t for i, t in enumerate(fired) if i not in paired_f and lo <= t <= hi]
+    missed = [t for j, t in enumerate(truth) if j not in paired_t]
+    hours = (hi - lo) / 3600 if hi != float("inf") else None
+    return {"truth": len(truth), "fired": tp + len(false), "tp": tp, "fp": len(false), "fn": len(truth) - tp,
+            "precision": proportion(tp, tp + len(false)), "recall": proportion(tp, len(truth)),
+            "delay_s": {"n": len(delays), "median": _round(percentile(delays, 50)),
+                        "p90": _round(percentile(delays, 90))},
+            "false_alarms_per_camera_hour": round(len(false) / hours, 1) if hours else None,
             "false_alarms_at": [round(t, 1) for t in false], "missed_at": [round(t, 1) for t in missed]}
 
 
@@ -165,7 +171,8 @@ def picture(clip: Path, t: float, setup: dict, ticks: list, title: str, track: i
     h, w = img.shape[:2]
     for z in setup["zones"]:
         pts = (np.array(z["polygon"]) * [w, h]).astype(np.int32)
-        cv2.polylines(img, [pts], z.get("kind") != "line", (0, 220, 255) if z.get("kind") != "line" else (255, 200, 0), 2)
+        line = z.get("kind") == "line"
+        cv2.polylines(img, [pts], not line, (255, 200, 0) if line else (0, 220, 255), 2)
     if ticks:
         at, size, tracks = min(ticks, key=lambda k: abs(k[0] - t))
         sx, sy = w / max(size[0], 1), h / max(size[1], 1)
@@ -190,18 +197,21 @@ def evaluate(labels_path: Path, rates: list[float], out: Path, name: str) -> dic
     duration = (cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) / (cap.get(cv2.CAP_PROP_FPS) or 25.0)
     cap.release()
     skip, tol = float(setup.get("skip_start_s", 0.0)), float(setup.get("tolerance_s", 2.0))
-    hours = max(duration - skip, 0.0) / 3600
+    lo, hi = skip, duration - float(setup.get("skip_end_s", 0.0))
+    hours = max(hi - lo, 0.0) / 3600
     events = [w["event"] for w in setup["watches"]]
     unknown = sorted({e for _, e in labels} - set(events))
     if unknown:
         raise SystemExit(f"labels name events no watch answers: {', '.join(unknown)}")
-    truth = {e: [t for t, ev in labels if ev == e and t >= skip] for e in events}
+    truth = {e: [t for t, ev in labels if ev == e and lo <= t <= hi] for e in events}
     pictures = out / "failures"
+    where = labels_path.relative_to(ROOT).as_posix() if labels_path.is_relative_to(ROOT) else str(labels_path)
     result = {"clip": setup["clip"], "about": setup.get("about"), "labelled_by": setup.get("labelled_by"),
-              "labels": labels_path.relative_to(ROOT).as_posix() if labels_path.is_relative_to(ROOT) else str(labels_path),
-              "code": git_sha(), "date": datetime.now(timezone.utc).isoformat(timespec="seconds"), "machine": machine(),
-              "duration_s": round(duration, 1), "skip_start_s": skip, "scored_s": round(duration - skip, 1),
-              "tolerance_s": tol, "truth": {e: len(v) for e, v in truth.items()}, "runs": {}}
+              "rules": setup.get("rules"), "labels": where, "code": git_sha(), "engine": engine_sha(),
+              "date": datetime.now(timezone.utc).isoformat(timespec="seconds"), "machine": machine(),
+              "duration_s": round(duration, 1), "skip_start_s": skip, "skip_end_s": round(duration - hi, 1),
+              "scored_s": round(hi - lo, 1), "tolerance_s": tol, "truth": {e: len(v) for e, v in truth.items()},
+              "runs": {}}
     for fps in rates:
         work = Path(tempfile.mkdtemp(prefix="eval-"))
         try:
@@ -215,8 +225,8 @@ def evaluate(labels_path: Path, rates: list[float], out: Path, name: str) -> dic
         totals = [0, 0, 0]
         for (wid, watch), spec in zip(r["watches"], setup["watches"]):
             event = spec["event"]
-            mine = [(t, track) for w_, t, track in r["fired"] if w_ == wid and t >= skip]
-            s = score([t for t, _ in mine], truth[event], tol, hours)
+            mine = [(t, track) for w_, t, track in r["fired"] if w_ == wid]
+            s = score([t for t, _ in mine], truth[event], tol, lo, hi)
             s["watch"] = watch.name
             for kind, times in (("first_false_alarm", s["false_alarms_at"]), ("first_miss", s["missed_at"])):
                 if not times:
