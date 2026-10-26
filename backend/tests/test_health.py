@@ -114,7 +114,7 @@ def test_offline_opens_once_and_resolves(tmp_path):
         time.sleep(4)  # still offline: offline ticks go on, but the watch fired when it became true, once
         (inc,) = list_incidents(repo, camera_id=cam.id)
         assert inc.watch_id == watch.id and inc.status == "open" and inc.count == 1
-        assert [(a.watch_id, a.status) for a in repo.list_alerts(cam.id)] == [(watch.id, "alert")]
+        assert [(a.watch_id, a.status) for a in repo.list_alerts(cam.id)] == [(watch.id, "measured")]
         assert "offline" in repo.list_alerts(cam.id)[0].summary
         send(3)
         assert wait(lambda: list_incidents(repo, camera_id=cam.id)[0].status == "resolved", 15)
