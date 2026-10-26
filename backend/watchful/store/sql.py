@@ -245,7 +245,7 @@ class SqlRepository:
         kind = "demo" if row.kind == "file" and st.get("loop") else ROW_TO_KIND.get(row.kind, row.kind)
         return Camera(row.id, row.name, kind, self._box.open(row.url_enc), [_zone(z) for z in zones], row.enabled,
                       dict(st.get("tuning") or {}), st.get("last_scan"), row.workspace_id, row.purpose, row.status,
-                      _epoch(row.last_frame_at), row.off_reason)
+                      _epoch(row.last_frame_at), row.off_reason, list(st.get("readers") or []))
 
     def _write_camera(self, s: orm.Session, row: m.Camera, cam: Camera, new: bool = False) -> None:
         """Health, the last picture time and the last scan are the camera processes' to write (set_camera_health,
@@ -261,7 +261,8 @@ class SqlRepository:
             row.status, row.last_frame_at = cam.status, _dt(cam.last_frame_at)
         else:
             last_scan = (row.settings_json or {}).get("last_scan")
-        row.settings_json = {"tuning": cam.tuning or {}, "last_scan": last_scan, "loop": cam.kind == "demo"}
+        row.settings_json = {"tuning": cam.tuning or {}, "last_scan": last_scan, "loop": cam.kind == "demo",
+                             "readers": sorted(set(cam.readers or []))}
         have = {z.id: z for z in s.scalars(select(m.Zone).where(m.Zone.camera_id == row.id, self._mine(m.Zone)))}
         keep = set()
         for position, z in enumerate(cam.zones):
@@ -477,23 +478,25 @@ class SqlRepository:
                 s.flush()  # another society's id fails here, before anything of theirs is touched
             staff.name, staff.active, staff.consent_at = e.name, True, _dt(e.consent_ts)
             s.execute(delete(m.StaffFace).where(m.StaffFace.staff_id == staff.id, self._mine(m.StaffFace)))
-            s.add(m.StaffFace(workspace_id=self.workspace_id, staff_id=staff.id, embedding=m.pack_vec(e.feature),
-                              picture_key=e.thumbnail_key))
+            for feature in e.templates():
+                s.add(m.StaffFace(workspace_id=self.workspace_id, staff_id=staff.id, embedding=m.pack_vec(feature),
+                                  picture_key=e.thumbnail_key))
 
     def list_enrollments(self) -> list[Enrollment]:
         with self.tx() as s:
             rows = s.execute(select(m.Staff, m.StaffFace).join(m.StaffFace, m.StaffFace.staff_id == m.Staff.id)
                              .where(self._mine(m.Staff), self._mine(m.StaffFace), m.Staff.active.is_(True))
                              .order_by(m.Staff.created_at, m.Staff.id, m.StaffFace.created_at)).all()
-        seen, out = set(), []
+        out: dict[str, Enrollment] = {}
         for staff, face in rows:
-            if staff.id in seen:
+            feature = m.unpack_vec(face.embedding).tolist()
+            if staff.id in out:
+                out[staff.id].features.append(feature)
                 continue
-            seen.add(staff.id)
             consent = staff.consent_at or staff.created_at
-            out.append(Enrollment(staff.id, staff.name, m.unpack_vec(face.embedding).tolist(), consent.timestamp(),
-                                  face.picture_key, staff.workspace_id))
-        return out
+            out[staff.id] = Enrollment(staff.id, staff.name, feature, consent.timestamp(), face.picture_key,
+                                       staff.workspace_id, [feature])
+        return list(out.values())
 
     def delete_enrollment(self, person_id: str) -> None:
         """The face templates go; the staff member stays, inactive, so their attendance history is kept."""

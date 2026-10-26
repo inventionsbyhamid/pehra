@@ -12,6 +12,7 @@ from watchful.api.blobs import owns
 from watchful.api.common import LIVE_KINDS, alert_or_404, camera_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
 from watchful.ingest.push import push_parts
+from watchful.logs import readers
 from watchful.rules.backtest import backtest
 from watchful.rules.presets import describe, preset, purposes
 from watchful.rules.watch import SameAs, Watch
@@ -73,8 +74,9 @@ def make_router(ctx) -> APIRouter:
         """The watch card: what it will and won't watch, setup tasks, and how often it would have fired."""
         r = repo(member)
         cam = camera_or_404(r, camera_id)
-        result = compile_watch(body.text or "", context_for(r, cam), ctx.llm_for(member.workspace.id, "compile"))
-        out = {**card(result), "backtest": None}
+        result = compile_watch(body.text or "", context_for(r, cam, attributes=readers.attributes_of(cam)),
+                               ctx.llm_for(member.workspace.id, "compile"))
+        out = {**card(result), "backtest": None, "turn_on": readers.needed(result.watch, cam)}
         if result.watch is not None:
             watch = scoped(r, result.watch, body)
             ids = [c.id for c in r.list_cameras() if watch.applies_to(c.id, cam.id)]
@@ -114,8 +116,8 @@ def make_router(ctx) -> APIRouter:
         events; the card is worked out again rather than trusted."""
         r = repo(member)
         try:
-            result = check_watch(body.watch, body.text or str(body.watch.get("name") or ""), context_for(r, cam),
-                                 body.coverage, body.cannot)
+            result = check_watch(body.watch, body.text or str(body.watch.get("name") or ""),
+                                 context_for(r, cam, attributes=readers.attributes_of(cam)), body.coverage, body.cannot)
         except Invalid as e:
             raise HTTPException(400, f"That watch can't be saved: {e}.")
         same = result.watch.subject.same_as
@@ -139,8 +141,9 @@ def make_router(ctx) -> APIRouter:
             watch, shown = checked(member, cam, body)
             text = body.text or watch.name
         else:
-            result = compile_watch(body.text or "", context_for(r, cam), ctx.llm_for(member.workspace.id, "compile"))
-            shown = card(result)
+            result = compile_watch(body.text or "", context_for(r, cam, attributes=readers.attributes_of(cam)),
+                                   ctx.llm_for(member.workspace.id, "compile"))
+            shown = {**card(result), "turn_on": readers.needed(result.watch, cam)}
             if result.watch is None:
                 return {**shown, "saved": False}
             if result.cannot:  # only part of the words can be watched: show the card and let a person decide

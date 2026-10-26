@@ -48,10 +48,16 @@ class CameraPipeline:
     the detector and pose models it shares between its cameras."""
 
     def __init__(self, camera: Camera, repo: Repository, blobs: BlobStore, faces: FaceIndex | None,
-                 settings: Settings, tuning: Tuning, needs: Needs, embedder=None, detector=None, pose=None):
+                 settings: Settings, tuning: Tuning, needs: Needs, embedder=None, detector=None, pose=None,
+                 plates=None):
         self.camera, self.repo = camera, repo
-        self.perceiver = Perceiver(camera, settings, tuning, blobs, faces, needs, embedder, detector, pose)
+        self.perceiver = Perceiver(camera, settings, tuning, blobs, faces, needs, embedder, detector, pose, plates)
         self.reasoner = Reasoner(camera, tuning, postures=needs.pose or needs.posture)
+
+    def keep_people(self, person_ids: set[str]) -> None:
+        """Enrolled staff changed: nobody outside `person_ids` keeps or gets a name, by face or by clothes."""
+        self.perceiver.keep_people(person_ids)
+        self.reasoner.keep_people(person_ids)
 
     def set_needs(self, needs: Needs) -> None:
         self.perceiver.set_needs(needs)

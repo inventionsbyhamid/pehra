@@ -11,8 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from watchful.api import (account, alerts, billing, blobs, cameras, demo, incidents, live, people, search, telegram,
-                          watches)
+from watchful.api import (account, alerts, billing, blobs, cameras, demo, incidents, live, logs, people, search,
+                          telegram, watches)
 from watchful.api.common import LIVE_KINDS
 from watchful.api.headers import SecurityHeaders
 from watchful.auth.deps import AuthContext
@@ -136,7 +136,8 @@ def create_app(settings: Settings | None = None, llm=None, manager=None, provide
         return {"ok": True, "opencv": cv2.__version__, "kleidicv": "KleidiCV" in info or "kleidicv" in info.lower(),
                 "worker_beat_fresh": worker_alive(settings.data_dir, ctx.tuning.jobs.worker_alive_s)}
 
-    for router in (account, cameras, watches, alerts, incidents, telegram, search, people, blobs, live, billing, demo):
+    for router in (account, cameras, watches, alerts, incidents, telegram, search, people, logs, blobs, live, billing,
+                   demo):
         router.mount(app, ctx)
 
     dist = Path(settings.web_dist) if settings.web_dist else WEB_DIST

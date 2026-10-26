@@ -53,7 +53,7 @@ def world(tmp_path):
     ids = {"camera_id": cam.id, "watch_id": watch.id, "alert_id": alert.id, "scan_id": "scn_lake",
            "person_id": "per_lake", "user_id": bina, "invite_id": invite["id"], "token": invite["id"],
            "key": f"{B}/{cam.id}/kf/7.jpg", "zone_id": "z1", "example_id": example, "incident_id": incident.id,
-           "link_id": link.id}
+           "link_id": link.id, "staff_id": "per_lake"}
     return app, a, b, ids, event
 
 
@@ -105,7 +105,8 @@ def test_every_route_is_scoped(world):
     secrets = [ids["camera_id"], ids["watch_id"], ids["alert_id"], "per_lake", "Lake", "bina@example.com", B]
     for path in ("/api/cameras", "/api/alerts", f"/api/alerts?camera_id={ids['camera_id']}", "/api/metrics",
                  "/api/people", "/api/members", "/api/invites", "/api/me", "/api/incidents", "/api/telegram",
-                 "/api/incidents/precision", "/api/billing"):
+                 "/api/incidents/precision", "/api/billing", "/api/staff", "/api/staff?removed=true",
+                 "/api/logs/vehicles", "/api/logs/staff", "/api/logs/vehicles.csv", "/api/logs/staff.csv"):
         res = a.get(path)
         assert res.status_code == 200, path
         assert not [x for x in secrets if x in res.text], f"{path} shows another society's data"

@@ -31,6 +31,7 @@ class Camera:
     status: str = "offline"
     last_frame_at: float | None = None
     off_reason: str | None = None  # "plan" when the plan switched it off; written only by billing/limits.py
+    readers: list[str] = field(default_factory=list)  # turned on for this camera: "plates", "faces" (logs/readers.py)
 
 
 @dataclass

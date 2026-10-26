@@ -208,10 +208,14 @@ def hide_tokens_in_logs(names=("uvicorn.error", "uvicorn.access", "uvicorn")) ->
 
 
 def needs_faces(repo, camera_id: str) -> bool:
-    """True when a watch on this camera names people (the staff register): its frames must keep their faces. Every
-    other device camera blurs faces before a frame leaves it."""
+    """True when this camera names people (the staff register reader, or a watch about enrolled staff): its frames
+    must keep their faces. Every other device camera blurs faces before a frame leaves it."""
+    from watchful.logs.readers import FACES, has
     from watchful.rules.engine import needs_for
     from watchful.rules.watch import Watch
+    cam = repo.get_camera(camera_id)
+    if cam is not None and has(cam, FACES):
+        return True
     watches = []
     for row in repo.list_watches(camera_id):
         if row.enabled:

@@ -19,14 +19,22 @@ class NoFaceFound(Exception):
     pass
 
 
+class ManyFaces(Exception):
+    pass
+
+
 @dataclass
 class Enrollment:
     person_id: str
     name: str
     feature: list[float]
     consent_ts: float = field(default_factory=time.time)
-    thumbnail_key: str | None = None
+    thumbnail_key: str | None = None  # kept for rows from before photos were dropped; new enrolments keep none
     workspace_id: str | None = None  # set by the repository
+    features: list[list[float]] | None = None  # every template (one per enrolment photo); feature is the first
+
+    def templates(self) -> list[list[float]]:
+        return self.features or [self.feature]
 
 
 @dataclass
@@ -34,6 +42,21 @@ class FaceMatch:
     person_id: str
     name: str
     score: float
+    margin: float = 1.0  # how much closer than the next enrolled person
+
+
+def judge(looks: list[FaceMatch], cfg: FaceTuning) -> FaceMatch | None:
+    """A track's name from its face looks so far: one look at name_single or more, or name_frames looks of the same
+    person at name_multi or more, each at least name_margin ahead of the next person. Anything less (a possible
+    match, from possible_low up) never names anyone."""
+    if not looks:
+        return None
+    last = looks[-1]
+    if last.score >= cfg.name_single:
+        return last
+    agree = [x for x in looks if x.person_id == last.person_id and x.score >= cfg.name_multi
+             and x.margin >= cfg.name_margin]
+    return last if len(agree) >= cfg.name_frames and last in agree else None
 
 
 @register("faces", "yunet_sface")
@@ -89,6 +112,20 @@ class FaceIndex:
         self._people[person_id] = e
         return e
 
+    def template(self, image: np.ndarray) -> list[float]:
+        """The face template of the one face in an enrolment photo."""
+        faces = self._faces(image)
+        if len(faces) == 0:
+            raise NoFaceFound("no face found")
+        if len(faces) > 1:
+            raise ManyFaces("more than one face")
+        return self._feature(image, faces[0]).flatten().tolist()
+
+    def similarity(self, a: list[float], b: list[float]) -> float:
+        a, b = (np.array(v, np.float32).reshape(1, -1) for v in (a, b))
+        with self.lock:
+            return float(self.recognizer.match(a, b, cv2.FaceRecognizerSF_FR_COSINE))
+
     def load(self, enrollments: list[Enrollment]) -> None:
         ws = getattr(self, "workspace_id", None)
         self._people = {e.person_id: e for e in enrollments if not ws or e.workspace_id in (None, ws)}
@@ -99,7 +136,9 @@ class FaceIndex:
     def people(self) -> list[Enrollment]:
         return list(self._people.values())
 
-    def identify(self, image: np.ndarray, box) -> FaceMatch | None:
+    def identify(self, image: np.ndarray, box, floor: float | None = None) -> FaceMatch | None:
+        """The enrolled person whose closest template best matches the face in the top of `box`, at `floor` or more
+        (the blur and search threshold by default), with its margin over the next person."""
         if not self._people:
             return None
         x, y, w, h = box
@@ -113,11 +152,14 @@ class FaceIndex:
         if len(faces) == 0:
             return None
         feature = self._feature(crop, max(faces, key=lambda f: f[2] * f[3]))
-        best = None
+        scores = []
         for e in list(self._people.values()):
-            ref = np.array(e.feature, np.float32).reshape(1, -1)
+            refs = [np.array(t, np.float32).reshape(1, -1) for t in e.templates()]
             with self.lock:
-                score = float(self.recognizer.match(feature, ref, cv2.FaceRecognizerSF_FR_COSINE))
-            if score >= self.threshold and (best is None or score > best.score):
-                best = FaceMatch(e.person_id, e.name, score)
-        return best
+                best = max(float(self.recognizer.match(feature, r, cv2.FaceRecognizerSF_FR_COSINE)) for r in refs)
+            scores.append((best, e))
+        scores.sort(key=lambda x: -x[0])
+        score, e = scores[0]
+        if score < (self.threshold if floor is None else floor):
+            return None
+        return FaceMatch(e.person_id, e.name, score, score - scores[1][0] if len(scores) > 1 else score)

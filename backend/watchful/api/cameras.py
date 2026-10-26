@@ -24,6 +24,7 @@ from watchful.auth.deps import CurrentMember, current_member, require_role
 from watchful.billing.limits import CHECKS, ai_used, daily_ai_cap, start_watching, stop_watching
 from watchful.ingest import nvr
 from watchful.ingest.push import CLOSE_GONE, CLOSE_OFF, push_parts, qr_svg
+from watchful.logs import readers as readers_
 from watchful.netguard import check_url, clip_roots, inside
 from watchful.rules.engine import validate
 from watchful.rules.presets import purposes
@@ -61,6 +62,7 @@ class CameraPatch(BaseModel):
     zones: list[dict] | None = None
     enabled: bool | None = None
     tuning: dict | None = None
+    readers: list[str] | None = None  # "plates" (plate reading), "faces" (staff register): logs/readers.py
 
 
 def _purpose(value: str | None) -> str | None:
@@ -164,6 +166,12 @@ def make_router(ctx) -> APIRouter:
                           z.get("kind") or "area") for z in body.zones]
         if body.tuning is not None:
             load_tuning(None, body.tuning)
+        if body.readers is not None:
+            try:
+                chosen = readers_.known(body.readers)
+            except ValueError:
+                raise HTTPException(400, "Pick from the listed readers: " +
+                                    ", ".join(r["label"].lower() for r in readers_.readers().values()) + ".")
         switching_on = bool(body.enabled) and not cam.enabled
         if switching_on and (refused := start_watching(ctx.db, member.workspace.id, cam.id)):
             raise HTTPException(403, refused)
@@ -179,6 +187,9 @@ def make_router(ctx) -> APIRouter:
             cam.enabled = body.enabled
         if body.tuning is not None:
             cam.tuning = body.tuning
+        faces_before = readers_.has(cam, readers_.FACES)
+        if body.readers is not None:
+            cam.readers = chosen
         try:
             r.update_camera(cam)
         except Exception:
@@ -200,7 +211,7 @@ def make_router(ctx) -> APIRouter:
                       "disabled_watches": disabled})
         if not cam.enabled:
             hub.close(cam.id, CLOSE_OFF)
-        elif disabled:
+        elif disabled or faces_before != readers_.has(cam, readers_.FACES):
             hub.poke(cam.id)  # its watches changed: a device checks whether its blur still matches
         if cam.kind in LIVE_KINDS:
             manager.restart(cam.id) if cam.enabled else manager.stop(cam.id)

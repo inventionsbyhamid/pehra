@@ -1,0 +1,6 @@
+{
+  "roles": ["maid", "cook", "driver", "guard", "gardener", "cleaner", "other"],
+  "consent_version": 1,
+  "consent_text": "{name} is an adult, 18 or over, and agreed to be recognised by face on this society's cameras, so the staff register can record when they come in and leave. {brand} keeps only face templates made from these photos, never the photos. They can ask for their face to be deleted at any time, and they are then no longer recognised on any camera within a minute. Their past attendance stays in the register.",
+  "adults_only": "Staff only, and only adults. Never enrol a child."
+}

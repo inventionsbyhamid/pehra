@@ -1,0 +1,12 @@
+{
+  "plates": {
+    "label": "Plate reading",
+    "about": "Reads the number plates of vehicles near the lines drawn on this camera, for the gate log and for watches about plates.",
+    "attributes": ["plate_text", "plate_colour"]
+  },
+  "faces": {
+    "label": "Staff register",
+    "about": "Names enrolled staff by face on this camera, for the staff register. Everyone else stays unknown.",
+    "attributes": []
+  }
+}

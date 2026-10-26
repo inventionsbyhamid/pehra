@@ -377,21 +377,27 @@ class Incident(Base):
 
 
 class VehiclePassage(Base):
-    """A vehicle through a gate line, for the gate ledger; paired_id links an in with its out."""
+    """A vehicle over a line on a camera with plate reading on, for the gate log; paired_id links an in with its out
+    (logs/ledger.py). Deleted with its camera, like the camera's incidents."""
     __tablename__ = "vehicle_passages"
     __table_args__ = (Index("ix_vehicle_passages_ws_at", "workspace_id", "at"),
-                      Index("ix_vehicle_passages_ws_plate", "workspace_id", "plate_text"))
+                      Index("ix_vehicle_passages_ws_plate", "workspace_id", "plate_text"),
+                      same_society("vehicle_passages", "camera_id", "cameras"))
     id: Mapped[str] = id_column("veh")
     workspace_id: Mapped[str] = workspace_fk()
     camera_id: Mapped[str]
     at: Mapped[datetime]
     direction: Mapped[str]  # in or out
     cls: Mapped[str | None]
-    plate_text: Mapped[str | None]
+    plate_text: Mapped[str | None]  # None when unread: never paired
     plate_conf: Mapped[float | None]
     plate_colour: Mapped[str | None]  # yellow, white, green, black or unknown
     picture_key: Mapped[str | None]
     paired_id: Mapped[str | None]
+    line: Mapped[str | None]  # the line's name
+    track_id: Mapped[int | None]
+    reads_json: Mapped[list[Any]] = mapped_column(default=list)  # each read's text, for the record when they differ
+    alerted_json: Mapped[list[str]] = mapped_column(default=list)  # stay watches that already fired for this in
 
 
 class Staff(Base):
@@ -405,12 +411,16 @@ class Staff(Base):
     role: Mapped[str] = mapped_column(default="staff")
     consent_at: Mapped[datetime | None]
     consent_by: Mapped[str | None]
+    consent_text: Mapped[str | None]  # the words the admin agreed to, as shown
     active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    removed_at: Mapped[datetime | None]
+    removed_by: Mapped[str | None]
 
 
 class StaffFace(Base):
-    """A face template (float32 vector) of a staff member; never a face from anyone who did not consent."""
+    """A face template (float32 vector) of a staff member, one per enrolment photo; never a face from anyone who did
+    not consent. The photos themselves are not kept (picture_key stays None)."""
     __tablename__ = "staff_faces"
     __table_args__ = (same_society("staff_faces", "staff_id", "staff"),
                       Index("ix_staff_faces_ws_staff", "workspace_id", "staff_id"))

@@ -550,6 +550,21 @@ def attribute(ctx, cond, track):
     return SignalValue(value or "unknown", f"{name.replace('_', ' ')} {value}" if value else None)
 
 
+@signal("inside_s", "track", "number",
+        "Seconds since the subject came in over a line (going in) on a camera with plate reading, without going out "
+        "again, on any camera of the society. A vehicle is followed by its number plate after it leaves view, so a "
+        "watch like 'a cab stays more than 2 hours' is attribute plate_colour is yellow with inside_s at least 7200. "
+        "Combine it only with attribute; the gate log checks it every minute.",
+        tier="B", label="inside the society",
+        caveat="Only vehicles whose plate was read going in are followed; an unread plate is not.")
+def inside_s(ctx, cond, track):
+    try:
+        seconds = float(track.attributes.get("inside_s") or 0)
+    except (TypeError, ValueError):
+        seconds = 0.0
+    return SignalValue(seconds, f"inside for {duration(seconds)}" if seconds else None)
+
+
 @signal("camera_health", "scene", "text",
         "The camera's own state: live, covered, blurred, moved or offline. Not an event in the picture.", replay=True)
 def camera_health(ctx, cond, track):

@@ -12,7 +12,7 @@ from watchful.store.db import Camera
 from watchful.tuning import Tuning
 from watchful.vision.appearance import signature
 from watchful.vision.detect import Detector
-from watchful.vision.faces import FaceIndex, FaceMatch
+from watchful.vision.faces import FaceIndex, FaceMatch, judge
 from watchful.vision.motion import MotionGate
 from watchful.vision.pose import PoseEstimator, PoseResult
 from watchful.vision.quality import brighten, is_dark, sharpness
@@ -47,6 +47,7 @@ class Observation:
     embedding: np.ndarray | None = None
     started: bool = False
     ended: bool = False
+    attributes: dict[str, str] | None = None  # what readers attached, such as plate_text and plate_colour
 
 
 @dataclass
@@ -67,7 +68,8 @@ class _TrackMemo:
     last_ts: float = 0.0
     suspicious_until: float = float("-inf")
     face_ts: float = float("-inf")
-    face: FaceMatch | None = None
+    face: FaceMatch | None = None  # the name, once judge() gives one
+    looks: list[FaceMatch] = field(default_factory=list)  # face looks that matched someone at possible_low or more
     keyframe_ts: float = float("-inf")
     keyframe_key: str | None = None
     best_key: str | None = None
@@ -92,9 +94,10 @@ class Perceiver:
 
     def __init__(self, camera: Camera, settings: Settings, tuning: Tuning, blobs: BlobStore,
                  faces: FaceIndex | None, needs: Needs, embedder=None, detector: Detector | None = None,
-                 pose: PoseEstimator | None = None):
+                 pose: PoseEstimator | None = None, plates=None):
         self.camera, self.settings, self.t, self.blobs = camera, settings, tuning, blobs
         self.faces, self.embedder = faces, embedder
+        self.plates = plates  # logs.reading.PlateSampler on a camera with plate reading on
         self.gate = MotionGate(tuning.motion)
         self.detector = detector or make_detector(settings, tuning, needs.classes)
         self.tracker = Tracker(tuning.track)
@@ -104,6 +107,7 @@ class Perceiver:
         self.counts = {"frames": 0, "frames_skipped": 0, "detector_runs": 0, "detector_skipped": 0, "pose_runs": 0,
                        "face_runs": 0, "embeds": 0, "ms_total": 0.0}
         self._since_detect = 0
+        self.stride = max(1, tuning.detect.stride)  # a camera that must not miss a passing vehicle lowers it
         self._last_scene = float("-inf")
         self._last_slow = float("-inf")
         self.set_needs(needs)
@@ -134,7 +138,7 @@ class Perceiver:
             self._last_slow = ts
         if motion.moving or self.tracker.tracks or slow:
             tracks = self.tracker.tracks
-            due = self._since_detect + 1 >= max(1, self.t.detect.stride)
+            due = self._since_detect + 1 >= self.stride
             if not tracks or due or slow or self._new_motion(motion.boxes, tracks):
                 self.counts["detector_runs"] += 1
                 self._since_detect = 0
@@ -146,12 +150,16 @@ class Perceiver:
             up = self.tracker.update(dets, ts, work)
             started = {t.id for t in up.started}
             for t in up.active:
-                observations.append(self._observe(work, t, ts, t.id in started))
+                obs = self._observe(work, t, ts, t.id in started)
+                if self.plates is not None:
+                    obs.attributes = self.plates.observe(image, t, ts)
+                observations.append(obs)
             for t in up.ended:
                 m = self.memo.pop(t.id, _TrackMemo())
                 observations.append(Observation(ts, t.id, t.cls, t.box, t.score, face=m.face, signature=m.signature,
                                                 keyframe_key=m.keyframe_key, best_key=m.best_key,
-                                                embedding=m.embedding, ended=True))
+                                                embedding=m.embedding, ended=True,
+                                                attributes=self.plates.forget(t.id, ts) if self.plates else None))
         else:
             self.counts["frames_skipped"] += 1
         self.counts["ms_total"] += (time.perf_counter() - start) * 1000
@@ -209,7 +217,10 @@ class Perceiver:
                 and ts - m.face_ts >= 1 / self.t.faces.rate_hz:
             m.face_ts = ts
             self.counts["face_runs"] += 1
-            m.face = self.faces.identify(image, t.box)
+            look = self.faces.identify(image, t.box, floor=self.t.faces.possible_low)
+            if look is not None:
+                m.looks.append(look)
+                m.face = judge(m.looks, self.t.faces)
         if started or ts - m.keyframe_ts >= self.t.perceive.keyframe_every_s:
             self._keyframe(image, t, ts, m)
         cap = self.t.perceive.max_embeds_per_track
@@ -225,6 +236,13 @@ class Perceiver:
         obs.face, obs.signature, obs.embedding = m.face, m.signature, m.embedding
         obs.keyframe_key, obs.best_key = m.keyframe_key, m.best_key
         return obs
+
+    def keep_people(self, person_ids: set[str]) -> None:
+        """Forgets every face look and name of someone no longer enrolled, so they are not named again."""
+        for m in self.memo.values():
+            m.looks = [x for x in m.looks if x.person_id in person_ids]
+            if m.face is not None and m.face.person_id not in person_ids:
+                m.face = None
 
     def _wants_pose(self, t: Track, ts: float, m: _TrackMemo) -> bool:
         if self.needs.pose:

@@ -130,6 +130,9 @@ def test_people_need_consent(app_and_client):
     r = c.post("/api/people", data={"name": "Player", "consent": "false"}, files={"photo": ("p.jpg", photo)})
     assert r.status_code == 400 and "consent" in r.json()["detail"]
     r = c.post("/api/people", data={"name": "Player", "consent": "true"}, files={"photo": ("p.jpg", photo)})
+    assert r.status_code == 400 and "3 to 5 photos" in r.json()["detail"]
+    three = [("photo", (f"p{i}.jpg", photo)) for i in range(3)]
+    r = c.post("/api/people", data={"name": "Player", "consent": "true"}, files=three)
     assert r.status_code == 200 and [p["name"] for p in c.get("/api/people").json()] == ["Player"]
 
 

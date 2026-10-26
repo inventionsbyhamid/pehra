@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from watchful.components import make_blobs, make_detector, make_embedder, make_faces, make_pose
+from watchful.components import make_blobs, make_detector, make_embedder, make_faces, make_plate_reader, make_pose
 from watchful.config import Settings, available_cpus
 from watchful import netguard
 from watchful.evidence import EvidenceBuffer
@@ -31,6 +31,8 @@ from watchful.health import NO_PICTURE, check as health_check, holds, is_health_
 from watchful.ingest.clips import ClipRecorder
 from watchful.ingest.loop import demo_source
 from watchful.ingest.sources import FileSource, PushSource, StreamSource
+from watchful.logs import readers
+from watchful.logs.reading import Passages, PlateSampler
 from watchful.rules.engine import RuleEngine, log_row, needs_for
 from watchful.rules.watch import Watch
 from watchful.rules.zonestate import load_states
@@ -45,7 +47,7 @@ from watchful.vision.reason import Tick
 
 log = logging.getLogger("watchful.pool")
 
-IMPORTANT = ("events", "log", "candidate", "stopped")  # never dropped when the app is slow to read
+IMPORTANT = ("events", "log", "candidate", "stopped", "passage")  # never dropped when the app is slow to read
 CAMERA_SIGNALS = {"camera_health", "zone_state"}  # signals that read the camera's health, not its picture
 
 
@@ -129,6 +131,11 @@ class Models:
             self._faces[key] = make_faces(self.settings, tuning)
         return self._faces[key]
 
+    def plates(self, tuning: Tuning):
+        if "plates" not in self.loads:
+            self.loads["plates"] += 1
+        return make_plate_reader(self.settings, tuning)  # one per process and plate settings (components)
+
     def embedder(self):
         if "embedder" not in self.loads:
             self.loads["embedder"] += 1
@@ -172,13 +179,25 @@ class CameraRunner:
         watches = job.watches
         self.needs = needs = needs_for([w for _, w in watches]) if watches else Needs(classes={"person"})
         blobs = SocietyBlobs(worker.blobs, self.ws) if self.ws else worker.blobs
+        sampler, self.passages = None, None
+        if readers.has(cam, readers.PLATES):  # vehicles are read near lines, and their passages go to the gate log
+            if needs.classes is not None:
+                needs.classes |= set(t.ledger.classes)
+            sampler = PlateSampler(worker.models.plates(t), cam.zones, t)
+            self.passages = Passages(sampler, blobs, cam, t)
+        if readers.has(cam, readers.FACES):  # the staff register: enrolled staff are named on this camera
+            needs.faces = True
+            if needs.classes is not None:
+                needs.classes.add("person")
         faces = worker.faces_for(self.ws, t, job.enrollments) if needs.faces else None
         embedder = TextCache(worker.models.embedder(), job.texts) if needs.embed or needs.embedder else None
         detector = worker.models.detector(t).view()
         pose = worker.models.pose(t) if needs.pose or needs.posture else None
         self.sink = EventSink(self.send, self.ws, self.id)
         self.sink.recording = self.recording = job.record
-        self.pipe = CameraPipeline(cam, self.sink, blobs, faces, s, t, needs, embedder, detector, pose)
+        self.pipe = CameraPipeline(cam, self.sink, blobs, faces, s, t, needs, embedder, detector, pose, sampler)
+        if sampler is not None:  # at about 1 analysed fps a skipped detection loses a vehicle's track at the line
+            self.pipe.perceiver.stride = min(self.pipe.perceiver.stride, max(1, t.ledger.detect_stride))
         states = None
         if any(c.signal == "zone_state" for _, w in watches for c in w.conditions):
             states = load_states(job.examples, blobs.get, cam.zones, t.zones, embedder)
@@ -287,6 +306,7 @@ class CameraRunner:
             self.send({"type": "overlay", "camera_id": self.id, "ts": frame.ts, "tracks": self.tracks})
         self._judge()
         tick.health = None if self.health == "live" else self.health  # health is a signal: the rules hear it
+        self._passages(self.passages.on_tick(tick) if self.passages else [])
         self._rules(tick, frame.ts, frame.image)
         for item in [p for p in self.pending if frame.ts >= p[0]]:
             self.pending.remove(item)
@@ -318,6 +338,11 @@ class CameraRunner:
             self.clips.request(c.ts, c.clip_key)
             self.pending.append((ts + self.tuning.evidence.after_s, c))
 
+    def _passages(self, messages: list[dict]) -> None:
+        for msg in messages:
+            if self.recording:  # a demo camera logs its first loop only, like its timeline
+                self.send(msg)
+
     def _judge(self) -> None:
         self.health = health_check(self.camera, self.last_frame_at, self.pipe.perceiver.tamper.problem, time.time(),
                                    self.worker.tuning.health) if self.seen else "live"
@@ -343,7 +368,8 @@ class CameraRunner:
         while self.done_at and self.done_at[0] < mono - 10:
             self.done_at.popleft()
         fps = len(self.done_at) / max(min(10.0, mono - self._t0), 1.0)  # analysed frames, the last 10 s
-        stats = {**self.pipe.stats(), "latency_p50_ms": percentile(self.latency_ms, 50),
+        plates = self.pipe.perceiver.plates.stats() if self.pipe.perceiver.plates else {}
+        stats = {**self.pipe.stats(), **plates, "latency_p50_ms": percentile(self.latency_ms, 50),
                  "latency_p95_ms": percentile(self.latency_ms, 95), "process": self.worker.index}
         source = "paused" if self._paused() else self.source.status
         return {"type": "status", "camera_id": self.id, "workspace_id": self.ws,
@@ -363,6 +389,7 @@ class CameraRunner:
     def finish(self) -> threading.Thread:
         """A recording reached its end: close its tracks, tell the app, and stop (on a thread of its own)."""
         self.pipe.finish(time.time())
+        self._passages(self.passages.flush() if self.passages else [])
         self.send(self.status(stopped=True))
         return self.stop_later()
 
@@ -402,9 +429,15 @@ class PoolWorker:
         return index
 
     def reload_faces(self, workspace_id: str | None, enrollments: list[Enrollment]) -> None:
+        """A society's enrolled staff changed: its face indexes take the new list, and its cameras forget anyone no
+        longer in it (names already given, and names carried by clothes), so they are never named again."""
         for (ws, _), index in self.societies.items():
             if ws == workspace_id:
                 index.load(enrollments)
+        kept = {e.person_id for e in enrollments if e.workspace_id in (None, workspace_id)}
+        for r in self.cameras.values():
+            if r.ws == workspace_id:
+                r.pipe.keep_people(kept)
 
     def assign(self, job: CameraJob) -> None:
         self.remove(job.camera.id)
@@ -477,8 +510,12 @@ class PoolWorker:
                 log.exception("camera %s: a frame failed", r.id)
 
     def report(self) -> dict:
+        people: dict[str, list[str]] = {}
+        for (ws, _), index in self.societies.items():
+            people.setdefault(str(ws), [])
+            people[str(ws)] += [e.person_id for e in index.people() if e.person_id not in people[str(ws)]]
         return {"type": "process", "index": self.index, "pid": os.getpid(), "loads": dict(self.models.loads),
-                "cameras": sorted(self.cameras), "rss_mb": round(rss_mb())}
+                "cameras": sorted(self.cameras), "rss_mb": round(rss_mb()), "people": people}
 
     def close(self) -> None:
         for cid in list(self.cameras):

@@ -76,21 +76,17 @@ def test_lookout_from_an_alert(tmp_path):
     assert r.status_code == 200 and r.json()["watch_ids"]
 
 
-def test_enrolment_photo_kept_by_retention_and_removed_on_delete(tmp_path):
+def test_enrolment_keeps_no_photo(tmp_path):
+    """Only face templates are kept (a site promise): the enrolment photos never reach storage."""
     app, c = app_client(tmp_path)
-    blobs = app.state.ctx.blobs
     from watchful.vision.models import sample_path
-    photo = cv2.imencode(".jpg", cv2.imread(str(sample_path("basketball1.png"))))[1].tobytes()
-    pid = c.post("/api/people", data={"name": "P", "consent": "true"}, files={"photo": ("p.jpg", photo)}).json()["person_id"]
-    old = time.time() - 30 * 86400
-    import os
-    from watchful.workers import run_retention
-    photo_path = tmp_path / "blobs" / SOCIETY / "people" / f"{pid}.jpg"  # under the society's prefix
-    os.utime(photo_path, (old, old))
-    run_retention(app.state.ctx.settings, app.state.ctx.repo_for(SOCIETY), blobs)
-    assert blobs.get(f"{SOCIETY}/people/{pid}.jpg")
-    c.delete(f"/api/people/{pid}")
-    assert not photo_path.exists()
+    image = cv2.imread(str(sample_path("basketball1.png")))
+    photos = [("photo", (f"p{i}.jpg", cv2.imencode(".jpg", im)[1].tobytes())) for i, im in
+              enumerate((image, cv2.flip(image, 1), cv2.resize(image, None, fx=0.8, fy=0.8)))]
+    r = c.post("/api/people", data={"name": "P", "role": "maid", "consent": "true"}, files=photos)
+    assert r.status_code == 200
+    assert not (tmp_path / "blobs" / SOCIETY / "people").exists()
+    assert c.delete(f"/api/people/{r.json()['person_id']}").json()["ok"] is True
 
 
 def test_upload_clip_is_cut_at_the_alert_moment(tmp_path, monkeypatch):

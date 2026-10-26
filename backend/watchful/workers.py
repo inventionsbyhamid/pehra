@@ -19,6 +19,7 @@ from watchful.components import made_embedders, make_embedder, make_llm, make_me
 from watchful.config import Settings
 from watchful.evidence import EvidencePack, evidence_context, file_pack
 from watchful.health import BACK, HealthBook, check as health_check, holds, is_health_watch
+from watchful.logs import ledger, register
 from watchful.notify import ApprovalNotifier
 from watchful.pool import WorkerPool
 from watchful.rules.engine import Candidate, log_row, needs_for
@@ -176,6 +177,7 @@ class WorkerManager:
         threading.Thread(target=self._watch_health, daemon=True).start()
         threading.Thread(target=self._report, daemon=True).start()
         threading.Thread(target=self._janitor, daemon=True).start()
+        threading.Thread(target=self._sync_faces, daemon=True).start()
         self.indexer = None
         if settings.index_embeddings:
             from watchful.indexer import Indexer
@@ -185,6 +187,17 @@ class WorkerManager:
 
     def _all_repos(self) -> list:
         return [self.repo_for(ws) for ws in self.societies()]
+
+    def _sync_faces(self) -> None:
+        """Every Tuning faces.reload_s each society's enrolled staff go to its camera processes again, as stored (a
+        lost command, a change made outside this app), so nobody removed is named for longer than that."""
+        while not self._closed:
+            time.sleep(self.tuning.faces.reload_s)
+            for ws in {self._society(c) for c, st in list(self.cams.items()) if st.status.running}:
+                try:
+                    self.reload_faces(ws)
+                except Exception:
+                    log.exception("sending %s's enrolled staff to its cameras failed", ws)
 
     def _janitor(self, every_s: float = 6 * 3600) -> None:
         from watchful.store.rekey import rekey_society
@@ -251,7 +264,8 @@ class WorkerManager:
         """The camera's enabled watches that can run, and a plain note for each that can't."""
         repo = self._repo(camera_id)
         zones = zones if zones is not None else repo.get_camera(camera_id).zones
-        return select_watches(repo.list_watches(camera_id), camera_id, zones)
+        watches, notes = select_watches(repo.list_watches(camera_id), camera_id, zones)
+        return [(i, w) for i, w in watches if not ledger.is_stay_watch(w)], notes  # those run on the gate log
 
     def _camera_lock(self, camera_id: str) -> threading.Lock:
         with self._lock:
@@ -314,7 +328,7 @@ class WorkerManager:
 
     def reload_faces(self, workspace_id: str) -> None:
         """A society's enrolled staff changed: every camera process watching one of its cameras reloads its face
-        index; no camera restarts."""
+        index and forgets anyone removed; no camera restarts."""
         self.pool.reload(workspace_id, self.repo_for(workspace_id).list_enrollments())
 
     def status(self, camera_id: str) -> WorkerStatus:
@@ -448,6 +462,11 @@ class WorkerManager:
             rows = [r for r in msg["rows"] if r.camera_id == msg["camera_id"]]
             if ws and rows:
                 self.repo_for(ws).add_events(rows)
+                register.on_events(self.repo_for(ws), rows)  # the staff register, live
+        elif kind == "passage":
+            ws = self._from_society(msg)
+            if ws:
+                self._passage(ws, msg)
         elif kind == "log":
             ws = self._from_society(msg)
             row: EventRow = msg["row"]
@@ -462,6 +481,20 @@ class WorkerManager:
                 self._on_candidate(pack)
         elif kind == "process":
             self.processes[msg["index"]] = msg
+
+    def _passage(self, workspace_id: str, msg: dict) -> None:
+        """A vehicle over a line on a camera with plate reading: a row in the gate log, paired by plate."""
+        e = msg["event"]
+        if e.camera_id != msg["camera_id"]:
+            return
+        key = msg.get("picture_key")
+        if key and not key.startswith(f"{workspace_id}/"):
+            key = None
+        row = ledger.record_passage(self.repo_for(workspace_id), msg["camera_id"], e, msg.get("plate"), key,
+                                    self.tuning.ledger)
+        self._publish(msg["camera_id"], {"type": "passage", "camera_id": msg["camera_id"], "id": row.id,
+                                         "direction": row.direction, "plate": row.plate_text,
+                                         "plate_colour": row.plate_colour, "paired_id": row.paired_id})
 
     def _status(self, msg: dict) -> None:
         c = self.cams.get(msg["camera_id"])

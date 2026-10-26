@@ -70,10 +70,19 @@ class FallTuning(_Section):
 
 
 class FaceTuning(_Section):
-    cosine: float = 0.363  # SFace's documented threshold
+    cosine: float = 0.363  # SFace's documented threshold: a face this close to a template counts as enrolled (blur)
     detect_score: float = 0.7
     region: float = 0.4  # top share of a person box searched for a face
     rate_hz: float = 1.0
+    # naming a track (research): one look this sure names it, or name_frames looks of the same person this sure and
+    # this far ahead of the next person do; looks from possible_low up are only possible, never a name
+    name_single: float = 0.45
+    name_multi: float = 0.363
+    name_frames: int = 3
+    name_margin: float = 0.05
+    possible_low: float = 0.30
+    reload_s: float = 60.0  # every camera process has a society's enrolled staff as stored at most this long ago
+    enrol_same: float = 0.363  # each enrolment photo must be this close to the others: the same person
 
 
 class AppearanceTuning(_Section):
@@ -268,7 +277,8 @@ class PlateTuning(_Section):
     max_plates: int = 3  # plate boxes tried per crop, best first
     outside: float = 0.05  # a plate box may cross the crop's edge by this share of it, no more
     plate_aspect: tuple[float, float] = (0.8, 8.0)  # width over height of a plausible plate box
-    min_fill: float = 0.5  # a plate quad covering less of its bounding box has wrong corners: the box is used
+    min_fill: float = 0.5  # a plate quad whose area is under this share of its edges' product (plates.quad_fill)
+    # has collapsed or crossed corners: the box around them is used instead
     margin: float = 0.08  # plate quad grown by this share before warping
     plate_height: int = 96  # warped plate height before its lines are cut
     two_line_aspect: float = 2.6  # plates narrower than this (width over height) may hold two lines
@@ -302,6 +312,33 @@ class PlateTuning(_Section):
     black_v: float = 80
     yellow_hue: tuple[float, float] = (12, 40)  # OpenCV hue, 0 to 180
     green_hue: tuple[float, float] = (40, 90)
+
+
+class LedgerTuning(_Section):
+    """The gate log: plate reading on vehicle tracks of cameras with plate reading on, and passages over lines."""
+    classes: list[str] = ["car", "motorcycle", "bus", "truck"]  # tracks whose plates are read and passages logged
+    reads_per_track: int = 2  # the plate reader runs at most this often on one track
+    read_gap_s: float = 0.5  # and no sooner than this after its last read of that track
+    line_near: float = 1.5  # box heights from a line within which a vehicle is read, on a camera with lines
+    min_box_px: int = 64  # a vehicle box shorter than this is too far away to read
+    crop_margin: float = 0.05  # share of the box added on each side of the crop the reader gets
+    settle_s: float = 3.0  # a crossing waits at most this long for the track's reads before its passage is logged
+    detect_stride: int = 1  # detector stride on a camera with plate reading: at 1 fps a skipped run loses a car
+    dedupe_s: float = 30.0  # the same plate the same way through the same camera within this is one passage
+    pair_window_s: float = 259200.0  # an out pairs with the latest unpaired in of its plate within this (3 days)
+    overstay_s: float = 7200.0  # a commercial plate in for longer than this opens an incident; 0 turns it off
+    overstay_colours: list[str] = ["yellow"]  # commercial plates (taxis and cabs)
+    overstay_severity: Literal["info", "warning", "critical"] = "warning"
+    jpeg_quality: int = 85
+
+
+class StaffTuning(_Section):
+    """The staff register: enrolment and the daily roll up."""
+    min_photos: int = 3
+    max_photos: int = 5
+    max_photo_mb: float = 8.0
+    rollup_hour: int = 1  # yesterday's attendance is rolled up from this hour, society time
+    rollup_late_h: float = 6.0  # a worker that was down then still rolls it up this many hours late
 
 
 class AuthTuning(_Section):
@@ -400,6 +437,8 @@ class Tuning(_Section):
     push: PushTuning = PushTuning()
     health: HealthTuning = HealthTuning()
     resources: ResourcesTuning = ResourcesTuning()
+    ledger: LedgerTuning = LedgerTuning()
+    staff: StaffTuning = StaffTuning()
 
 
 def _merge(base: dict, extra: dict) -> dict:

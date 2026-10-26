@@ -147,12 +147,14 @@ def test_rows_must_point_into_their_own_society(tmp_path):
            m.Zone(workspace_id="ws_a", camera_id=theirs.id, id="z1", name="gate"),
            m.StaffFace(workspace_id="ws_a", staff_id="per_b", embedding=b"\0" * 16),
            m.Attendance(workspace_id="ws_a", staff_id="per_b", day="2026-10-25"),
-           m.Incident(workspace_id="ws_a", camera_id=theirs.id, severity="critical")]
+           m.Incident(workspace_id="ws_a", camera_id=theirs.id, severity="critical"),
+           m.VehiclePassage(workspace_id="ws_a", camera_id=theirs.id, at=m.utcnow(), direction="in")]
     for row in bad:
         with pytest.raises(IntegrityError), orm.Session(engine) as s, s.begin():
             s.add(row)
     with orm.Session(engine) as s, s.begin():
         s.add(m.DeviceToken(workspace_id="ws_b", camera_id=theirs.id, token_hash="h2"))
+        s.add(m.VehiclePassage(workspace_id="ws_b", camera_id=theirs.id, at=m.utcnow(), direction="in"))
         s.add(m.Incident(workspace_id="ws_a", camera_id=None, severity="warning"))  # a site wide incident
         own = m.Incident(workspace_id="ws_b", camera_id=theirs.id, severity="critical")
         own_id = own.id

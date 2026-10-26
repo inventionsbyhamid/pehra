@@ -234,7 +234,7 @@ def seed(repo, blobs, settings, now: datetime) -> Seeded:
         if events:
             repo.add_events(events)
     with repo.tx() as s:
-        seed_gate_log_and_register(s, repo.workspace_id, out, spec(), now)
+        seed_gate_log_and_register(s, repo.workspace_id, out, spec(), now, blobs)
     return out
 
 
@@ -280,12 +280,17 @@ def _log_row(camera_id: str, rows: list[WatchRow], watches: list[Watch], item: d
                      "seeded": True}, None, None, None, None)
 
 
-def seed_gate_log_and_register(s, workspace_id: str, seeded: Seeded, demo: dict, now: datetime) -> None:
+def seed_gate_log_and_register(s, workspace_id: str, seeded: Seeded, demo: dict, now: datetime,
+                               blobs=None) -> dict[str, int]:
     """The seeding hook for the gate log (vehicle passages) and the staff register (staff and attendance), in the
-    sandbox's transaction `s`. Task 6b or 8b fills it from each demo camera's "ledger" and "register" rows in
-    demo.json (both empty until the gate clips are recorded); `seeded.cameras` maps demo.json keys to camera ids.
-    Until then it adds nothing."""
-    return None
+    sandbox's transaction `s` (logs/demo.py): yesterday and today at the gate with rendered plates, on the Main gate
+    camera (else the Service gate; with neither, no passages, since a passage needs its camera), and made up staff
+    with templates that match no face. A demo camera's "ledger" rows in demo.json, when given ({"direction",
+    "hours_ago", "colour", "cls", "plate"}), replace the generated passages."""
+    from watchful.logs import demo as day
+    rows = [dict(r, at=now - timedelta(hours=float(r["hours_ago"])))
+            for c in demo.get("cameras", []) for r in c.get("ledger", [])]
+    return day.seed(s, workspace_id, seeded.cameras, now, blobs, rows=sorted(rows, key=lambda r: r["at"]) or None)
 
 
 # the demo's AI

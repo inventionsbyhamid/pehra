@@ -130,6 +130,12 @@ class Reasoner:
             if same_person(sig, s.signature) < cfg.carry_name:
                 s.known_person_id, s.known_name, s.known_by = pid, name, "clothes"
 
+    def keep_people(self, person_ids: set[str]) -> None:
+        self.recent_known = {k: v for k, v in self.recent_known.items() if k in person_ids}
+        for s in self.states.values():
+            if s.known_person_id is not None and s.known_person_id not in person_ids:
+                s.known_person_id = s.known_name = s.known_by = None
+
     @staticmethod
     def _apply(s: TrackState, o: Observation) -> None:
         s.box, s.cls = o.box, o.cls
@@ -149,6 +155,10 @@ class Reasoner:
     def _event(self, s: TrackState, kind: str, ts: float, zone: str | None = None, data: dict | None = None) -> EventRow:
         person = s.cls == "person"
         data = {**(data or {}), "box": [round(float(v), 1) for v in s.box]}
+        if s.known_person_id:  # the staff register reads who from here (logs/register.py)
+            data.update(person_id=s.known_person_id, known_by=s.known_by)
+        if s.attributes:
+            data["attributes"] = dict(s.attributes)
         return EventRow(None, self.camera.id, ts, kind, s.track_id, s.cls, zone, data,
                         s.best_key or s.keyframe_key, _list(s.signature) if person else None,
                         _list(s.embedding) if person else None, s.known_name)
