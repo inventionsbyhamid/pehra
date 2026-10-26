@@ -181,8 +181,8 @@
     "instance": "c8g.large",
     "vcpus": 2,
     "cameras": 0,
-    "cool_fee_usd_per_hour": 0.0,
-    "usd_per_month": 46.7,
+    "cool_fee_usd_per_hour": 0.01,
+    "usd_per_month": 54.0,
     "usd_per_camera_month": null,
     "inr_per_camera_month": null,
     "measured": false
@@ -191,8 +191,8 @@
     "instance": "c8g.xlarge",
     "vcpus": 4,
     "cameras": 0,
-    "cool_fee_usd_per_hour": 0.0,
-    "usd_per_month": 86.11,
+    "cool_fee_usd_per_hour": 0.01,
+    "usd_per_month": 93.41,
     "usd_per_camera_month": null,
     "inr_per_camera_month": null,
     "measured": false
@@ -223,8 +223,8 @@
     "instance": "c8g.large",
     "vcpus": 2,
     "cameras": 0,
-    "cool_fee_usd_per_hour": 0.0,
-    "usd_per_month": 46.7,
+    "cool_fee_usd_per_hour": 0.01,
+    "usd_per_month": 54.0,
     "usd_per_camera_month": null,
     "inr_per_camera_month": null,
     "measured": false
@@ -233,8 +233,8 @@
     "instance": "c8g.xlarge",
     "vcpus": 4,
     "cameras": 0,
-    "cool_fee_usd_per_hour": 0.0,
-    "usd_per_month": 86.11,
+    "cool_fee_usd_per_hour": 0.01,
+    "usd_per_month": 93.41,
     "usd_per_camera_month": null,
     "inr_per_camera_month": null,
     "measured": false

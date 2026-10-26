@@ -32,9 +32,9 @@ def test_wilson_interval_and_the_rule_of_three():
     lo, hi = wilson(9, 10)
     assert (round(lo, 3), round(hi, 3)) == (0.596, 0.982)
     lo, hi = wilson(10, 10)
-    assert round(lo, 3) == 0.722 and hi == 1.0
+    assert round(lo, 3) == 0.722 and hi == pytest.approx(1.0)
     lo, hi = wilson(0, 5)
-    assert lo == 0.0 and round(hi, 3) == 0.435
+    assert lo == 0.0 and round(hi, 3) == 0.434
     assert wilson(0, 0) is None and rule_of_three(0) is None
     assert rule_of_three(30) == pytest.approx(0.1)
     p = proportion(10, 10)

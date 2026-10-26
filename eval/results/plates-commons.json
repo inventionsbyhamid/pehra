@@ -1,0 +1,199 @@
+{
+ "source": "eval/labels/plates-commons.csv",
+ "about": "The plate reader on 8 Wikimedia Commons photos (CC BY, CC BY-SA or public domain), run once at default settings by Task 6a on 25 Oct 2026 (task-6a-report.md, \"Real photos\"); its fix round (13e6bf6) left text and colour unchanged. Handheld daylight photos, not gate CCTV: two whole cars cropped to the car as a detector would, six plate close ups. The photos were not kept, so these rows are the reads that run printed, copied here; eval/plates.py --photos reads new photos itself.",
+ "code": "eb03cf7",
+ "engine": "c75b3f9",
+ "date": "2026-10-26T03:08:52+00:00",
+ "all": {
+  "photos": 8,
+  "plates": 7,
+  "exact": 5,
+  "wrong": 1,
+  "unread": 1,
+  "exact_share": {
+   "k": 5,
+   "n": 7,
+   "value": 0.7143,
+   "wilson95": [
+    0.3589,
+    0.9178
+   ],
+   "failures_at_most": null
+  },
+  "wrong_share": {
+   "k": 1,
+   "n": 7,
+   "value": 0.1429,
+   "wilson95": [
+    0.0257,
+    0.5131
+   ],
+   "failures_at_most": null
+  },
+  "unread_share": {
+   "k": 1,
+   "n": 7,
+   "value": 0.1429,
+   "wilson95": [
+    0.0257,
+    0.5131
+   ],
+   "failures_at_most": null
+  },
+  "outside_grammar": {
+   "photos": 1,
+   "unread": 1,
+   "read_anyway": 0
+  },
+  "colour": {
+   "photos": 8,
+   "right": 7,
+   "unknown": 1,
+   "wrong": 0,
+   "accuracy": {
+    "k": 7,
+    "n": 8,
+    "value": 0.875,
+    "wilson95": [
+     0.5291,
+     0.9776
+    ],
+    "failures_at_most": null
+   }
+  }
+ },
+ "by_light": {
+  "day": {
+   "photos": 8,
+   "plates": 7,
+   "exact": 5,
+   "wrong": 1,
+   "unread": 1,
+   "exact_share": {
+    "k": 5,
+    "n": 7,
+    "value": 0.7143,
+    "wilson95": [
+     0.3589,
+     0.9178
+    ],
+    "failures_at_most": null
+   },
+   "wrong_share": {
+    "k": 1,
+    "n": 7,
+    "value": 0.1429,
+    "wilson95": [
+     0.0257,
+     0.5131
+    ],
+    "failures_at_most": null
+   },
+   "unread_share": {
+    "k": 1,
+    "n": 7,
+    "value": 0.1429,
+    "wilson95": [
+     0.0257,
+     0.5131
+    ],
+    "failures_at_most": null
+   },
+   "outside_grammar": {
+    "photos": 1,
+    "unread": 1,
+    "read_anyway": 0
+   },
+   "colour": {
+    "photos": 8,
+    "right": 7,
+    "unknown": 1,
+    "wrong": 0,
+    "accuracy": {
+     "k": 7,
+     "n": 8,
+     "value": 0.875,
+     "wilson95": [
+      0.5291,
+      0.9776
+     ],
+     "failures_at_most": null
+    }
+   }
+  }
+ },
+ "rows": [
+  {
+   "photo": "Ambassador car Kolkata",
+   "truth": "WB04C3337",
+   "read": "WB04C3337",
+   "colour_truth": "yellow",
+   "colour_read": "yellow",
+   "light": "day",
+   "in_grammar": true
+  },
+  {
+   "photo": "Skoda car Kolkata",
+   "truth": "WB086787",
+   "read": "WB086787",
+   "colour_truth": "white",
+   "colour_read": "white",
+   "light": "day",
+   "in_grammar": true
+  },
+  {
+   "photo": "KA 19 P 8488 close up",
+   "truth": "KA19P8488",
+   "read": "KA19P8488",
+   "colour_truth": "white",
+   "colour_read": "white",
+   "light": "day",
+   "in_grammar": true
+  },
+  {
+   "photo": "KL 47 F 7878 close up",
+   "truth": "KL47F7878",
+   "read": "KL47F7878",
+   "colour_truth": "white",
+   "colour_read": "white",
+   "light": "day",
+   "in_grammar": true
+  },
+  {
+   "photo": "DL 2S N 6252 worn",
+   "truth": "DL2SN6252",
+   "read": "DL2SN6252",
+   "colour_truth": "white",
+   "colour_read": "white",
+   "light": "day",
+   "in_grammar": true
+  },
+  {
+   "photo": "KA 19 EQ 1316 two line close up",
+   "truth": "KA19EQ1316",
+   "read": "KA1SE0131",
+   "colour_truth": "white",
+   "colour_read": "white",
+   "light": "day",
+   "in_grammar": true
+  },
+  {
+   "photo": "DL 1V B 1008 angled about 30 degrees and dim",
+   "truth": "DL1VB1008",
+   "read": null,
+   "colour_truth": "yellow",
+   "colour_read": "unknown",
+   "light": "day",
+   "in_grammar": true
+  },
+  {
+   "photo": "KL 6D 827 old three digit plate",
+   "truth": "KL6D827",
+   "read": null,
+   "colour_truth": "yellow",
+   "colour_read": "yellow",
+   "light": "day",
+   "in_grammar": false
+  }
+ ]
+}
