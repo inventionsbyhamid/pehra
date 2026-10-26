@@ -89,8 +89,8 @@ def git_sha() -> str | None:
 
 
 def engine_sha() -> str | None:
-    """The last commit that changed the app's code (backend/), so a number can be tied to the engine it measured."""
-    return _git("log", "-1", "--format=%h", "--", "backend") or os.environ.get("ENGINE_SHA")
+    """The last commit that changed the app's code (backend/watchful): the engine a number measured."""
+    return _git("log", "-1", "--format=%h", "--", "backend/watchful") or os.environ.get("ENGINE_SHA")
 
 
 def machine() -> dict:

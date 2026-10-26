@@ -241,7 +241,7 @@ if [ -n "${BENCH_TARBALL:-}" ]; then  # a prebuilt tar of the code instead of `g
 else
   command -v git > /dev/null || die "needs git"
   CODE="$(git -C "$ROOT" rev-parse --short HEAD)"
-  ENGINE="$(git -C "$ROOT" log -1 --format=%h -- backend)"
+  ENGINE="$(git -C "$ROOT" log -1 --format=%h -- backend/watchful)"
   [ -z "$(git -C "$ROOT" status --porcelain -- backend deploy eval scripts requirements.*)" ] || \
     echo "warning: uncommitted changes are not shipped; the benchmark runs $CODE"
   git -C "$ROOT" archive --format=tar HEAD > "$WORK/bundle.tar"

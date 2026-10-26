@@ -214,8 +214,8 @@ def evaluate(labels_path: Path, rates: list[float], out: Path, name: str) -> dic
               "rules": setup.get("rules"), "labels": where, "code": git_sha(), "engine": engine_sha(),
               "date": datetime.now(timezone.utc).isoformat(timespec="seconds"), "machine": machine(),
               "duration_s": round(duration, 1), "skip_start_s": skip, "skip_end_s": round(duration - hi, 1),
-              "scored_s": round(hi - lo, 1), "tolerance_s": tol, "truth": {e: sum(1 for t in v if lo <= t <= hi) for e, v in truth.items()},
-              "runs": {}}
+              "scored_s": round(hi - lo, 1), "tolerance_s": tol,
+              "truth": {e: sum(1 for t in v if lo <= t <= hi) for e, v in truth.items()}, "runs": {}}
     for fps in rates:
         work = Path(tempfile.mkdtemp(prefix="eval-"))
         try:
