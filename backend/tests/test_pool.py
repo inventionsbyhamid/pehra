@@ -3,6 +3,7 @@ that dies is started again with its cameras."""
 import os
 import signal
 import subprocess
+import sys
 import time
 
 import cv2
@@ -139,8 +140,9 @@ def test_rows_from_a_camera_process_go_to_the_cameras_own_society(manager):
     cam = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://x"))
     m.camera_ws[cam.id] = repo.workspace_id
 
-    def row(kind):
-        return EventRow(None, cam.id, 10.0, kind, 1, "person", None, {"watch_id": "w1"}, None, None, None, None)
+    def row(kind):  # a recent moment: the retention janitor, which starts with the manager, deletes old rows
+        return EventRow(None, cam.id, time.time(), kind, 1, "person", None, {"watch_id": "w1"}, None, None, None,
+                        None)
 
     m._handle({"type": "log", "workspace_id": repo.workspace_id, "camera_id": cam.id, "row": row("watch_log"),
                "record": True})
@@ -174,3 +176,126 @@ def test_saved_zone_state_examples_reach_the_camera(tmp_path):
         assert states.has("gate") and states.states("gate") == {"open": {"day"}, "closed": {"day"}}
     finally:
         worker.close()
+
+
+DEAD_PROCESS = """
+import os, signal, sys, tempfile, time
+from watchful.config import Settings
+from watchful.pool import WorkerPool
+from watchful.store.db import Camera
+
+if __name__ == "__main__":
+    pool = WorkerPool(Settings(session_secret="y", data_dir=tempfile.mkdtemp(), _env_file=None), processes=1)
+    pool.assign(Camera("cam_x", "Phone", "webcam", None, workspace_id="ws_a"), [], [])
+    end = time.time() + 60
+    while not pool.alive(0) and time.time() < end:
+        time.sleep(0.2)
+    os.kill(pool.slots[0].process.pid, signal.SIGKILL)
+    while pool.alive(0):
+        time.sleep(0.1)
+    for _ in range(600):  # a phone at 10 fps for a minute while its process waits for a restart
+        pool.push("cam_x", b"\\xff\\xd8" + os.urandom(60_000), time.time())
+    pool.supervise(now=time.time() + 100)
+    time.sleep(2)
+    pool.close()
+    print("closed", flush=True)
+"""
+
+
+def test_frames_for_a_dead_process_are_dropped_and_the_app_can_exit(tmp_path):
+    script = tmp_path / "dead.py"
+    script.write_text(DEAD_PROCESS)
+    try:
+        done = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        pytest.fail("the app hung on exit: frames pushed to a dead camera process were still held")
+    assert done.returncode == 0 and "closed" in done.stdout, done.stderr[-2000:]
+
+
+def test_a_process_that_ran_long_enough_restarts_quickly_again():
+    pool = WorkerPool(Settings(session_secret="y", _env_file=None), processes=1)
+
+    class Running:
+        pid, exitcode = 1, None
+
+        def is_alive(self):
+            return True
+
+    slot = pool.slots[0]
+    slot.process, slot.restarts, slot.started_at = Running(), 4, time.time() - 2 * Tuning().resources.restart_max_s
+    pool.supervise()
+    assert slot.restarts == 0
+
+
+def health_camera_job(health=None, output="alert"):
+    from watchful.pool import CameraJob
+    from watchful.rules.presets import default_watches
+    (w,) = default_watches()
+    w = w.model_copy(update={"output": output})
+    cam = Camera("cam_h", "Lobby", "webcam", None, workspace_id="ws_a", last_frame_at=time.time() - 100)
+    return CameraJob(cam, [("w_health", w)], [], health=health)
+
+
+def offline_worker(tmp_path, sent):
+    from watchful.pool import PoolWorker
+    from watchful.tuning import HealthTuning
+    s = Settings(session_secret="y", data_dir=tmp_path, _env_file=None)
+    return PoolWorker(0, s, Tuning(health=HealthTuning(offline_s=0.3)), sent.append, blobs=make_blobs(s))
+
+
+def test_a_camera_health_alert_waits_for_no_clip(tmp_path):
+    sent = []
+    worker = offline_worker(tmp_path, sent)
+    try:
+        worker.assign(health_camera_job())
+        assert wait(lambda: (worker.step(0.05), any(m["type"] == "candidate" for m in sent))[1], 10)
+        (msg,) = [m for m in sent if m["type"] == "candidate"]
+        c = msg["pack"].candidate
+        assert c.clip_key is None and c.evidence["method"] == "camera" and msg["pack"].frames == []
+        assert worker.cameras["cam_h"].clips.requests == []
+    finally:
+        worker.close()
+
+
+def test_a_problem_that_goes_on_across_a_restart_is_not_new(tmp_path):
+    """The app restarts, or a watch is edited, while the camera is still offline: its health watch has fired already."""
+    sent = []
+    worker = offline_worker(tmp_path, sent)
+    try:
+        worker.assign(health_camera_job(health="offline", output="log"))
+        end = time.time() + 2
+        while time.time() < end:
+            worker.step(0.05)
+        assert worker.cameras["cam_h"].health == "offline"
+        assert [m for m in sent if m["type"] in ("log", "candidate")] == []
+    finally:
+        worker.close()
+
+
+def test_removing_a_camera_never_stalls_the_others(tmp_path):
+    sent = []
+    worker = offline_worker(tmp_path, sent)
+    try:
+        worker.assign(health_camera_job())
+        runner = worker.cameras["cam_h"]
+        slow = runner.stop
+        runner.stop = lambda: (time.sleep(3), slow())  # a clip still encoding, a reader still joining
+        started = time.monotonic()
+        worker.remove("cam_h")
+        assert time.monotonic() - started < 0.5
+    finally:
+        worker.close()
+
+
+def test_a_pushed_frame_is_decoded_only_when_read(monkeypatch):
+    import watchful.ingest.sources as sources
+    decoded = []
+    real = sources.cv2.imdecode
+    monkeypatch.setattr(sources.cv2, "imdecode", lambda *a: decoded.append(1) or real(*a))
+    source = sources.PushSource(5.0)
+    jpeg = cv2.imencode(".jpg", np.zeros((48, 64, 3), np.uint8))[1].tobytes()
+    for i in range(10):
+        source.push(jpeg, 100.0 + i)
+    frame = source.read(0.5)
+    assert frame is not None and frame.ts == 109.0 and frame.image.shape == (48, 64, 3)
+    assert len(decoded) == 1

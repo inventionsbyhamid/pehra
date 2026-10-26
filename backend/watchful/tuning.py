@@ -358,6 +358,7 @@ class PushTuning(_Section):
 class HealthTuning(_Section):
     offline_s: float = 30.0  # no picture for this long and the camera is offline
     start_s: float = 60.0  # a camera is not judged until its process reports it, for at most this long
+    never_s: float = 120.0  # a running camera that sent no picture at all this long says it never connected
     check_every_s: float = 1.0
     seen_every_s: float = 30.0  # a running camera's last picture time is written to the database this often
 
@@ -370,6 +371,7 @@ class ResourcesTuning(_Section):
     restart_max_s: float = 300.0  # longest wait before a dead camera process is started again
     text_tower_idle_s: float = 300.0  # the app drops the image model's text tower (about 1.5 GB) after this long unused
     report_every_s: float = 1.0  # camera status to the app
+    push_queue: int = 16  # pushed frames waiting for a camera process; more are dropped
 
 
 class Tuning(_Section):

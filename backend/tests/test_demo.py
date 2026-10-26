@@ -99,10 +99,10 @@ def test_demo_login_gives_a_sandbox_of_its_own(tmp_path):
     assert cams[0]["url"].endswith("vtest.avi")
     assert set(manager.started) == {cams[0]["id"]}  # started, resting until someone watches
     site = [w for w in ctx.repo_for(ws["id"]).list_watches() if w.camera_id is None]
-    assert [(w.text, w.watch["conditions"][0]["signal"]) for w in site] == [("A camera is covered or offline",
-                                                                            "camera_health")]
+    assert [(w.text, w.watch["conditions"][0]["signal"]) for w in site] == [
+        ("A camera is offline, covered, turned or blurred", "camera_health")]
     names = sorted(w["text"] for w in a.get(f"/api/cameras/{cams[0]['id']}/watches").json())
-    assert names == ["A camera is covered or offline", "log people leaving the left walkway",
+    assert names == ["A camera is offline, covered, turned or blurred", "log people leaving the left walkway",
                      "someone walks into the left walkway", "too many people in the left walkway"]
     info = a.get("/api/demo").json()
     assert info["clips"] == [{"camera": "Plaza", "source": "OpenCV's sample video vtest.avi, BSD licence."}]

@@ -240,8 +240,13 @@ def test_two_processes_starting_together_import_once(tmp_path):
              "    return real(*args)\n"
              "legacy.import_legacy = slow\n"
              "print(legacy.adopt_legacy(sys.argv[1], None))\n")
+    import os
+    from pathlib import Path
+    import watchful
+    backend = str(Path(watchful.__file__).resolve().parents[1])  # the package's own path, run from any checkout
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [backend, os.environ.get("PYTHONPATH")]))}
     procs = [subprocess.Popen([sys.executable, "-c", start, f"sqlite:///{path}"], stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, text=True) for _ in range(2)]
+                              stderr=subprocess.PIPE, text=True, env=env) for _ in range(2)]
     outs = [p.communicate(timeout=120) for p in procs]
     assert [p.returncode for p in procs] == [0, 0], outs
     printed = [out.strip().splitlines()[-1] for out, _ in outs]
@@ -250,6 +255,8 @@ def test_two_processes_starting_together_import_once(tmp_path):
     assert str(kept) in printed and not list(tmp_path.glob("*.importing*"))
     repo = components.make_repo(Settings(session_secret="y", data_dir=tmp_path, _env_file=None), DEFAULT_WORKSPACE)
     assert [c.id for c in repo.list_cameras()] == ["cam_1"]
+
+
 def test_faces_never_match_across_societies(societies, tmp_path):
     """Sunita, enrolled in Green Park, is never named on Lake View's camera, even with both cameras in one camera
     process sharing the face networks."""
@@ -324,3 +331,76 @@ def test_old_blob_keys_move_under_their_society(societies, tmp_path):
     assert not (tmp_path / "blobs" / kf).exists()
     assert [e.keyframe_key for e in b.query_events()] == [f"{other.id}/kf/1.jpg"]
     assert rekey_society(a, blobs) == 0
+
+
+def test_a_rekey_stopped_midway_finishes_on_the_next_start(societies, tmp_path):
+    """Stopped after the rows moved but before the old blobs went, the next start deletes each old blob whose copy is
+    there; once done, retention no longer keeps the bare people/ prefix."""
+    import os
+    from watchful.store.blobs import LocalBlobStore
+    from watchful.store.rekey import rekey_society
+    from watchful.workers import run_retention
+    a, _ = societies
+    blobs = LocalBlobStore(tmp_path)
+    face = "people/per_x.jpg"
+    blobs.put(face, b"face", "image/jpeg")
+    a.add_enrollment(Enrollment("per_x", "Staff", [0.5] * 4, thumbnail_key=face))
+    real = blobs.delete
+
+    def stop(key):
+        raise KeyboardInterrupt  # the app stops here
+
+    blobs.delete = stop
+    with pytest.raises(KeyboardInterrupt):
+        rekey_society(a, blobs)
+    blobs.delete = real
+    rekey_society(a, blobs)
+    ws = a.workspace_id
+    assert [e.thumbnail_key for e in a.list_enrollments()] == [f"{ws}/{face}"]
+    assert blobs.get(f"{ws}/{face}") == b"face" and not (tmp_path / "blobs" / face).exists()
+    stray = tmp_path / "blobs" / "people" / "stray.jpg"  # a bare key no row points at
+    stray.write_bytes(b"x")
+    old = time.time() - 400 * 86400
+    os.utime(stray, (old, old))
+    run_retention(Settings(session_secret="y", data_dir=tmp_path, _env_file=None), [a], blobs)
+    assert not stray.exists() and blobs.get(f"{ws}/{face}")
+
+
+def test_threads_share_a_societys_face_networks_one_at_a_time():
+    import threading
+    import cv2
+    from watchful.vision.faces import FaceIndex
+    from watchful.vision.models import sample_path
+    base = FaceIndex()
+    one, two = base.share([]), base.share([])
+    assert one.lock is two.lock is base.lock
+    one.enroll("p1", "Player", cv2.imread(str(sample_path("basketball1.png"))), consent=True)
+    big = cv2.imread(str(sample_path("basketball2.png")))
+    small = cv2.resize(big, None, fx=0.5, fy=0.5)
+    expected = {"big": one.identify(big, (40, 80, 100, 250)).person_id, "small": one.has_face(small)}
+    errors = []
+
+    def work(kind):
+        for _ in range(30):
+            got = one.identify(big, (40, 80, 100, 250)).person_id if kind == "big" else two.has_face(small)
+            if got != expected[kind]:
+                errors.append(kind)
+
+    threads = [threading.Thread(target=work, args=(k,)) for k in ("big", "small", "big", "small")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+
+
+def test_a_scan_writes_only_under_its_cameras_society(tmp_path):
+    from watchful.vision.scan import chunk_blobs
+    blobs = chunk_blobs(Settings(session_secret="y", data_dir=tmp_path, _env_file=None),
+                        Camera("cam_s", "Upload", "file", None, workspace_id="ws_a"))
+    blobs.put("ws_a/cam_s/kf/1.jpg", b"x", "image/jpeg")
+    blobs.put("ws_b/cam_s/kf/1.jpg", b"x", "image/jpeg")
+    with pytest.raises(KeyError):
+        blobs.flush()
+    assert (tmp_path / "blobs" / "ws_a" / "cam_s" / "kf" / "1.jpg").exists()
+    assert not (tmp_path / "blobs" / "ws_b").exists()

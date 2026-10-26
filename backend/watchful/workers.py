@@ -1,6 +1,7 @@
 """Runs cameras: live, demo and webcam cameras share a few camera processes (pool.py), uploads are scanned in
 parallel. Rows, candidates and health come back from the processes; the app writes them through each camera's own
 society, checks candidates with the AI and stores alerts, and judges each camera's health."""
+import hashlib
 import logging
 import multiprocessing as mp
 import queue
@@ -20,8 +21,9 @@ from watchful.evidence import EvidencePack, evidence_context, file_pack
 from watchful.health import BACK, HealthBook, check as health_check, holds, is_health_watch
 from watchful.notify import ApprovalNotifier
 from watchful.pool import WorkerPool
-from watchful.rules.engine import log_row, needs_for
+from watchful.rules.engine import Candidate, log_row, needs_for
 from watchful.rules.watch import Watch, select_watches
+from watchful.store.blobs import SocietyBlobs
 from watchful.store.db import AlertRow, Camera, EventRow
 from watchful.tuning import Tuning
 from watchful.vision.embed import watch_texts
@@ -50,8 +52,11 @@ def run_retention(settings: Settings, repos, blobs) -> None:
     repos = repos if isinstance(repos, (list, tuple)) else [repos]
     days = {id(r): retention_days_of(r, settings.retention_days) for r in repos}
     demos = {id(r): [c.id for c in r.list_cameras() if c.kind == "demo"] for r in repos}
-    keep = ("people/", *(f"{r.workspace_id}/people/" for r in repos),  # bare people/ and camera keys until rekeyed
-            *(p for r in repos for d in demos[id(r)] for p in (f"{r.workspace_id}/{d}/", f"{d}/")))
+    from watchful.store.rekey import legacy_keys
+    legacy = {id(r): legacy_keys(r) for r in repos}  # bare people/ and camera keys are kept only until rekeyed
+    keep = (*(["people/"] if any(legacy.values()) else []), *(f"{r.workspace_id}/people/" for r in repos),
+            *(p for r in repos for d in demos[id(r)] for p in (f"{r.workspace_id}/{d}/",
+                                                                   *([f"{d}/"] if legacy[id(r)] else []))))
     owned = {id(r): (f"{r.workspace_id}/", *(f"{c.id}/" for c in r.list_cameras())) for r in repos}
     for kept in sorted(set(days.values()) or {settings.retention_days}):  # a longer plan's pictures wait for theirs
         blobs.delete_older_than(kept, keep=keep + tuple(p for r in repos if days[id(r)] > kept for p in owned[id(r)]))
@@ -124,8 +129,6 @@ class Subscription:
 
     def empty(self) -> bool:
         return self._events.empty() and self._frame is None
-
-
 
 
 class WorkerManager:
@@ -282,10 +285,13 @@ class WorkerManager:
         if cam.last_frame_at is not None:  # seen in an earlier run; a new camera's row says offline by default
             self.health.seed(cam.id, cam.status)
         process = self.pool.assign(cam, watches, repo.list_enrollments(), self._watch_vectors(watches), examples,
-                                   should_record(repo, cam), len(self.subs[camera_id]))
+                                   should_record(repo, cam), len(self.subs[camera_id]), self.health.state(cam.id))
+        old = self.cams.get(camera_id)
+        kept = old if old is not None and old.status.running else None  # a restart keeps the offline clock
         self.cams[camera_id] = _Cam(cam, WorkerStatus(running=True, source_status="starting", problems=problems,
                                                       health=self.health.state(cam.id), process=process),
-                                    last_frame_at=time.time(), seen=cam.last_frame_at is not None)
+                                    last_frame_at=kept.last_frame_at if kept else time.time(),
+                                    seen=cam.last_frame_at is not None or bool(kept and kept.seen))
 
     def stop(self, camera_id: str) -> None:
         with self._camera_lock(camera_id):
@@ -315,7 +321,11 @@ class WorkerManager:
         c = self.cams.get(camera_id)
         if c is None:
             return WorkerStatus()
-        if c.status.running:
+        if not c.status.running:
+            c.status.health = None  # a stopped camera has no health now; its last one stays on its row
+        elif not c.seen and time.time() - c.started >= self.tuning.health.never_s:
+            c.status.health = "never"  # running all this while and no picture yet: the address or device is wrong
+        else:
             c.status.health = self.health.state(camera_id)
         return c.status
 
@@ -379,6 +389,23 @@ class WorkerManager:
         self._publish(camera_id, {"type": "health", "camera_id": camera_id, "health": new})
         if old not in (None, "live"):
             self._resolve_health(workspace_id, camera_id, new, ts, BACK if new == "live" else "")
+        c = self.cams.get(camera_id)
+        if new != "live" and c is not None and c.status.process is not None and not self.pool.alive(c.status.process):
+            self._fire_health(workspace_id, camera_id, new, ts)
+
+    def _fire_health(self, workspace_id: str, camera_id: str, state: str, ts: float) -> None:
+        """A dead camera process ticks no rules, so the app fires the camera's health watches for it."""
+        for wid, w in self._watches(camera_id)[0]:
+            if not (is_health_watch(w) and holds(w, state)):
+                continue
+            fp = hashlib.sha1(f"{camera_id}|{wid}|{int(ts // max(w.cooldown_s, 1))}".encode()).hexdigest()
+            c = Candidate(wid, camera_id, ts, None, "info" if w.output == "log" else w.severity,
+                          {"signals": {"camera_health": state}, "reasons": [f"camera {state}"], "score": 1.0,
+                           "method": "camera"}, [], fp, w.name, w.verify, output=w.output)
+            if w.output == "log":
+                self._handle({"type": "log", "workspace_id": workspace_id, "camera_id": camera_id, "row": log_row(c)})
+            else:
+                self._on_candidate(EvidencePack(c, [], [], workspace_id=workspace_id))
 
     def _resolve_health(self, workspace_id: str, camera_id: str, state: str | None, ts: float, note: str) -> None:
         """Resolves the camera's open incidents of camera health watches that no longer hold for `state` (None: the
@@ -503,7 +530,19 @@ class WorkerManager:
             with self._lock:
                 self._inflight.discard(c.fingerprint)
             return
+        if c.evidence.get("method") == "camera":  # nothing for the AI to check: filed now, never behind AI checks
+            self._verify_and_store(pack, early, True)
+            self._settle_health(pack)
+            return
         self.verifiers.submit(self._verify_and_store, pack, early, True)
+
+    def _settle_health(self, pack: EvidencePack) -> None:
+        """A camera health alert filed after its camera already changed (a brief cover): resolved at once."""
+        c = pack.candidate
+        ws = self._society(c.camera_id)
+        state = self.health.state(c.camera_id)
+        if state is not None and self.health.since.get(c.camera_id, 0.0) > c.ts:
+            self._resolve_health(ws, c.camera_id, state, time.time(), BACK if state == "live" else "")
 
     def _verify_and_store(self, pack: EvidencePack, incident_id: str | None = None, live: bool = False) -> str | None:
         c = pack.candidate
@@ -584,7 +623,8 @@ class WorkerManager:
                 self._embedder = make_embedder(self.settings)
             # the recording's own clock: its creation time, kept the same across rescans
             start_epoch = ((cam.last_scan or {}).get("start_epoch") or probe_start_time(cam.url) or time.time())
-            result = scan_file(cam.url, cam, watches, self._pool(), self.blobs, self.settings, self.tuning,
+            result = scan_file(cam.url, cam, watches, self._pool(), SocietyBlobs(self.blobs, repo.workspace_id),
+                               self.settings, self.tuning,
                                start_epoch=start_epoch, enrollments=repo.list_enrollments(),
                                embedder=self._embedder if needs.embed else None,
                                on_progress=lambda p: info.update(progress=round(p, 3)))

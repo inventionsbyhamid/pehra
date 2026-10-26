@@ -23,6 +23,7 @@ const HEALTH: Record<string, [string, Tone]> = {
   covered: ["Covered", "bad"],
   moved: ["Moved", "bad"],
   blurred: ["Blurred", "bad"],
+  never: ["Never connected", "down"],
 };
 
 // A camera's health in one word. The server's health judgement wins; until it sends one, the worker's state says.

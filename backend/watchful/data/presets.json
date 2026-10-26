@@ -292,15 +292,15 @@
     }
   },
   "camera_problem": {
-    "description": "A camera is covered or offline (every society starts with this one, for all its cameras)",
+    "description": "A camera is offline, covered, turned or blurred (every society starts with this one)",
     "watch": {
-      "name": "A camera is covered or offline",
+      "name": "A camera is offline, covered, turned or blurred",
       "scope": "site",
       "conditions": [
         {
           "signal": "camera_health",
           "op": "in",
-          "value": ["covered", "offline"]
+          "value": ["offline", "covered", "moved", "blurred"]
         }
       ],
       "severity": "warning",

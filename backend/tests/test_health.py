@@ -68,7 +68,7 @@ def test_a_health_watch_needs_no_ai_and_holds_by_state():
     from watchful.rules.presets import default_watches
     (w,) = default_watches()
     assert w.scope == "site" and is_health_watch(w)
-    assert holds(w, "covered") and holds(w, "offline") and not holds(w, "live") and not holds(w, "moved")
+    assert all(holds(w, state) for state in ("offline", "covered", "moved", "blurred")) and not holds(w, "live")
 
 
 def manager_with_default_watches(tmp_path, tuning: Tuning):
@@ -186,3 +186,109 @@ def test_a_stale_camera_edit_keeps_health_and_last_scan(tmp_path):
     got = repo.get_camera(cam.id)
     assert (got.name, got.status, got.last_frame_at, got.last_scan) == ("Front gate", "covered", 1234.5,
                                                                          {"start_epoch": 99.0})
+
+
+def test_a_brief_cover_while_every_ai_checker_is_busy_leaves_nothing_open(tmp_path):
+    """Camera health needs no AI check, so it never waits behind other cameras' checks; one filed after its camera
+    already came back is resolved at once."""
+    from watchful.alerts.incidents import list_incidents
+    tuning = Tuning(health=HealthTuning(check_every_s=0.2), tamper=TamperTuning(check_every_s=0.2, hold_s=0.5))
+    m, repo = manager_with_default_watches(tmp_path, tuning)
+    try:
+        cam = repo.add_camera(Camera(None, "Lobby", "webcam", None))
+        m.start(cam.id)
+        send = pusher(m, cam.id)
+        send(3)
+        assert wait(lambda: m.status(cam.id).health == "live", 20)
+        busy = [m.verifiers.submit(time.sleep, 14) for _ in range(m.settings.ai_parallel)]  # other cameras' checks
+        send(3, covered=True)
+        assert wait(lambda: list_incidents(repo, camera_id=cam.id), 5)  # filed now, not after the busy checks
+        send(4)
+        assert wait(lambda: m.status(cam.id).health == "live", 10)
+        assert wait(lambda: all(i.status != "open" for i in list_incidents(repo, camera_id=cam.id)), 10)
+        for b in busy:
+            b.result()
+        assert len(repo.list_alerts(cam.id)) == 1
+    finally:
+        m.shutdown()
+
+
+def test_a_camera_whose_process_died_still_alerts(tmp_path):
+    """A dead camera process ticks no rules: the app fires the camera's health watches for it."""
+    import os
+    import signal
+    from watchful.alerts.incidents import list_incidents
+    m, repo = manager_with_default_watches(tmp_path, Tuning(health=HealthTuning(offline_s=2.0, check_every_s=0.2)))
+    m.pool.supervise = lambda *a, **k: []  # never started again within the test
+    try:
+        cam = repo.add_camera(Camera(None, "Gate", "webcam", None))
+        m.start(cam.id)
+        pusher(m, cam.id)(3)
+        assert wait(lambda: m.status(cam.id).health == "live", 20)
+        os.kill(m.pool.slots[m.status(cam.id).process].process.pid, signal.SIGKILL)
+        assert wait(lambda: list_incidents(repo, camera_id=cam.id), 15)
+        (alert,) = repo.list_alerts(cam.id)
+        assert "offline" in alert.summary and m.status(cam.id).health == "offline"
+    finally:
+        m.shutdown()
+
+
+def test_a_stopped_camera_shows_no_health_and_one_never_seen_says_so(tmp_path):
+    s = settings(tmp_path)
+    repo = society_repo(s)
+    tuning = Tuning(health=HealthTuning(check_every_s=0.2, never_s=1.0))
+    m = WorkerManager(s, tuning, repo, make_blobs(s), llm=FakeLLM([]), processes=1)
+    try:
+        cam = repo.add_camera(Camera(None, "Desk", "webcam", None))
+        m.start(cam.id)
+        pusher(m, cam.id)(2)
+        assert wait(lambda: camera_json(m, repo.get_camera(cam.id))["health"] == "live", 20)
+        m.stop(cam.id)
+        assert camera_json(m, repo.get_camera(cam.id))["health"] is None  # not its last health while stopped
+        silent = repo.add_camera(Camera(None, "Phone", "webcam", None))
+        m.start(silent.id)
+        assert wait(lambda: camera_json(m, repo.get_camera(silent.id))["health"] == "never", 10)
+    finally:
+        m.shutdown()
+
+
+def test_every_society_gets_the_default_watch_once(tmp_path):
+    """Societies made by a tool or before the default existed get it at app start, once; one a society deleted stays
+    deleted; a default saved under its earlier name is brought up to date."""
+    from watchful.components import make_engine
+    from watchful.rules.watch import Watch
+    from watchful.store.db import WatchRow
+    from watchful.store.sql import SqlRepository, ensure_default_watches, ensure_workspace
+    s = settings(tmp_path)
+    engine = make_engine(s)
+    ensure_workspace(engine, "ws_legacy", "Legacy")
+    ensure_workspace(engine, "ws_earlier", "Earlier")
+    legacy, earlier = SqlRepository(engine, "ws_legacy"), SqlRepository(engine, "ws_earlier")
+    earlier.add_watch(WatchRow(None, None, "A camera is covered or offline", {
+        "name": "A camera is covered or offline", "scope": "site", "severity": "warning",
+        "conditions": [{"signal": "camera_health", "op": "in", "value": ["covered", "offline"]}]}, True))
+    assert ensure_default_watches(legacy) and ensure_default_watches(earlier)
+    for repo in (legacy, earlier):
+        (row,) = repo.list_watches()
+        w = Watch.model_validate(row.watch)
+        assert row.scope == "site" and is_health_watch(w) and holds(w, "moved") and holds(w, "blurred")
+    with legacy.tx() as tx:  # the society deletes it
+        from sqlalchemy import delete
+        from watchful.db import models as dbm
+        tx.execute(delete(dbm.Watch).where(dbm.Watch.workspace_id == "ws_legacy"))
+    assert not ensure_default_watches(legacy) and legacy.list_watches() == []
+
+
+def test_the_app_backfills_default_watches_at_start(tmp_path):
+    from fastapi.testclient import TestClient
+    from test_api import StubManager
+    from watchful.api.app import create_app
+    from watchful.components import make_engine
+    from watchful.store.sql import SqlRepository, ensure_workspace
+    s = Settings(session_secret="s" * 32, data_dir=tmp_path, _env_file=None)
+    app = create_app(s, llm=FakeLLM([]), manager=StubManager())
+    ensure_workspace(make_engine(s), "ws_seeded", "Seeded by a tool")
+    with TestClient(app):
+        pass
+    (row,) = SqlRepository(make_engine(s), "ws_seeded").list_watches()
+    assert row.watch["subject"]["classes"] == ["person"] and row.watch["conditions"][0]["signal"] == "camera_health"

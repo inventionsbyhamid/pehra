@@ -15,7 +15,7 @@ from watchful.netguard import inside, sample_roots  # noqa: E402
 from watchful.rules.presets import preset  # noqa: E402
 from watchful.rules.watch import Watch  # noqa: E402
 from watchful.store.db import DEFAULT_SOCIETY_NAME, DEFAULT_WORKSPACE, Camera, WatchRow, new_id  # noqa: E402
-from watchful.store.sql import ensure_workspace  # noqa: E402
+from watchful.store.sql import ensure_default_watches, ensure_workspace  # noqa: E402
 from watchful.vision.zones import Zone  # noqa: E402
 
 
@@ -27,6 +27,7 @@ def main(spec_path: str = "deploy/demo.json", workspace_id: str = DEFAULT_WORKSP
         raise SystemExit(f"demo clips must be in the samples folder ({settings.data_dir}/samples): {outside}")
     ensure_workspace(make_engine(settings), workspace_id, DEFAULT_SOCIETY_NAME)
     repo = make_repo(settings, workspace_id)
+    ensure_default_watches(repo)
     for cam in repo.list_cameras():
         if cam.kind == "demo":
             cam.enabled = False

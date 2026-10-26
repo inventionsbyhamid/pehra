@@ -193,14 +193,20 @@ class PushSource:
         self._index = 0
 
     def push(self, jpeg: bytes, ts: float) -> None:
-        image = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
-        if image is None:
-            return
+        """Kept as JPEG: only the newest is ever read, so only that one is decoded."""
         self._index += 1
-        self._latest.put(Frame(fit_width(image, self.width), ts, self._index))
+        self._latest.put(Frame(jpeg, ts, self._index))
 
     def read(self, timeout: float = 1.0) -> Frame | None:
-        return self._latest.take(timeout)
+        deadline = time.monotonic() + timeout
+        while (left := deadline - time.monotonic()) > 0:
+            f = self._latest.take(left)
+            if f is None:
+                return None
+            image = cv2.imdecode(np.frombuffer(f.image, np.uint8), cv2.IMREAD_COLOR)
+            if image is not None:
+                return Frame(fit_width(image, self.width), f.ts, f.index)
+        return None
 
     def close(self) -> None:
         self.status = "ended"

@@ -20,7 +20,7 @@ export interface PipelineStats {
 }
 
 export type CameraKind = "stream" | "webcam" | "file" | "demo";
-export type Health = "live" | "offline" | "covered" | "moved" | "blurred";
+export type Health = "live" | "offline" | "covered" | "moved" | "blurred" | "never";
 
 export interface Camera {
   id: string;

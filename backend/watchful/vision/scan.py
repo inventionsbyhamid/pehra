@@ -19,7 +19,7 @@ from watchful.ingest.sources import Frame, fit_width
 from watchful.rules.engine import Candidate, RuleEngine, needs_for
 from watchful.rules.watch import Watch
 from watchful.components import make_blobs, make_detector, make_faces, make_pose
-from watchful.store.blobs import BackgroundPuts, BlobStore
+from watchful.store.blobs import BackgroundPuts, BlobStore, SocietyBlobs
 from watchful.store.db import Camera, EventRow
 from watchful.tuning import ScanTuning, Tuning
 from watchful.vision.faces import Enrollment
@@ -98,6 +98,12 @@ class _Job:
     id_base: int = 0
 
 
+def chunk_blobs(settings: Settings, camera: Camera):
+    """What a scan chunk writes through: written in the background, and only under the camera's society."""
+    blobs = make_blobs(settings)
+    return BackgroundPuts(SocietyBlobs(blobs, camera.workspace_id) if camera.workspace_id else blobs)
+
+
 def _run_chunk(job: _Job) -> ChunkResult:
     s, t = _W["settings"], _W["tuning"]
     if (job.needs.pose or job.needs.posture) and _W["pose"] is None:
@@ -108,7 +114,7 @@ def _run_chunk(job: _Job) -> ChunkResult:
             _W["faces"] = make_faces(s, t)
         _W["faces"].load(job.enrollments)
         faces = _W["faces"]
-    blobs = BackgroundPuts(make_blobs(s))
+    blobs = chunk_blobs(s, job.camera)
     perceiver = Perceiver(job.camera, s, t, blobs, faces, job.needs, detector=_W["detector"], pose=_W["pose"])
     perceiver.tracker._next_id = job.id_base + (job.index + 1) * TRACK_ID_SPAN
     cap = cv2.VideoCapture(job.path, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, t.scan.decode_threads])

@@ -1,7 +1,7 @@
 """Camera health: live, offline (no picture for Tuning health.offline_s), or covered, moved or blurred (the tamper
 check in vision/tamper.py). Health is a signal like any other (rules/signals.py camera_health): the camera process
-ticks the rules with it, and a watch on it alerts, such as every society's default "A camera is covered or offline"
-(rules/presets.py DEFAULT_WATCHES). The app judges health from what the camera processes report, so a camera whose
+ticks the rules with it, and a watch on it alerts, such as every society's default "A camera is offline, covered,
+turned or blurred" (rules/presets.py DEFAULT_WATCHES). The app judges health from what the camera processes report, so a camera whose
 process died goes offline too; a change is written to the camera's row and resolves the open incidents of camera
 health watches that no longer hold."""
 import logging
@@ -58,6 +58,7 @@ class HealthBook:
     def __init__(self, repo_for, on_change=None):
         self.repo_for, self.on_change = repo_for, on_change
         self.states: dict[str, str] = {}
+        self.since: dict[str, float] = {}  # when each camera's current state began
         self._lock = threading.Lock()
 
     def seed(self, camera_id: str, state: str | None) -> None:
@@ -76,7 +77,7 @@ class HealthBook:
             old = self.states.get(camera_id)
             if old == state:
                 return False
-            self.states[camera_id] = state
+            self.states[camera_id], self.since[camera_id] = state, ts
         self._safely(self.repo_for(workspace_id).set_camera_health, camera_id, status=state)
         if self.on_change:
             self._safely(self.on_change, workspace_id, camera_id, old, state, ts)
@@ -84,6 +85,7 @@ class HealthBook:
 
     def forget(self, camera_id: str) -> str | None:
         with self._lock:
+            self.since.pop(camera_id, None)
             return self.states.pop(camera_id, None)
 
     @staticmethod

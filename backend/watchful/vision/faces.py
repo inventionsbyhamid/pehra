@@ -1,3 +1,4 @@
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -45,6 +46,7 @@ class FaceIndex:
         self.detector = cv2.FaceDetectorYN.create(str(model_path("yunet", settings)), "", (320, 320),
                                                   cfg.detect_score)
         self.recognizer = cv2.FaceRecognizerSF.create(str(model_path("sface", settings)), "")
+        self.lock = threading.Lock()  # the networks keep per call state (input size): one caller at a time
         self._people: dict[str, Enrollment] = {}
         self.workspace_id: str | None = None
 
@@ -54,7 +56,7 @@ class FaceIndex:
         refuses anyone enrolled in another society."""
         other = object.__new__(type(self))
         other.cfg, other.settings, other.threshold = self.cfg, self.settings, self.threshold
-        other.detector, other.recognizer = self.detector, self.recognizer
+        other.detector, other.recognizer, other.lock = self.detector, self.recognizer, self.lock
         other.workspace_id, other._people = workspace_id, {}
         other.load(enrollments or [])
         return other
@@ -64,13 +66,15 @@ class FaceIndex:
 
     def _faces(self, image: np.ndarray) -> np.ndarray:
         h, w = image.shape[:2]
-        self.detector.setInputSize((w, h))
-        _, faces = self.detector.detect(image)
+        with self.lock:
+            self.detector.setInputSize((w, h))
+            _, faces = self.detector.detect(image)
         return np.zeros((0, 15), np.float32) if faces is None else faces
 
     def _feature(self, image: np.ndarray, face: np.ndarray) -> np.ndarray:
-        aligned = self.recognizer.alignCrop(image, face)
-        return self.recognizer.feature(aligned)
+        with self.lock:
+            aligned = self.recognizer.alignCrop(image, face)
+            return self.recognizer.feature(aligned)
 
     def enroll(self, person_id: str, name: str, image: np.ndarray, consent: bool,
                thumbnail_key: str | None = None) -> Enrollment:
@@ -110,9 +114,10 @@ class FaceIndex:
             return None
         feature = self._feature(crop, max(faces, key=lambda f: f[2] * f[3]))
         best = None
-        for e in self._people.values():
+        for e in list(self._people.values()):
             ref = np.array(e.feature, np.float32).reshape(1, -1)
-            score = float(self.recognizer.match(feature, ref, cv2.FaceRecognizerSF_FR_COSINE))
+            with self.lock:
+                score = float(self.recognizer.match(feature, ref, cv2.FaceRecognizerSF_FR_COSINE))
             if score >= self.threshold and (best is None or score > best.score):
                 best = FaceMatch(e.person_id, e.name, score)
         return best

@@ -27,7 +27,7 @@ from watchful.components import make_blobs, make_detector, make_embedder, make_f
 from watchful.config import Settings, available_cpus
 from watchful import netguard
 from watchful.evidence import EvidenceBuffer
-from watchful.health import NO_PICTURE, check as health_check
+from watchful.health import NO_PICTURE, check as health_check, holds, is_health_watch
 from watchful.ingest.clips import ClipRecorder
 from watchful.ingest.loop import demo_source
 from watchful.ingest.sources import FileSource, PushSource, StreamSource
@@ -59,6 +59,7 @@ class CameraJob:
     examples: list[tuple] = field(default_factory=list)  # saved zone state examples (repo.list_state_examples)
     record: bool = True  # write the timeline; a demo camera records its first loop only
     viewers: int = 0
+    health: str | None = None  # the app's judgement, kept across restarts: a problem still going on is not new
 
 
 def overlay_tracks(tick) -> list[dict]:
@@ -182,6 +183,12 @@ class CameraRunner:
         if any(c.signal == "zone_state" for _, w in watches for c in w.conditions):
             states = load_states(job.examples, blobs.get, cam.zones, t.zones, embedder)
         self.engine = RuleEngine(watches, cam.zones, t, s.timezone, cam.kind, embedder, states)
+        if job.health not in (None, "live"):  # still offline or covered after a restart or a watch edit: fired already
+            self.engine.health = job.health
+            for wid, w in watches:
+                if is_health_watch(w) and holds(w, job.health):
+                    self.engine.armed[(wid, None)] = False
+                    self.engine.last_fired[(wid, None)] = time.time()
         self.source = make_source(cam, s)
         self.webcam = isinstance(self.source, PushSource)
         self.clips = ClipRecorder(blobs, max(s.display_fps, s.analysis_fps), t.clips, self.ws, worker.clip_writer)
@@ -304,6 +311,9 @@ class CameraRunner:
                 self.send({"type": "log", "workspace_id": self.ws, "camera_id": self.id, "row": log_row(c),
                            "record": self.recording})
                 continue
+            if c.evidence.get("method") == "camera":  # nothing in the picture to show: no clip, no wait
+                self.send({"type": "candidate", "workspace_id": self.ws, "pack": self.evidence.pack(c)})
+                continue
             c.clip_key = society_key(self.ws, self.id, "clips", f"{c.fingerprint}.mp4")
             self.clips.request(c.ts, c.clip_key)
             self.pending.append((ts + self.tuning.evidence.after_s, c))
@@ -350,11 +360,18 @@ class CameraRunner:
         self.source.close()
         self.clips.close()
 
-    def finish(self) -> None:
-        """A recording reached its end: close its tracks, write its last clips, and tell the app."""
+    def finish(self) -> threading.Thread:
+        """A recording reached its end: close its tracks, tell the app, and stop (on a thread of its own)."""
         self.pipe.finish(time.time())
-        self.stop()
         self.send(self.status(stopped=True))
+        return self.stop_later()
+
+    def stop_later(self) -> threading.Thread:
+        """Stops off the analysis loop: joining the reader and waiting for clip encodes must not stall the process's
+        other cameras."""
+        thread = threading.Thread(target=self.stop, name=f"stop-{self.id}", daemon=True)
+        thread.start()
+        return thread
 
 
 class PoolWorker:
@@ -370,6 +387,7 @@ class PoolWorker:
         self.cameras: dict[str, CameraRunner] = {}
         self.societies: dict[tuple[str | None, str], object] = {}  # (society, face tuning) to its face index
         self.wake = threading.Event()
+        self._stopping: list[threading.Thread] = []
         self.running = True
         self._last_report = float("-inf")
 
@@ -403,7 +421,7 @@ class PoolWorker:
     def remove(self, camera_id: str) -> None:
         runner = self.cameras.pop(camera_id, None)
         if runner is not None:
-            runner.stop()
+            self._stopping = [t for t in self._stopping if t.is_alive()] + [runner.stop_later()]
             ws = runner.ws
             if not any(r.ws == ws for r in self.cameras.values()):
                 for key in [k for k in self.societies if k[0] == ws]:
@@ -438,7 +456,7 @@ class PoolWorker:
         for r in list(self.cameras.values()):
             if r.ended and not r.due():
                 self.cameras.pop(r.id, None)
-                r.finish()
+                self._stopping.append(r.finish())
                 continue
             r.housekeeping()
         now = time.monotonic()
@@ -465,6 +483,8 @@ class PoolWorker:
     def close(self) -> None:
         for cid in list(self.cameras):
             self.remove(cid)
+        for thread in self._stopping:
+            thread.join()
         self.clip_writer.shutdown(wait=True)
 
 
@@ -481,8 +501,8 @@ def _sender(out_q):
     return send
 
 
-def serve(index: int, settings_json: str, tuning_json: str, cmd_q, out_q, scanning) -> None:
-    """A camera process: commands from the app, analysis rounds in between."""
+def serve(index: int, settings_json: str, tuning_json: str, cmd_q, out_q, scanning, push_q=None) -> None:
+    """A camera process: commands from the app, pushed frames, analysis rounds in between."""
     settings = Settings(**json.loads(settings_json), _env_file=None)
     cv2.setNumThreads(settings.camera_threads)
     tuning = Tuning.model_validate_json(tuning_json)
@@ -491,14 +511,23 @@ def serve(index: int, settings_json: str, tuning_json: str, cmd_q, out_q, scanni
     trim_memory()
     while worker.running:
         try:
-            while True:
-                worker.command(cmd_q.get_nowait())
-        except queue.Empty:
-            pass
+            for q in (cmd_q, push_q) if push_q is not None else (cmd_q,):
+                while True:
+                    try:
+                        worker.command(q.get_nowait())
+                    except queue.Empty:
+                        break
         except (EOFError, OSError):
             break
         worker.step()
     worker.close()
+
+
+def _retire(*queues) -> None:
+    for q in queues:
+        if q is not None:
+            q.cancel_join_thread()
+            q.close()
 
 
 @dataclass
@@ -506,6 +535,8 @@ class _Slot:
     index: int
     process: object = None
     cmd: object = None
+    push: object = None  # frames for its push cameras, bounded: a slow or dead process drops them
+    started_at: float = 0.0
     restarts: int = 0
     next_restart: float = 0.0
     down_since: float | None = None
@@ -544,12 +575,14 @@ class WorkerPool:
         return i
 
     def _spawn(self, slot: _Slot) -> None:
+        _retire(slot.cmd, slot.push)  # a dead process's queues: what they still hold must not keep the app open
         slot.cmd = self.ctx.Queue()
+        slot.push = self.ctx.Queue(maxsize=max(1, self.tuning.resources.push_queue))
         slot.process = self.ctx.Process(target=serve, name=f"cameras-{slot.index}", daemon=True, args=(
             slot.index, self.settings.model_dump_json(), self.tuning.model_dump_json(), slot.cmd, self.out_q,
-            self.scanning))
+            self.scanning, slot.push))
         slot.process.start()
-        slot.down_since = None
+        slot.down_since, slot.started_at = None, time.time()
 
     def _send(self, i: int, cmd: tuple) -> None:
         slot = self.slots[i]
@@ -562,9 +595,9 @@ class WorkerPool:
 
     def assign(self, camera: Camera, watches: list[tuple[str, Watch]], enrollments: list[Enrollment],
                texts: dict | None = None, examples: list | None = None, record: bool = True,
-               viewers: int = 0) -> int:
+               viewers: int = 0, health: str | None = None) -> int:
         """Runs the camera (again, with these watches) on its process, or on the least loaded one; returns which."""
-        job = CameraJob(camera, watches, enrollments, texts or {}, list(examples or []), record, viewers)
+        job = CameraJob(camera, watches, enrollments, texts or {}, list(examples or []), record, viewers, health)
         with self._lock:
             i = self.where.get(camera.id)
             if i is None:
@@ -601,10 +634,11 @@ class WorkerPool:
                 self._send(self.where[camera_id], ("viewers", camera_id, n))
 
     def push(self, camera_id: str, jpeg: bytes, ts: float) -> None:
+        """A pushed frame for a live process, dropped when its process is down or behind (the queue is bounded)."""
         i = self.where.get(camera_id)
-        if i is not None and self.slots[i].cmd is not None:
+        if i is not None and self.slots[i].push is not None and self.alive(i):
             try:
-                self.slots[i].cmd.put_nowait(("push", camera_id, jpeg, ts))
+                self.slots[i].push.put_nowait(("push", camera_id, jpeg, ts))
             except (queue.Full, OSError, ValueError):
                 pass
 
@@ -627,6 +661,9 @@ class WorkerPool:
         with self._lock:
             for slot in self.slots:
                 cams = [cid for cid, i in self.where.items() if i == slot.index]
+                if slot.process is not None and slot.process.is_alive() \
+                        and now - slot.started_at >= self.tuning.resources.restart_max_s:
+                    slot.restarts = 0  # it ran long enough: the next crash waits 5 s again
                 if slot.process is None or slot.process.is_alive() or not cams:
                     continue
                 if slot.down_since is None:
@@ -667,3 +704,4 @@ class WorkerPool:
                 slot.process.join(5)
                 if slot.process.is_alive():
                     slot.process.terminate()
+                _retire(slot.cmd, slot.push)

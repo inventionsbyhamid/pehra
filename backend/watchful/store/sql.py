@@ -132,12 +132,38 @@ def create_workspace(engine: Engine, name: str, *, id: str | None = None, timezo
     return ws
 
 
+DEFAULTS_KEY = "default_watches"  # Meta: the society has had its default watches; one it deletes stays deleted
+
+
 def add_default_watches(s: orm.Session, workspace_id: str) -> None:
     """The site watches a new society starts with (rules/presets.py DEFAULT_WATCHES), in the caller's transaction."""
     from watchful.rules.presets import default_watches
     for w in default_watches():
         row = WatchRow(None, None, w.name, w.model_dump(mode="json"), True)
         s.add(m.Watch(id=m.new_id("wat"), workspace_id=workspace_id, camera_id=None, **_watch_columns(row)))
+    upsert(s, m.Meta, {"workspace_id": workspace_id, "key": DEFAULTS_KEY, "value": "1"}, ["workspace_id", "key"],
+           ["value"])
+
+
+def ensure_default_watches(repo) -> bool:
+    """A society made before default watches, or by a tool (the demo seed, the legacy import), gets them once, at
+    app start. A default saved under an earlier name is brought up to date instead of doubled. True if it changed."""
+    from watchful.rules.presets import EARLIER_DEFAULTS, preset
+    if repo.get_meta(DEFAULTS_KEY):
+        return False
+    with repo.tx() as s:
+        rows = list(s.scalars(select(m.Watch).where(m.Watch.workspace_id == repo.workspace_id,
+                                                     m.Watch.scope == "site")))
+        earlier = [r for r in rows if (r.spec_json or {}).get("name") in EARLIER_DEFAULTS]
+        for r in earlier:
+            w = preset(EARLIER_DEFAULTS[r.spec_json["name"]])
+            r.spec_json, r.text = w.model_dump(mode="json"), w.name
+        if earlier:
+            upsert(s, m.Meta, {"workspace_id": repo.workspace_id, "key": DEFAULTS_KEY, "value": "1"},
+                   ["workspace_id", "key"], ["value"])
+        else:
+            add_default_watches(s, repo.workspace_id)
+    return True
 
 
 def ensure_workspace(engine: Engine, workspace_id: str, name: str, timezone: str = "Asia/Kolkata") -> None:

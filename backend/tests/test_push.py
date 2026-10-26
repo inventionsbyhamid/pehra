@@ -180,8 +180,7 @@ def test_a_token_pushes_frames_to_its_own_camera_only(server):
         assert a.get(f"/api/cameras/{pool['id']}/frame").content == JPEG
         assert a.get(f"/api/cameras/{pool['id']}/device-token").json()["sending"] is True
     assert server.manager.count(lake["id"]) == 0
-    time.sleep(0.5)
-    assert pool["id"] not in server.manager.stopped  # nobody sends: it keeps running and goes offline (health.py)
+    assert wait_for(lambda: pool["id"] in server.manager.stopped)  # the device closed normally: its Stop
 
     # a token names its camera; there is no way to point it at another society's camera
     assert b.get(f"/api/cameras/{pool['id']}/device-token").status_code == 404

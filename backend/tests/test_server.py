@@ -112,9 +112,9 @@ def test_closed_live_view_is_released_quickly(server, monkeypatch):
     assert released == [cam["id"]]
 
 
-def test_push_only_for_webcams_and_keeps_running_when_closed(server, monkeypatch):
-    """A camera that sends its own pictures keeps running when its sender leaves, so with no pictures it goes
-    offline (health.py) instead of quietly stopping."""
+def test_push_only_for_webcams_and_stops_only_when_told(server, monkeypatch):
+    """A camera that sends its own pictures keeps running when its sender drops, so with no pictures it goes offline
+    (health.py); a device that says stop (a normal close) stops it."""
     from websockets.exceptions import ConnectionClosed
     c, cookie = _signed_in(server)
     stream = c.post("/api/cameras", json={"name": "Gate", "kind": "stream", "url": "rtsp://x"}).json()
@@ -128,7 +128,18 @@ def test_push_only_for_webcams_and_keeps_running_when_closed(server, monkeypatch
     manager = server_app(server).state.ctx.manager
     monkeypatch.setattr(manager, "stop", lambda cid: stopped.append(cid))
     cam = c.post("/api/cameras", json={"name": "Desk", "kind": "webcam"}).json()
-    with connect(f"ws://{server}/ws/cameras/{cam['id']}/push", additional_headers={"Cookie": cookie}) as ws:
-        ws.send(b"\xff\xd8")
+    ws = connect(f"ws://{server}/ws/cameras/{cam['id']}/push", additional_headers={"Cookie": cookie})
+    ws.send(b"\xff\xd8")
+    time.sleep(0.3)
+    ws.socket.close()  # the connection drops: no close handshake
     time.sleep(1)
     assert stopped == []
+    with connect(f"ws://{server}/ws/cameras/{cam['id']}/push", additional_headers={"Cookie": cookie}) as ws:
+        ws.send(b"\xff\xd8")
+        time.sleep(0.3)
+        ws.close(1000)  # the device's Stop
+    for _ in range(20):
+        if stopped:
+            break
+        time.sleep(0.1)
+    assert stopped == [cam["id"]]

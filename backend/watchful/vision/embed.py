@@ -25,14 +25,13 @@ class Embedder(Protocol):
 
 @register("embedder", *EMBEDDERS)
 class OnnxEmbedder:
-    """Images and text in one embedding space, both towers on the OpenCV DNN engine.
-    The text tower is large, so it loads on first use."""
+    """Images and text in one embedding space, both towers on the OpenCV DNN engine. Each tower loads on first use:
+    the app making watch texts needs only the text tower, a camera process only the image tower."""
 
     def __init__(self, name: str = "siglip2", settings: Settings | None = None):
         self.spec = EMBEDDERS[name]
         self.name, self.settings = name, settings
-        self.vision = cv2.dnn.readNetFromONNX(str(embedder_path(name, "vision.onnx", settings)),
-                                              cv2.dnn.ENGINE_AUTO)
+        self._vision = None
         self._text_net = None
         self._tokenizer = None
         self._text_used = 0.0
@@ -56,8 +55,11 @@ class OnnxEmbedder:
         x = cv2.cvtColor(x, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         x = (x - s.mean) / s.std
         with self._lock:
-            self.vision.setInput(x.transpose(2, 0, 1)[None])
-            return _unit(self.vision.forward(s.output))
+            if self._vision is None:
+                self._vision = cv2.dnn.readNetFromONNX(str(embedder_path(self.name, "vision.onnx", self.settings)),
+                                                       cv2.dnn.ENGINE_AUTO)
+            self._vision.setInput(x.transpose(2, 0, 1)[None])
+            return _unit(self._vision.forward(s.output))
 
     def text(self, query: str) -> np.ndarray:
         s = self.spec

@@ -21,6 +21,7 @@ def suggestions(purpose: str | None) -> list[str]:
 
 
 DEFAULT_WATCHES = ("camera_problem",)  # site watches every new society starts with
+EARLIER_DEFAULTS = {"A camera is covered or offline": "camera_problem"}  # names a default had before, to upgrade
 
 
 def default_watches() -> list[Watch]:

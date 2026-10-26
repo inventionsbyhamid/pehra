@@ -29,6 +29,7 @@ from watchful.ingest.push import (CLOSE_BAD_KIND, CLOSE_BUSY, CLOSE_CHANGED, CLO
 CLOSE_NOT_FOUND = CLOSE_UNKNOWN
 BUSY = device_page.BUSY
 JPEG = b"\xff\xd8"
+NORMAL_CLOSE = 1000  # a device's own Stop; a closed tab (1001) or a lost connection (1006) is not one
 
 
 def mount(app: FastAPI, ctx) -> None:
@@ -122,6 +123,7 @@ def mount(app: FastAPI, ctx) -> None:
         loop = asyncio.get_running_loop()
         sender = Sender(loop)
         hub.join(cam.id, sender)
+        stopped = False  # the device said stop (a normal close): the camera stops instead of going offline
         stopping = asyncio.create_task(sender.stop.wait())
         incoming = asyncio.create_task(ws.receive())
         try:
@@ -145,6 +147,7 @@ def mount(app: FastAPI, ctx) -> None:
                 if incoming in done:
                     msg = incoming.result()
                     if msg.get("type") == "websocket.disconnect":
+                        stopped = msg.get("code") == NORMAL_CLOSE
                         break
                     data = msg.get("bytes")
                     now = time.time()
@@ -158,12 +161,17 @@ def mount(app: FastAPI, ctx) -> None:
                     if (code := await check()) is not None:
                         await ws.close(code=code)
                         break
-        except (WebSocketDisconnect, RuntimeError):
+        except WebSocketDisconnect as e:
+            stopped = e.code == NORMAL_CLOSE
+        except RuntimeError:
             pass
         finally:
             incoming.cancel()
             stopping.cancel()
-            hub.leave(cam.id, sender)  # the camera keeps running: with no pictures it goes offline (health.py)
+            # a device that drops keeps its camera running, so with no pictures it goes offline (health.py); one
+            # that says stop, and was the last sender, stops it
+            if hub.leave(cam.id, sender) and stopped:
+                await run_in_threadpool(manager.stop, cam.id)
 
     @app.websocket("/ws/cameras/{camera_id}/push")
     async def push(ws: WebSocket, camera_id: str):
