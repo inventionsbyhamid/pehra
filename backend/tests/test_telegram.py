@@ -428,7 +428,9 @@ def test_one_failing_group_never_holds_up_the_others(env):
     for second in range(140, 150):
         env.run(at(second))
 
+    from accounts import on_plan
     from watchful.alerts.summary import queue_summaries
+    on_plan(env.a, env.a.workspace_id)  # the daily summary comes with the Society plan
     nine = datetime(2026, 10, 26, 3, 30, tzinfo=UTC)
     env.fake.replies[("sendMessage", "-1001")] = [bad()]
     queue_summaries(env.worker, nine)

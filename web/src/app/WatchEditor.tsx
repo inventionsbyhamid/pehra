@@ -134,7 +134,7 @@ function TheCard({ card, cameraId, onInstead, onSaved }: {
             <Choices legend="When it sees it" hideLegend value={watch.output}
               options={[{ value: "alert", label: "Alert" }, { value: "log", label: "Write to the log" }]}
               onChange={(output) => set(output === "log" ? { output, severity: "info" } : { output, severity: watch.severity === "info" ? "warning" : watch.severity })} />
-            {watch.output === "log" && <p className="hint" style={{ marginTop: 8 }}>A row in the log each time, and no alert.</p>}
+            {watch.output === "log" && <p className="hint" style={{ marginTop: 8 }}>A row in the watch log each time, and no alert.</p>}
           </Fact>
         )}
         {watch && watch.output === "alert" && (

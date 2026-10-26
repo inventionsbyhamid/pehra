@@ -1,19 +1,37 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { api, csvUrl } from "../api";
-import { clock, dayTitle, epoch, plural, shiftDay, stayed, todayKey } from "../format";
+import { clock, dayTitle, epoch, plain, plural, shiftDay, stayed, todayKey } from "../format";
 import { useLoad, useTitle } from "../hooks";
 import brand from "../site/brand";
-import type { AttendanceRow, Camera, Passage } from "../types";
+import type { AttendanceRow, Camera, Passage, WatchLogRow } from "../types";
 import { Fact, Facts } from "./ui/Card";
+import { featureNames, plans } from "../site/plans";
+import { useCan, useSession } from "./session";
 import { Dialog, useDialog } from "./ui/Dialog";
 import { Empty, Page, PageHead, Problem } from "./ui/Page";
 import { PLATE_WORDS, sentence } from "./words";
 
 const LOGS = [
-  { id: "vehicles", label: "Gate log" },
-  { id: "staff", label: "Staff register" },
+  { id: "vehicles", label: "Gate log", about: "Every vehicle in and out through the gates, by plate.", feature: "gate_ledger" },
+  { id: "staff", label: "Staff register", about: "When each enrolled staff member was first and last seen each day.", feature: "staff_register" },
+  { id: "watches", label: "Watch log", about: "What watches wrote to the log, and notes, each day.", feature: null },
 ] as const;
+
+// a log the society's plan does not include: what it is, and the way to it
+function NotInPlan({ label, feature }: { label: string; feature: string }) {
+  useTitle(label);
+  const admin = useCan("admin");
+  const plan = plans.find((p) => (p.features as readonly string[]).includes(feature) && !p.contact);
+  const named = (featureNames as Record<string, string>)[feature] ?? label;
+  return (
+    <Empty title={`The ${named[0]!.toLowerCase()}${named.slice(1)} comes with the ${plan?.name ?? "next"} plan`}
+      action={admin ? <Link className="btn btn-primary" to="/app/settings/billing">See plans and billing</Link> : undefined}>
+      {admin ? "Your society's plan does not include it yet. Change the plan in Settings, under Billing."
+        : "Your society's plan does not include it yet. Ask your society's admin to change the plan."}
+    </Empty>
+  );
+}
 
 const REFRESH_MS = 30_000;
 
@@ -298,20 +316,95 @@ function StaffLog({ cameras }: { cameras: Camera[] | null }) {
   );
 }
 
+// rows log watches wrote and notes (incidents at the info level), one day at a time
+function WatchLog() {
+  useTitle("Watch log");
+  const [day, setDay] = useState(todayKey());
+  const [search, setSearch] = useState("");
+  const today = day === todayKey();
+  const log = useLoad(() => api.watchLog(day), [day], today ? REFRESH_MS : undefined);
+  const all = log.data?.day === day ? log.data.rows : [];
+  const words = search.trim().toLowerCase();
+  const rows = useMemo(() => all.filter((r) => !words || `${r.watch} ${r.what} ${r.camera}`.toLowerCase().includes(words)), [all, words]);
+  const notes = all.filter((r) => r.kind === "note").length;
+  const kind = (r: WatchLogRow) => `${r.kind === "note" ? "Note" : "Log"}${r.example ? ", example" : ""}`;
+  const what = (r: WatchLogRow) => (r.incident_id
+    ? <Link to={`/app/incidents/${r.incident_id}`}>{sentence(plain(r.what)) || "Open the note"}</Link>
+    : sentence(plain(r.what)));
+
+  return (
+    <>
+      <Toolbar day={day} setDay={setDay} search={search} setSearch={setSearch} searchLabel="Search the watch log"
+        placeholder="Search a watch or a camera" />
+      <Problem>{log.error}</Problem>
+      <Summary day={day} csv={csvUrl("watches", { day })}>
+        {log.data?.day === day && all.length > 0 ? `${plural(all.length - notes, "row")} from log watches, ${plural(notes, "note")}` : null}
+      </Summary>
+      {log.loading && !log.data ? null : all.length === 0 ? (
+        <Empty title="Nothing in the watch log on this day">
+          A watch set to write to the log adds a row here each time it sees what it watches for. Notes, the incidents at the info level, show here too.
+        </Empty>
+      ) : rows.length === 0 ? (
+        <Empty title={`Nothing like ${search.trim()}`}>Check the words, or clear the search.</Empty>
+      ) : (
+        <>
+          <div className="log-wide card card-flush">
+            <table className="table log-table">
+              <caption className="sr-only">The watch log, {dayTitle(day)}</caption>
+              <thead>
+                <tr><th scope="col">Time</th><th scope="col">Watch</th><th scope="col">What it saw</th><th scope="col">Camera</th></tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={`${r.kind}-${r.id}`}>
+                    <td className="num">{clock(epoch(r.at))}</td>
+                    <th scope="row">{sentence(plain(r.watch))}<span className="cell-sub">{kind(r)}</span></th>
+                    <td>{what(r)}</td>
+                    <td>{r.camera}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ul className="log-narrow list log-cards" aria-label={`The watch log, ${dayTitle(day)}`}>
+            {rows.map((r) => (
+              <li key={`${r.kind}-${r.id}`}>
+                <div className="log-card">
+                  <span className="log-card-top"><span className="num">{clock(epoch(r.at))}</span><span>{kind(r)}</span></span>
+                  <strong>{sentence(plain(r.watch))}</strong>
+                  {r.what && <span>{what(r)}</span>}
+                  <span className="muted">{r.camera}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </>
+  );
+}
+
 export default function Logs() {
   const { log = "vehicles" } = useParams();
+  const { me } = useSession();
   const cameras = useLoad(() => api.cameras(), []);
-  if (!LOGS.some((l) => l.id === log)) return <Navigate to="/app/logs/vehicles" replace />;
+  const tab = LOGS.find((l) => l.id === log);
+  if (!tab) return <Navigate to="/app/logs/vehicles" replace />;
+  const features = me.workspace?.features;
+  const locked = tab.feature && features && !features.includes(tab.feature) ? tab.feature : null;
   return (
     <Page>
-      <PageHead title="Logs" sub={<span>{log === "staff" ? "When each enrolled staff member was first and last seen each day." : "Every vehicle in and out through the gates, by plate."}</span>} />
+      <PageHead title="Logs" sub={<span>{tab.about}</span>} />
       <nav className="tabs" aria-label="Logs">
         {LOGS.map((l) => (
           <Link key={l.id} to={`/app/logs/${l.id}`} aria-current={l.id === log ? "page" : undefined}>{l.label}</Link>
         ))}
       </nav>
       <div className="stack" style={{ gap: 16, marginTop: -8 }}>
-        {log === "staff" ? <StaffLog key="staff" cameras={cameras.data} /> : <GateLog key="vehicles" cameras={cameras.data} />}
+        {locked ? <NotInPlan key={log} label={tab.label} feature={locked} />
+          : log === "staff" ? <StaffLog key="staff" cameras={cameras.data} />
+          : log === "watches" ? <WatchLog key="watches" />
+          : <GateLog key="vehicles" cameras={cameras.data} />}
       </div>
     </Page>
   );

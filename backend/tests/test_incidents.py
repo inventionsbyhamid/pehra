@@ -203,7 +203,9 @@ def test_daily_summary_counts_the_day(env):
 
 
 def test_summary_is_queued_once_at_nine_society_time(env):
+    from accounts import on_plan
     env.link(env.a, -1001)
+    on_plan(env.a, env.a.workspace_id)  # the daily summary comes with the Society plan
     nine_ist = datetime(2026, 10, 26, 3, 30, tzinfo=UTC)
     assert queue_summaries(env.worker, nine_ist - timedelta(minutes=1)) == []
     assert queue_summaries(env.worker, nine_ist) == [env.a.workspace_id]  # Lake View has no group: nothing to send

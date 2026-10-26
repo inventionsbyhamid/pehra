@@ -2,7 +2,7 @@
 paid periods are the ones it has a price for; each is sold as the billing product `<plan>_<period>` (POLAR_PRODUCTS
 keys). A per camera plan is bought for a number of watched cameras, up to its watched_cameras."""
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -28,6 +28,7 @@ class Plan:
     prices: dict[str, int]  # period to rupees, per watched camera on a per camera plan; only the periods sold
     per_camera: bool
     contact: bool  # sold by talking to us, not by checkout
+    features: frozenset[str] = frozenset()  # what the plan includes, the keys of data/plans.json "features"
 
     @property
     def free(self) -> bool:
@@ -48,6 +49,12 @@ class Catalog:
     default: str  # the plan of a society without a paid subscription
     plans: dict[str, Plan]
     refund_days_yearly: int
+    features: dict[str, str] = field(default_factory=dict)  # feature key to its words on the pricing grid
+
+    def first_with(self, feature: str) -> Plan | None:
+        """The smallest plan that includes a feature, sold by checkout when one is."""
+        having = [p for p in self.plans.values() if feature in p.features]
+        return next((p for p in having if p.sold), having[0] if having else None)
 
     def rank(self, plan_id: str | None) -> int:
         """Higher for a bigger plan: data/plans.json lists plans smallest first."""
@@ -78,9 +85,9 @@ def parse(data: dict) -> Catalog:
                               Limits(lim["watched_cameras"], lim["retention_days"] or longest, lim["ai_checks_day"],
                                      lim["ai_assist_day"], lim["enrolled_staff"], lim.get("min_cameras")),
                               {k: v for k, v in prices.items() if v}, bool(p.get("per_camera")),
-                              bool(p.get("contact")))
+                              bool(p.get("contact")), frozenset(p.get("features") or []))
     default = data.get("default_plan") or next(p.id for p in plans.values() if p.free)
-    return Catalog(default, plans, int(data["refund_days_yearly"]))
+    return Catalog(default, plans, int(data["refund_days_yearly"]), dict(data.get("features") or {}))
 
 
 @lru_cache

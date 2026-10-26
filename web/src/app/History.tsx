@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { Thumb } from "../components/Thumb";
-import { clock, plural } from "../format";
+import { clock, epoch, plain, plural } from "../format";
 import { useLoad, useTitle } from "../hooks";
 import type { EventRow, PeopleGroup } from "../types";
 import { Empty, Page, PageHead, Problem, Section } from "./ui/Page";
+import { sentence } from "./words";
 
 const KIND_WORDS: Record<string, string> = {
   enter: "came into",
@@ -23,9 +24,22 @@ const KIND_WORDS: Record<string, string> = {
 function eventWords(e: EventRow): string {
   const who = e.person_label ?? (e.cls === "person" ? "Someone" : e.cls ? `A ${e.cls}` : "Something");
   if (e.kind.startsWith("tamper")) return KIND_WORDS[e.kind] ?? e.kind;
-  if (e.kind === "enter" || e.kind === "exit" || e.kind === "cross") return `${who} ${KIND_WORDS[e.kind]} ${e.zone ?? "a zone"}`;
+  if (e.kind === "watch_log") {
+    // a row a log watch wrote: the watch's name and what it saw
+    const reasons = Array.isArray(e.data.reasons) ? (e.data.reasons as unknown[]).map(String).join("; ") : "";
+    const watch = typeof e.data.watch === "string" ? e.data.watch : "A watch";
+    return reasons ? `${sentence(plain(watch))}: ${plain(reasons)}` : sentence(plain(watch));
+  }
+  if (e.kind === "cross") {
+    const way = e.data.direction === "in" || e.data.direction === "out" ? ` going ${e.data.direction}` : "";
+    return `${who} crossed ${e.zone ?? "a line"}${way}`;
+  }
+  if (e.kind === "enter" || e.kind === "exit") return `${who} ${KIND_WORDS[e.kind]} ${e.zone ?? "a zone"}`;
   return `${who} ${KIND_WORDS[e.kind] ?? e.kind.replace(/_/g, " ")}`;
 }
+
+// one line of "Every event": what OpenCV wrote, a row a log watch wrote, or a note (an incident at the info level)
+type Line = { id: string; ts: number; text: string; tag: string | null; to: string | null };
 
 function ticks(t0: number, t1: number): number[] {
   const steps = [60, 300, 600, 1800, 3600, 7200, 21600];
@@ -79,13 +93,21 @@ export default function History() {
   const { id = "" } = useParams();
   const camera = useLoad(() => api.camera(id), [id]);
   const timeline = useLoad(() => api.timeline(id), [id], 30_000);
+  const incidents = useLoad(() => api.incidents({ camera_id: id }), [id], 30_000);
   const [everything, setEverything] = useState(false);
   const name = camera.data?.name ?? "Camera";
   useTitle(`${name}, who came and went`);
 
   const people = useMemo(() => [...(timeline.data?.people ?? [])].sort((a, b) => a.first_ts - b.first_ts), [timeline.data]);
   const names = useMemo(() => new Map(people.map((p, i) => [p.group_id, p.label ?? `Person ${i + 1}`])), [people]);
-  const events = [...(timeline.data?.events ?? [])].sort((a, b) => b.ts - a.ts);
+  const events: Line[] = [
+    ...(timeline.data?.events ?? []).map((e) => ({
+      id: e.id, ts: e.ts, text: eventWords(e), tag: e.kind === "watch_log" ? "Log" : null, to: null,
+    })),
+    ...(incidents.data ?? []).filter((i) => i.severity === "info").map((i) => ({
+      id: i.id, ts: epoch(i.opened_at), text: sentence(plain(i.title || i.reason)), tag: "Note", to: `/app/incidents/${i.id}`,
+    })),
+  ].sort((a, b) => b.ts - a.ts);
 
   return (
     <Page>
@@ -107,7 +129,8 @@ export default function History() {
                 {(everything ? events.slice(0, 300) : events.slice(0, 12)).map((e) => (
                   <li key={e.id}>
                     <time className="event-time num" dateTime={new Date(e.ts * 1000).toISOString()}>{clock(e.ts)}</time>
-                    <span className="grow">{eventWords(e)}</span>
+                    {e.tag && <span className="tag">{e.tag}</span>}
+                    <span className="grow">{e.to ? <Link to={e.to}>{e.text}</Link> : e.text}</span>
                   </li>
                 ))}
               </ol>

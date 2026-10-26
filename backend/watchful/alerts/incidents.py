@@ -95,6 +95,19 @@ def list_incidents(repo, statuses: tuple[str, ...] | None = None, camera_id: str
         return list(s.scalars(stmt.order_by(m.Incident.last_at.desc()).limit(limit)))
 
 
+def incidents_between(repo, since, until, severity: str | None = None, camera_id: str | None = None,
+                      limit: int = 2000) -> list[m.Incident]:
+    """The society's incidents opened from `since` until before `until`, newest first."""
+    stmt = select(m.Incident).where(m.Incident.workspace_id == repo.workspace_id, m.Incident.opened_at >= when(since),
+                                    m.Incident.opened_at < when(until))
+    if severity:
+        stmt = stmt.where(m.Incident.severity == severity)
+    if camera_id:
+        stmt = stmt.where(m.Incident.camera_id == camera_id)
+    with repo.tx() as s:
+        return list(s.scalars(stmt.order_by(m.Incident.opened_at.desc()).limit(limit)))
+
+
 def _same(column, value):
     return column.is_(None) if value is None else column == value
 

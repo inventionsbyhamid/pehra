@@ -128,6 +128,25 @@ def hold_retention(ws: m.Workspace, before: int, now: datetime) -> None:
             ws.retention_hold_days, ws.retention_hold_until = before, until
 
 
+GATE_LOG, STAFF_REGISTER, DAILY_SUMMARY = "gate_ledger", "staff_register", "daily_summary"  # plans.json features
+
+
+def has_feature(ws: m.Workspace, feature: str, now: datetime | None = None) -> bool:
+    """Whether the plan in force includes a feature of data/plans.json (a demo sandbox is comped Society)."""
+    return feature in entitlement(ws, now).plan.features
+
+
+def feature_refusal(ws: m.Workspace, feature: str, now: datetime | None = None) -> str | None:
+    """Plain words with the way forward when the plan in force lacks a feature, else None."""
+    if has_feature(ws, feature, now):
+        return None
+    cat = catalog()
+    label = cat.features.get(feature, feature.replace("_", " "))
+    plan = cat.first_with(feature)
+    where = f"comes with the {plan.name} plan" if plan else "is not in your plan"
+    return f"The {label[:1].lower()}{label[1:]} {where}. An admin can change the plan in Settings, under Billing."
+
+
 def ai_cap(ws: m.Workspace, kind: str, default: int, now: datetime | None = None) -> int:
     """AI requests of this kind the society may make today: CHECKS (one per flagged moment checked, per watched
     camera on a per camera plan) or ASSIST (writing watches, questions, search); `default` (AI_DAILY_CALL_LIMIT)

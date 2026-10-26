@@ -18,6 +18,7 @@ export default function ControlRoom() {
   const admin = useCan("admin");
   const cameras = useLoad(() => api.cameras(), [], 10_000);
   const incidents = useLoad(() => api.incidents(), [], 10_000);
+  const checks = useLoad(() => api.checksToday(), [], 60_000);
   const list = cameras.data ?? [];
   const names = useMemo(() => Object.fromEntries(list.map((c) => [c.id, c.name])), [list]);
 
@@ -45,6 +46,11 @@ export default function ControlRoom() {
             <span className="small muted">{open.length ? `${open.length} open` : "Last 24 hours"}</span>
           </div>
           <Problem>{incidents.error}</Problem>
+          {checks.data?.reached && (
+            <p className="small muted" role="status">
+              Today's AI checks are used up. New moments are still filed, marked not checked by the AI, until midnight.
+            </p>
+          )}
           <div className="card">
             {feed.length > 0 ? (
               <Feed incidents={feed} names={names} label="Incidents" />

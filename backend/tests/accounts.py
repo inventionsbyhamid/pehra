@@ -47,3 +47,9 @@ def browser(app, email: str = "judge@example.com", workspace_id: str = SOCIETY, 
     client = TestClient(app, base_url=base, headers={"origin": base})
     client.cookies.set(name, value)
     return client
+
+
+def on_plan(db, workspace_id: str, plan: str = "society") -> None:
+    """The society on a plan agreed by hand (no subscription), so that plan's features are in force."""
+    with db.tx() as s:
+        s.get(m.Workspace, workspace_id).plan = plan

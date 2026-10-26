@@ -183,9 +183,10 @@ export type IncidentStep =
 export interface IncidentDetail extends Incident {
   timeline: IncidentStep[];
   alert_id: string | null;
+  clip?: boolean;
 }
 
-export type AlertStatus = "alert" | "unverified" | "dismissed" | "awaiting_human" | "approved" | "declined";
+export type AlertStatus = "alert" | "measured" | "unverified" | "dismissed" | "awaiting_human" | "approved" | "declined";
 
 export interface TraceStep {
   step: number;
@@ -287,6 +288,7 @@ export interface Society {
   plan?: string;
   demo?: boolean;
   expires_at?: string | null;
+  features?: string[];  // what its plan includes (data/plans.json features)
 }
 
 export interface Me {
@@ -370,6 +372,30 @@ export interface AttendanceRow {
   came_in?: string | null; // from a crossing of a directed line, when the camera has one
   went_out?: string | null;
   cameras: string[];
+}
+
+// the watch log: rows log watches wrote, and notes (incidents at the info level), one day at a time
+export interface WatchLogRow {
+  id: string;
+  kind: "log" | "note";
+  at: string;
+  camera_id: string | null;
+  camera: string;
+  watch: string;
+  what: string;
+  incident_id: string | null;
+  example: boolean;
+}
+
+export interface WatchLog {
+  day: string;
+  rows: WatchLogRow[];
+}
+
+export interface ChecksToday {
+  used: number;
+  day: number;
+  reached: boolean;
 }
 
 export interface StaffRegister {

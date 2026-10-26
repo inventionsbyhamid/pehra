@@ -350,3 +350,95 @@ def test_a_comp_ends_at_the_end_of_the_day_in_the_society_zone(tmp_path, capsys)
         until = tx.get(m.Workspace, repo.workspace_id).comp_until
     until = until if until.tzinfo else until.replace(tzinfo=UTC)
     assert until == datetime(2026, 11, 2, tzinfo=ZoneInfo(NY))
+
+
+# I1: what a log watch writes, crossings and info notes are shown: the camera's history and a watch log
+
+def _log_event(cam_id, ts, watch="Cabs at the gate", reasons=("a yellow plate came in",)):
+    from watchful.store.db import EventRow
+    return EventRow(None, cam_id, ts, "watch_log", 3, "car", None,
+                    {"watch_id": "w1", "watch": watch, "reasons": list(reasons), "signals": {}}, None, None, None,
+                    None)
+
+
+def test_the_camera_history_shows_log_rows_and_crossings(app):
+    from accounts import SOCIETY, browser
+    from watchful.store.db import Camera, EventRow
+    c = browser(app)
+    repo = app.state.ctx.repo_for(SOCIETY)
+    cam = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://g"))
+    repo.add_events([_log_event(cam.id, at(10)),
+                     EventRow(None, cam.id, at(10, 5), "cross", 4, "person", "main", {"direction": "in"}, None, None,
+                              None, None)])
+    kinds = [e["kind"] for e in c.get(f"/api/cameras/{cam.id}/timeline").json()["events"]]
+    assert kinds == ["watch_log", "cross"]
+
+
+def test_the_watch_log_lists_a_day_of_log_rows_and_notes(app):
+    import csv
+    import io
+    from sqlalchemy import select
+    from accounts import SOCIETY, browser
+    from watchful.alerts.incidents import open_or_touch_incident
+    from watchful.db import models as m
+    from watchful.store.db import Camera
+    c = browser(app)
+    repo = app.state.ctx.repo_for(SOCIETY)
+    cam = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://g"))
+    repo.add_events([_log_event(cam.id, at(0, 30)), _log_event(cam.id, at(23, 50, day=22))])
+    open_or_touch_incident(repo, cam.id, "w_note", "info", "A delivery came in.", now=at(9))
+    open_or_touch_incident(repo, cam.id, "w_warn", "warning", "Gate open too long.", now=at(9, 30))
+    body = c.get("/api/logs/watches?day=2026-10-23").json()
+    assert [(r["kind"], r["what"]) for r in body["rows"]] == [("note", "A delivery came in."),
+                                                              ("log", "a yellow plate came in")]
+    assert body["rows"][1]["at"] == "2026-10-23T00:30:00+05:30" and body["rows"][1]["camera"] == "Gate"
+    r = c.get("/api/logs/watches.csv?day=2026-10-23")
+    rows = list(csv.reader(io.StringIO(r.text)))
+    assert rows[0] == ["Date", "Time", "Camera", "Watch", "What", "Kind"] and len(rows) == 3
+    assert rows[2] == ["2026-10-23", "00:30:00", "Gate", "Cabs at the gate", "a yellow plate came in", "log"]
+    with app.state.ctx.db.tx() as s:
+        assert [a.data["log"] for a in s.scalars(select(m.Audit).where(m.Audit.action == "logs.export"))] == ["watches"]
+    assert browser(app, "viewer@example.com", role="viewer").get("/api/logs/watches").status_code == 403
+    assert browser(app, "lake@example.com", workspace_id="ws_lake").get(
+        "/api/logs/watches?day=2026-10-23").json()["rows"] == []
+
+
+# Also: the gate log, the staff register and the daily summary come with the plans that list them
+
+def test_logs_the_plan_lacks_say_so_with_the_way_forward(app):
+    from accounts import SOCIETY, browser, on_plan
+    c = browser(app)
+    for path in ("/api/logs/vehicles", "/api/logs/vehicles.csv", "/api/logs/staff", "/api/logs/staff.csv"):
+        r = c.get(path)
+        assert r.status_code == 403 and "comes with the Society plan" in r.json()["detail"], path
+        assert "Settings, under Billing" in r.json()["detail"]
+    assert c.get("/api/logs/vehicles").json()["detail"].startswith("The gate log of every vehicle comes with")
+    assert c.get("/api/logs/watches").status_code == 200  # writing to the log is a watch: every plan has it
+    assert "gate_ledger" not in c.get("/api/me").json()["workspace"]["features"]
+    on_plan(app.state.ctx.db, SOCIETY)
+    assert all(c.get(p).status_code == 200 for p in ("/api/logs/vehicles", "/api/logs/staff"))
+    assert {"gate_ledger", "staff_register", "daily_summary"} <= set(c.get("/api/me").json()["workspace"]["features"])
+
+
+def test_the_demo_keeps_its_logs(app):
+    from watchful.billing.limits import GATE_LOG, STAFF_REGISTER, DAILY_SUMMARY, has_feature
+    from watchful.db import models as m
+    from datetime import UTC, datetime as dt, timedelta
+    with app.state.ctx.db.tx() as s:
+        ws = m.Workspace(name="Demo", comp_plan="society", comp_cameras=2, comp_until=dt.now(UTC) + timedelta(hours=2))
+        s.add(ws)
+        s.flush()
+        assert all(has_feature(ws, f) for f in (GATE_LOG, STAFF_REGISTER, DAILY_SUMMARY))
+
+
+def test_the_daily_summary_goes_only_on_a_plan_with_it(tmp_path):
+    from datetime import UTC
+    from accounts import on_plan
+    from telegram_fakes import make_env
+    from watchful.alerts.summary import queue_summaries
+    env = make_env(tmp_path)
+    env.link(env.a, -1001)
+    nine_ist = datetime(2026, 10, 26, 3, 30, tzinfo=UTC)
+    assert queue_summaries(env.worker, nine_ist) == []
+    on_plan(env.a, env.a.workspace_id)
+    assert queue_summaries(env.worker, nine_ist) == [env.a.workspace_id]

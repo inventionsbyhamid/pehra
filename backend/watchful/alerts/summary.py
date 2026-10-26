@@ -86,13 +86,14 @@ def daily(repo, day: date | str) -> str:
 
 @periodic
 def queue_summaries(worker, now: datetime) -> list[str]:
-    """Queues yesterday's summary for each society with a linked group, once, from summary_hour society time until
-    summary_late_h after it."""
+    """Queues yesterday's summary for each society with a linked group whose plan includes it, once, from
+    summary_hour society time until summary_late_h after it."""
+    from watchful.billing.limits import DAILY_SUMMARY, has_feature
     t = worker.tuning.alerts
     with worker.queue.tx() as s:
-        societies = s.execute(select(m.Workspace.id, m.Workspace.timezone)
-                              .join(m.TelegramLink, m.TelegramLink.workspace_id == m.Workspace.id)
-                              .where(m.TelegramLink.chat_id.is_not(None)).distinct()).all()
+        societies = [(w.id, w.timezone) for w in s.scalars(
+            select(m.Workspace).join(m.TelegramLink, m.TelegramLink.workspace_id == m.Workspace.id)
+            .where(m.TelegramLink.chat_id.is_not(None)).distinct()) if has_feature(w, DAILY_SUMMARY, now)]
     queued = []
     for ws, zone in societies:
         local = now.astimezone(ZoneInfo(zone or worker.settings.timezone))

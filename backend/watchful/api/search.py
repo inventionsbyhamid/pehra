@@ -14,8 +14,8 @@ from watchful.auth.deps import CurrentMember, current_member
 from watchful.search import SearchQuery, search
 from watchful.vision.faces import ConsentRequired, NoFaceFound
 
-TIMELINE_KINDS = ["enter", "exit", "falling", "fallen", "recovered", "tamper_covered", "tamper_blurred",
-                  "tamper_moved", "tamper_restored"]
+TIMELINE_KINDS = ["enter", "exit", "cross", "falling", "fallen", "recovered", "tamper_covered", "tamper_blurred",
+                  "tamper_moved", "tamper_restored", "watch_log"]  # watch_log: a row a log watch wrote
 
 
 class AskIn(BaseModel):

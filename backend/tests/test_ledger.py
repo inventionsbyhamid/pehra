@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from sqlalchemy import select
 
-from accounts import SOCIETY, browser
+from accounts import SOCIETY, browser, on_plan
 from watchful.agent.llm import FakeLLM
 from watchful.alerts import incidents as incidents_
 from watchful.api import create_app
@@ -243,6 +243,7 @@ def test_gate_log_api_csv_and_roles(tmp_path):
     from test_api import StubManager
     app = create_app(s, llm=FakeLLM([]), manager=StubManager())
     owner = browser(app)
+    on_plan(app.state.ctx.db, SOCIETY)  # the gate log comes with the Society plan
     repo = app.state.ctx.repo_for(SOCIETY)
     gate = repo.add_camera(Camera(None, "Main gate", "stream", "rtsp://gate", [LINE], readers=["plates"]))
     app.state.ctx.blobs.put(f"{SOCIETY}/{gate.id}/passages/1.jpg", b"jpg", "image/jpeg")
@@ -272,6 +273,7 @@ def test_gate_log_api_csv_and_roles(tmp_path):
     assert viewer.get("/api/logs/vehicles").status_code == 403
     assert viewer.get("/api/logs/vehicles.csv").status_code == 403
     other = browser(app, "lake@example.com", workspace_id="ws_lake", role="owner")
+    on_plan(app.state.ctx.db, "ws_lake")
     assert other.get("/api/logs/vehicles?day=2026-10-25").json()["passages"] == []
 
 

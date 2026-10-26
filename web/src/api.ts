@@ -1,8 +1,8 @@
 import brand from "./site/brand";
 import type {
-  Answer, Camera, GateLog, Incident, IncidentDetail, Me, Member, Metrics, NvrBrand, PendingInvite, Purposes,
-  Role, SavedWatch, Scan, Society, StaffList, StaffRegister, StateExample, TelegramStatus, Timeline, Watch, WatchCard,
-  WatchRow, Zone,
+  Answer, Camera, ChecksToday, GateLog, Incident, IncidentDetail, Me, Member, Metrics, NvrBrand, PendingInvite,
+  Purposes, Role, SavedWatch, Scan, Society, StaffList, StaffRegister, StateExample, TelegramStatus, Timeline, Watch,
+  WatchCard, WatchLog, WatchRow, Zone,
 } from "./types";
 
 export type { Me, Society } from "./types";
@@ -174,9 +174,11 @@ export const api = {
 
   gateLog: (day: string, q: string) => get<GateLog>(`/api/logs/vehicles?${logQuery({ day, q })}`),
   staffRegister: (day: string) => get<StaffRegister>(`/api/logs/staff?${logQuery({ day })}`),
+  watchLog: (day: string) => get<WatchLog>(`/api/logs/watches?${logQuery({ day })}`),
+  checksToday: () => get<ChecksToday>("/api/checks/today"),
   staff: () => get<StaffList>("/api/staff"),
   enrolStaff: (form: FormData) => post<{ id: string; name: string; faces: number }>("/api/staff", form),
-  removeStaff: (id: string) => del<{ ok: boolean }>(`/api/staff/${id}`),
+  removeStaff: (id: string) => del<{ ok: boolean; disabled_watches?: string[] }>(`/api/staff/${id}`),
 
   noticeContact: () => get<{ contact: string | null; shown: string | null }>("/api/notice-contact"),
   setNoticeContact: (contact: string) =>
@@ -196,7 +198,7 @@ export function logQuery(params: Record<string, string>): string {
   return new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
 }
 
-export const csvUrl = (log: "vehicles" | "staff", params: Record<string, string>) =>
+export const csvUrl = (log: "vehicles" | "staff" | "watches", params: Record<string, string>) =>
   `/api/logs/${log}.csv?${logQuery(params)}`;
 
 // An upload with its progress (fetch has none): resolves with the server's reply, rejects with its words.

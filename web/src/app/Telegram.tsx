@@ -110,7 +110,7 @@ export function Telegram() {
             <div>
               <h2 id="warn-title" className="h2">Warnings on Telegram too</h2>
               <p className="small muted" style={{ marginTop: 4 }}>
-                Critical alerts always go. Warnings show here in the app, and on Telegram too when this is on. Info stays in the logs and the 9 AM summary.
+                Critical alerts always go. Warnings show here in the app, and on Telegram too when this is on. Info stays in the app as a note in the watch log, and in the 9 AM summary.
               </p>
             </div>
             <label className="switch">

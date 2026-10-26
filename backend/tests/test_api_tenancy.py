@@ -9,7 +9,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from accounts import BASE, browser
+from accounts import BASE, browser, on_plan
 from test_api import StubManager
 from watchful.agent.llm import FakeLLM
 from watchful.alerts.incidents import open_or_touch_incident
@@ -103,10 +103,12 @@ def test_every_route_is_scoped(world):
         assert res.status_code in (403, 404), f"POST {path} answered {res.status_code}: {res.text}"
 
     secrets = [ids["camera_id"], ids["watch_id"], ids["alert_id"], "per_lake", "Lake", "bina@example.com", B]
+    on_plan(app.state.ctx.db, A)  # the gate log and the staff register come with the Society plan
     for path in ("/api/cameras", "/api/alerts", f"/api/alerts?camera_id={ids['camera_id']}", "/api/metrics",
                  "/api/people", "/api/members", "/api/invites", "/api/me", "/api/incidents", "/api/telegram",
                  "/api/incidents/precision", "/api/billing", "/api/staff", "/api/staff?removed=true",
-                 "/api/logs/vehicles", "/api/logs/staff", "/api/logs/vehicles.csv", "/api/logs/staff.csv"):
+                 "/api/logs/vehicles", "/api/logs/staff", "/api/logs/vehicles.csv", "/api/logs/staff.csv",
+                 "/api/logs/watches", "/api/logs/watches.csv", "/api/checks/today"):
         res = a.get(path)
         assert res.status_code == 200, path
         assert not [x for x in secrets if x in res.text], f"{path} shows another society's data"

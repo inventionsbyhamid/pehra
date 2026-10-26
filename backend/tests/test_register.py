@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from sqlalchemy import select
 
-from accounts import SOCIETY, browser, society_repo
+from accounts import SOCIETY, browser, on_plan, society_repo
 from watchful.agent.llm import FakeLLM
 from watchful.api import create_app
 from watchful.config import Settings
@@ -222,6 +222,7 @@ def test_roll_up_runs_in_society_time(tmp_path):
 
 def test_staff_register_api_and_csv(app):
     c = browser(app)
+    on_plan(app.state.ctx.db, SOCIETY)  # the staff register comes with the Society plan
     repo = app.state.ctx.repo_for(SOCIETY)
     gate = repo.add_camera(Camera(None, "Service gate", "stream", "rtsp://s", readers=["faces"]))
     sunita = register.enrol(repo, "=cmd", "maid", [[0.1] * 128], None)
@@ -238,8 +239,9 @@ def test_staff_register_api_and_csv(app):
     with app.state.ctx.db.tx() as s:
         assert [a.data["log"] for a in s.scalars(select(m.Audit).where(m.Audit.action == "logs.export"))] == ["staff"]
     assert browser(app, "viewer@example.com", role="viewer").get("/api/logs/staff.csv").status_code == 403
-    assert browser(app, "lake@example.com", workspace_id="ws_lake").get(
-        "/api/logs/staff?day=2026-10-25").json()["staff"] == []
+    lake = browser(app, "lake@example.com", workspace_id="ws_lake")
+    on_plan(app.state.ctx.db, "ws_lake")
+    assert lake.get("/api/logs/staff?day=2026-10-25").json()["staff"] == []
 
 
 def _pusher(manager, cams, image, stop: threading.Event, on_s: float = 4.0, off_s: float = 3.0):

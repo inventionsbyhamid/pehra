@@ -90,7 +90,7 @@ const FEATURES = [
 const LEVELS = [
   ["critical", "Sent to your Telegram group at once, and again if nobody acknowledges it."],
   ["warning", "Shown on the dashboard, and on Telegram if your society turns that on."],
-  ["info", "Kept in the logs and the 9 AM daily summary."],
+  ["info", "Kept as a note in the watch log and on the camera's history, and counted in the 9 AM daily summary."],
 ] as const;
 
 const STEPS = [

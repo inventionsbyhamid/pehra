@@ -56,7 +56,7 @@ function WatchItem({ row, cam, examples, admin, onToggle, onTask }: {
       <div className="grow">
         <p className="watch-words">{words}</p>
         <p className="watch-meta">
-          {(row.watch?.output ?? row.output) === "log" ? <span>Writes to the log</span> : <SeverityTag level={severity} />}
+          {(row.watch?.output ?? row.output) === "log" ? <span>Writes to the watch log</span> : <SeverityTag level={severity} />}
           {row.scope === "site" && <span>Every camera</span>}
           {!row.enabled && <span>Off</span>}
         </p>

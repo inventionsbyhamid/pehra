@@ -12,6 +12,7 @@ import { SeverityTag } from "./ui/Severity";
 import { isActive, sentence, statusWords } from "./words";
 
 const VERDICT: Record<string, string> = {
+  measured: "Measured by OpenCV, no AI check needed",
   alert: "The AI check agreed it is real",
   approved: "The AI check agreed it is real",
   dismissed: "The AI check found nothing to worry about",
@@ -131,7 +132,7 @@ export default function IncidentPage() {
               <div className="stage-msg"><p>No picture was kept for this moment.</p></div>
             )}
           </div>
-          {inc.alert_id && !playing && (
+          {inc.alert_id && inc.clip && !playing && (
             <div><button type="button" className="btn" onClick={() => setPlaying(true)}>Play the clip</button></div>
           )}
           {noClip && <p className="small muted">No clip was saved for this moment.</p>}
