@@ -1,7 +1,9 @@
 # deploy/remote_setup.sh fills in @PYTHON@ (COOL's Python) and @APP@
 [Unit]
 Description=Watchful web app, its sockets and its camera worker processes
-After=network-online.target
+After=network-online.target watchful-egress.service
+# never runs without the egress rules (deploy/egress.service): a failed load keeps it stopped
+Requires=watchful-egress.service
 Wants=network-online.target
 
 [Service]

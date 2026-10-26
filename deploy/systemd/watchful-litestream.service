@@ -1,7 +1,9 @@
 # deploy/remote_setup.sh installs Litestream to /usr/local/bin and fills in @APP@
 [Unit]
 Description=Litestream: the database streamed to S3 (db/)
-After=network-online.target watchful-app.service
+After=network-online.target watchful-app.service watchful-egress.service
+# never runs without the egress rules (deploy/egress.service): a failed load keeps it stopped
+Requires=watchful-egress.service
 Wants=network-online.target
 
 [Service]

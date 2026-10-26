@@ -1,7 +1,9 @@
 # deploy/remote_setup.sh fills in @PYTHON@ (COOL's Python) and @APP@
 [Unit]
 Description=Watchful job worker (Telegram sends, daily summaries, attendance, retention)
-After=network-online.target watchful-app.service
+After=network-online.target watchful-app.service watchful-egress.service
+# never runs without the egress rules (deploy/egress.service): a failed load keeps it stopped
+Requires=watchful-egress.service
 Wants=network-online.target
 
 [Service]

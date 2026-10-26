@@ -161,6 +161,10 @@ def test_the_app_user_cannot_reach_private_addresses_on_aws():
     unit = (DEPLOY / "egress.service").read_text()
     assert "ExecStart=/usr/sbin/nft -f @APP@/current/deploy/egress.nft" in unit
     assert "Before=watchful-app.service" in unit and "User=" not in unit
+    for name in ("watchful-app", "watchful-worker", "watchful-litestream"):  # never started without the rules
+        lines = (DEPLOY / "systemd" / f"{name}.service").read_text().splitlines()
+        after = next(line for line in lines if line.startswith("After="))
+        assert "Requires=watchful-egress.service" in lines and "watchful-egress.service" in after.split(), name
     assert re.search(r"apt-get install .*nftables", setup)
     assert "deploy/egress.service\" > /etc/systemd/system/watchful-egress.service" in setup
     order = [setup.index(x) for x in ("systemctl enable caddy watchful-egress", "systemctl restart watchful-egress",

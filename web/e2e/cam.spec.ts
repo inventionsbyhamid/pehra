@@ -189,3 +189,39 @@ test("a device whose face blur keeps failing stops and says so", async ({ page, 
   await page.request.delete(`/api/cameras/${cam.id}`, { headers: { origin } });
   await device.close();
 });
+
+test("nothing is sent until the server's hello agrees with the notice", async ({ page, browser }) => {
+  test.setTimeout(180_000);
+  await signIn(page);
+  const origin = new URL(page.url()).origin;
+  const cam = await (await page.request.post("/api/cameras", { data: { name: "Hall", kind: "webcam" }, headers: { origin } })).json();
+  const link = await (await page.request.post(`/api/cameras/${cam.id}/device-token`, { headers: { origin } })).json();
+  const device = await browser.newContext();
+  const phone = await device.newPage();
+  // the socket opens at once, but the server's hello is held back for a few seconds: no frame may go meanwhile
+  let early = 0;
+  let late = 0;
+  let helloSent = false;
+  await phone.routeWebSocket(/\/ws\/cam\//, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((m) => {
+      if (helloSent) late += 1;
+      else early += 1;
+      server.send(m);
+    });
+    server.onMessage((m) => {
+      setTimeout(() => {
+        helloSent = true;
+        ws.send(m);
+      }, 4000);
+    });
+  });
+  await phone.goto(new URL(link.url).pathname);
+  await phone.getByRole("button", { name: "Start the camera" }).click();
+  await expect(phone.getByRole("status")).toContainText("Sending to the control room.", { timeout: 120_000 });
+  await expect.poll(() => late, { timeout: 30_000 }).toBeGreaterThan(2);
+  expect(early).toBe(0);
+
+  await page.request.delete(`/api/cameras/${cam.id}`, { headers: { origin } });
+  await device.close();
+});

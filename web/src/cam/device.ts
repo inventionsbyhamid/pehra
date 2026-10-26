@@ -1,7 +1,8 @@
 // This device as a camera: the browser's camera, faces covered when the camera keeps none (faceBlur.ts), JPEG frames
 // to /ws/cam/{token} at the rate the server says. Reconnects with growing waits; stops for good when the link was
-// replaced, the camera deleted or turned off, or another device took it over. When the camera's settings change
-// (faces blurred or not), it stops and the page shows the new notice before anything more is sent.
+// replaced, the camera deleted or turned off, or another device took it over. Nothing is sent on a connection until
+// the server's hello says faces are handled the way the page's notice says; when the camera's settings change (faces
+// blurred or not), it stops and the page shows the new notice before anything more is sent.
 import { FaceBlur, type FaceSettings } from "./faceBlur";
 
 export type Phase = "ready" | "starting" | "live" | "reconnecting" | "taken" | "off" | "gone" | "changed" | "error";
@@ -43,6 +44,7 @@ export class DeviceCamera {
   private stream: MediaStream | null = null;
   private video = document.createElement("video");
   private ws: WebSocket | null = null;
+  private agreed = false; // this connection's hello matched the page's blur notice
   private blur: FaceBlur | null = null;
   private send: DeviceInfo["send"];
   private timer = 0;
@@ -108,9 +110,9 @@ export class DeviceCamera {
     const ws = new WebSocket(socketUrl(`/ws/cam/${encodeURIComponent(this.token)}`));
     ws.binaryType = "arraybuffer";
     this.ws = ws;
+    this.agreed = false;
     ws.onopen = () => {
       this.retry = 0;
-      this.set({ phase: "live" });
     };
     ws.onmessage = (ev) => {
       let msg: { type?: string; fps?: number; width?: number; quality?: number; blur?: boolean };
@@ -119,11 +121,13 @@ export class DeviceCamera {
       } catch {
         return;
       }
-      if (msg.type !== "hello") return;
+      if (msg.type !== "hello" || this.ws !== ws) return;
       if ((msg.blur !== false) !== this.info.blur) {
         // the notice on the page no longer says what happens to faces: stop, and show the new one first
         return this.end("changed");
       }
+      this.agreed = true;
+      this.set({ phase: "live" });
       const rate = msg.fps !== undefined && msg.fps !== this.send.fps;
       this.send = { fps: msg.fps ?? this.send.fps, width: msg.width ?? this.send.width, quality: msg.quality ?? this.send.quality };
       if (rate) {
@@ -167,11 +171,11 @@ export class DeviceCamera {
       }
     }
     const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > MAX_BUFFERED) return;
+    if (!ws || !this.agreed || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > MAX_BUFFERED) return;
     this.busy = true;
     c.toBlob((b) => {
       this.busy = false;
-      if (b && ws.readyState === WebSocket.OPEN && !this.stopped) {
+      if (b && this.ws === ws && this.agreed && ws.readyState === WebSocket.OPEN && !this.stopped) {
         ws.send(b);
         this.set({ sent: this.state.sent + 1 });
       }
