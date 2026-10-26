@@ -147,7 +147,7 @@
   <text class="t b" x="614" y="437">MediaPipe pose</text>
   <text class="t b" x="614" y="456">YuNet and SFace</text>
   <text class="t b" x="614" y="475">LPD-YuNet and PP-OCRv5</text>
-  <text class="t b" x="614" y="494">SigLIP 2 vectors</text>
+  <text class="t b" x="614" y="494">SigLIP 2 (ONNX Runtime)</text>
   <text class="t b" x="614" y="518">watch engine: signals,</text>
   <text class="t b" x="614" y="537">rules, candidates</text>
   <text class="t s m" x="614" y="561">reports to the app by</text>

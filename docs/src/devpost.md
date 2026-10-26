@@ -98,7 +98,8 @@ group, without anyone watching a wall of screens.
 
 ### How we built it
 
-Every pixel step runs on OpenCV 5:
+Every pixel step runs on OpenCV 5, except SigLIP 2's forward pass, which runs on ONNX Runtime by default to fit in
+memory (its preprocessing is OpenCV, and OpenCV DNN is one setting away):
 
 * **Per frame:** `VideoCapture` with FFmpeg for RTSP, MOG2 to skip still frames, YOLOX through `cv2.dnn`, a
   `KalmanFilter` tracker with a third association pass by distance, size and an HSV clothing histogram, zones by
@@ -106,7 +107,7 @@ Every pixel step runs on OpenCV 5:
   body, MediaPipe pose, YuNet and SFace for consenting staff, and camera health by ORB, a `USAC_MAGSAC` homography and
   the Laplacian.
 * **Watches for any event:** general signals (crossed a line, stayed still, a zone's state learned from two saved
-  pictures by CLAHE and Sobel edges plus SigLIP 2, a look described in words through SigLIP 2 on `cv2.dnn`) that a
+  pictures by CLAHE and Sobel edges plus SigLIP 2, a look described in words through SigLIP 2) that a
   compiler combines, checked in code, with a backtest over the last 24 hours.
 * **Plates:** `LPD-YuNet` from the OpenCV Model Zoo, `warpPerspective`, `PP-OCRv5` recognition, an Indian plate
   grammar, voting across frames, and plate colour from HSV on the plate's background.

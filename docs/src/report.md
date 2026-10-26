@@ -218,8 +218,11 @@ prompts in `agent/prompts/*.md`. The product name comes from `brand.json`; the P
 ## 4. OpenCV 5 implementation
 
 Every pixel step goes through OpenCV 5: `opencv-python-headless` 5.0.0.93 in development and on the test server,
-COOL's build on Graviton on AWS, and OpenCV.js 5.0 on the device page. The exceptions, by design: FFmpeg encodes the
-incident clips (no analysis), and the browser draws the live overlay on a canvas from boxes the server sent.
+COOL's build on Graviton on AWS, and OpenCV.js 5.0 on the device page. The exceptions, by design: SigLIP 2's two
+towers run their forward pass on ONNX Runtime by default (`EMBEDDER_RUNTIME=onnxruntime`), because on OpenCV DNN they
+held about twice the memory, which a c8g.large cannot spare (section 8.5); `EMBEDDER_RUNTIME=opencv` runs them on
+`cv2.dnn` again with the same vectors, and their preprocessing is OpenCV either way. FFmpeg encodes the incident clips
+(no analysis), and the browser draws the live overlay on a canvas from boxes the server sent.
 
 ### 4.1 Per frame
 
@@ -245,8 +248,8 @@ On each analysed frame ({{say:5 frames a second}} by default, `ANALYSIS_FPS`, at
    is counted once, and a guard against two tracks swapping ids at the line.
 8. **Only when a watch needs it.** MediaPipe pose through `cv2.dnn` on a crop turned upright with
    `getRotationMatrix2D` and `warpAffine`; YuNet (`FaceDetectorYN`) and SFace (`FaceRecognizerSF`) on cameras with
-   the staff register; SigLIP 2 image vectors of a person's sharpest crop (Laplacian variance) every few seconds for
-   watches described in words; plate reads on vehicles near a gate line.
+   the staff register; SigLIP 2 image vectors (ONNX Runtime) of a person's sharpest crop (Laplacian variance) every
+   few seconds for watches described in words; plate reads on vehicles near a gate line.
 9. **Signals and rules.** The watch engine reads the tracks and the scene (section 4.2) and raises a candidate with
    its evidence: frames around the moment with the zones and the box drawn (`polylines`, `rectangle`), the track's
    path and poses, and the best crop.
@@ -371,7 +374,7 @@ Found with `git grep -n "cv2\." backend/watchful bridge deploy` and `grep -rn "c
 | API | Where | Why |
 | --- | --- | --- |
 | `dnn.readNetFromONNX` with `ENGINE_AUTO`, `ENGINE_NEW`, `ENGINE_CLASSIC` | `vision/models.py` | Every model loads through one function; `PP-OCRv5` recognition, which the classic engine cannot read, falls back to the new engine |
-| `dnn.blobFromImage`, `Net.setInput`, `Net.forward` | `vision/detect.py`, `vision/pose.py`, `vision/embed.py`, `vision/plates.py`, `vision/ocr.py` | YOLOX, MediaPipe pose, SigLIP 2 image and text towers, `LPD-YuNet`, `PP-OCRv5` |
+| `dnn.blobFromImage`, `Net.setInput`, `Net.forward` | `vision/detect.py`, `vision/pose.py`, `vision/embed.py`, `vision/plates.py`, `vision/ocr.py` | YOLOX, MediaPipe pose, `LPD-YuNet`, `PP-OCRv5`; SigLIP 2's towers when `EMBEDDER_RUNTIME=opencv` |
 | `dnn.NMSBoxesBatched`, `dnn.NMSBoxes` | `vision/detect.py`, `vision/plates.py` | Per class suppression for YOLOX; plate boxes (with the Zoo demo's suppression bug fixed) |
 | `dnn.TextDetectionModel_DB`, `dnn.TextRecognitionModel` | `vision/ocr.py` | `PP-OCRv3` text rows on plates; CRNN stays selectable |
 | `FaceDetectorYN`, `FaceRecognizerSF` (`FR_COSINE`) | `vision/faces.py`, `alerts/crops.py` | YuNet faces for blurring and naming; SFace templates for consenting staff only |
@@ -413,7 +416,7 @@ Every model allows a paid service. `scripts/fetch_assets.py` downloads them and 
 | `LPD-YuNet` (OpenCV Model Zoo, by watrix.ai) | Plate boxes | Apache 2.0 |
 | `PP-OCRv3` English DB detection and CRNN (OpenCV Model Zoo) | Text rows; a selectable recogniser | Apache 2.0 |
 | `PP-OCRv5` mobile English recognition (PaddlePaddle ONNX) | Reading plates | Apache 2.0 |
-| SigLIP 2 base patch32 256 (ONNX by `onnx-community`) | Looks described in words, zone pictures, search, the age meaning check | Apache 2.0 |
+| SigLIP 2 base patch32 256 (ONNX by `onnx-community`), run on ONNX Runtime 1.23.2 (MIT) by default | Looks described in words, zone pictures, search, the age meaning check | Apache 2.0 |
 | OpenCV.js 5.0 (`@techstark/opencv-js 5.0.0-release.1`) | Face blur on the device page | Apache 2.0 |
 
 Not used, because their licences do not allow a paid service: Ultralytics YOLO (AGPL), YOLO World (GPL).
@@ -485,16 +488,19 @@ with Arm's KleidiCV, and Python environments under `/opt/cool/venvs` ([OpenCV's 
   `/opt/cool`; the deploy writes the loaded file into `aws.json` (section 5) and every benchmark file records it.
 * **KleidiCV detection.** `/healthz` reports `kleidicv` from `cv2.getBuildInformation()`, and the benchmark records
   it per run.
-* **The DNN engine.** Every model loads through `readNetFromONNX` on the engine `DNN_ENGINE` names (`auto` by
-  default), the same on x86 and Arm; `PP-OCRv5` recognition always uses the new engine. One runtime for every model
-  means COOL's build serves the whole pipeline.
+* **The DNN engine.** Every model but SigLIP 2 loads through `readNetFromONNX` on the engine `DNN_ENGINE` names
+  (`auto` by default), the same on x86 and Arm; `PP-OCRv5` recognition always uses the new engine. SigLIP 2's towers
+  (watches described in words, zone pictures, search) run on ONNX Runtime by default to fit the memory; their
+  preprocessing stays in COOL's OpenCV, and `EMBEDDER_RUNTIME=opencv` puts their forward pass on COOL's `cv2.dnn`
+  too.
 * **Sizing for c8g.** One camera process per vCPU (`CAMERA_PROCESSES=0`), one OpenCV thread each
   (`CAMERA_THREADS=1`), `MALLOC_ARENA_MAX=2` in the units, models loaded once per process, cameras that need the
   image model kept together, and a memory budget of {{say:3,072 MB}} (Tuning `resources.memory_budget_mb`) checked by
   the deploy. The default is c8g.xlarge; the template also takes c8g.large, 2xlarge and 4xlarge.
 * **What COOL can speed up.** Every frame is resized twice (`INTER_AREA` to 960 and 320 px), converted, blurred, run
   through MOG2 and morphology, and often put through CLAHE or a warp: the imgproc functions COOL targets. The DNN
-  forwards (YOLOX, pose, SigLIP) are most of a busy frame's time, and we know of no claimed COOL gain there. The
+  forwards (YOLOX and pose on `cv2.dnn`; SigLIP 2 on ONNX Runtime) are most of a busy frame's time, and we know of
+  no claimed COOL gain there. The
   benchmark measures the whole frame, so it shows the gain a society would see, not a gain per function.
 
 **Method.** `eval/bench_aws.sh --yes-spend` starts temporary instances in Mumbai, each with a hard time cap, runs
@@ -771,9 +777,17 @@ through YOLOX was tried and dropped: {{build.pool.batching.batch4_ms}} a frame i
 {{build.pool.batching.single_ms}} one at a time, and the stock export returned different boxes for a batch.
 
 A watch described in words is the expensive case: SigLIP 2's image tower in every camera process that needs it, and
-its text tower in the app while new texts are made. With the app defaults, two cameras with such a watch reached
-{{build.pool.text_watch.two_cameras_mb}} at first start, over a c8g.large's budget, where eight cameras without one
-used {{build.pool.text_watch.eight_cameras_no_text_mb}}.
+its text tower in the app while new texts are made. On OpenCV DNN the image tower added
+{{build.pool.siglip.image_opencv_mb}} to a process and the text tower {{build.pool.siglip.text_opencv_mb}}; on ONNX
+Runtime with its memory arena and weight prepacking off, {{build.pool.siglip.image_ort_mb}} and
+{{build.pool.siglip.text_ort_mb}}, with the same vectors (cosine {{build.pool.siglip.cosine}}). So the towers now run
+on ONNX Runtime by default, cameras that need the image model share a process, and the text tower is dropped when
+idle. With the app defaults and a watch in words on all 8 Plaza cameras on 2 CPUs, the whole app used
+{{build.pool.text_watch_r2.before_mb}} before the change and {{build.pool.text_watch_r2.after_mb}} after it, once
+the text tower was dropped, inside the {{say:3,072 MB}} budget; without such a watch,
+{{build.pool.text_watch_r2.no_text_before_mb}} and {{build.pool.text_watch_r2.no_text_after_mb}}. CPU, not memory,
+is now the limit: with a watch in words on 8 busy cameras, analysis fell to about
+{{build.pool.text_watch_r2.fps}} per camera, because every tracked person is embedded every few seconds.
 
 ### 8.6 Failure cases
 
@@ -901,8 +915,9 @@ when.
 * **The demo's sharing per clip was not done.** Decoding a demo clip is shared, but each sandbox's camera analyses the
   same frames again: many judges watching at once each get fewer frames a second (section 8.7). They run on the demo's
   own camera process, so a society is never slowed.
-* **Watches described in words are costly** (section 8.5): SigLIP's towers are the largest models, and on a c8g.large
-  a watch in words on several cameras needs care.
+* **Watches described in words are costly** (section 8.5): with one on 8 busy cameras on 2 CPUs, analysis fell to
+  about {{build.pool.text_watch_r2.fps}} per camera. And SigLIP 2's forward pass runs on ONNX Runtime by default, not
+  OpenCV DNN, to fit the memory; `EMBEDDER_RUNTIME=opencv` puts it back on `cv2.dnn` at about twice the memory.
 * **Not tried on real phones or recorders.** The device page is tested in desktop Chromium with a fake camera, not on
   a real phone or iOS Safari; the bridge was never run against a real Hikvision or CP Plus recorder, and its
   Dockerfile was never built.
@@ -951,6 +966,8 @@ when.
 * A third tracker pass by distance, size and clothes, because a shared server delivers a frame or two a second.
 * Billing per watched camera with Polar's unit based pricing; a society picks the cameras that matter.
 * COOL proven by the file `cv2` is loaded from, not by KleidiCV in the build.
+* SigLIP 2 on ONNX Runtime by default, because on OpenCV DNN it held about twice the memory a c8g.large can spare;
+  OpenCV DNN stays one setting away.
 * Demo sandboxes with an allow list of what a visitor may do, on their own camera process, with their own AI caps.
 
 ## 14. Reproduce

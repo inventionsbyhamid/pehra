@@ -142,7 +142,7 @@ Every model allows a paid service. `scripts/fetch_assets.py` downloads them and 
 | YuNet and SFace (OpenCV Model Zoo) | Faces to blur; templates of consenting staff | MIT and Apache 2.0 |
 | `LPD-YuNet` (OpenCV Model Zoo) | Number plate boxes | Apache 2.0 |
 | `PP-OCRv3` detection and CRNN (OpenCV Model Zoo), `PP-OCRv5` recognition (PaddlePaddle) | Reading plates | Apache 2.0 |
-| SigLIP 2 base patch32 (ONNX by `onnx-community`) | Looks described in words, zone pictures, search | Apache 2.0 |
+| SigLIP 2 base patch32 (ONNX by `onnx-community`), on ONNX Runtime (MIT) by default | Looks described in words, zone pictures, search | Apache 2.0 |
 | OpenCV.js 5.0 (`@techstark/opencv-js`) | Face blur on the device page | Apache 2.0 |
 
 Ultralytics YOLO (AGPL) is not used. The sample clip `vtest.avi` and the test pictures come from OpenCV's samples.
@@ -151,7 +151,7 @@ Ultralytics YOLO (AGPL) is not used. The sample clip `vtest.avi` and the test pi
 
 * Python 3.12. Every Python package is pinned in `requirements.lock` (from `requirements.in`), among them
   `opencv-python-headless` 5.0.0.93, FastAPI 0.161.1, uvicorn 0.54.0, NumPy 2.5.4, SQLAlchemy 2.1.6, Alembic 1.20.1,
-  httpx 0.28.1, boto3 1.43.118 and `polar-sdk` 1.0.2.
+  httpx 0.28.1, boto3 1.43.118, onnxruntime 1.23.2 and `polar-sdk` 1.0.2.
 * Web packages are pinned in `web/package-lock.json`: React 18.3.1, React Router 6.30.6, Vite 7.3.7, TypeScript 5.9.3,
   `@techstark/opencv-js 5.0.0-release.1`, Playwright 1.64.1 and axe 4.14.0.
 * The dev image (`deploy/Dockerfile.dev`) is Python 3.12 on Debian bookworm with Node 22 and FFmpeg.

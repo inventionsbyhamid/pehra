@@ -11,7 +11,7 @@ flowchart LR
       CADDY["Caddy: TLS"]
       APP["FastAPI app: society API, sign in,<br/>sockets, camera manager, billing, demo"]
       AGENT["Verifier agent in the app's check pool<br/>OpenCV tools: frames, zoom, CLAHE,<br/>denoise, DIS flow, pose history, path"]
-      POOL["Camera processes, one per vCPU (COOL OpenCV 5)<br/>FFmpeg decode, resize, CLAHE, tamper by ORB and MAGSAC,<br/>MOG2, YOLOX on cv2.dnn, Kalman tracker, zones and lines,<br/>DIS flow, pose, YuNet and SFace, LPD-YuNet and PP-OCRv5,<br/>SigLIP 2, watch engine"]
+      POOL["Camera processes, one per vCPU (COOL OpenCV 5)<br/>FFmpeg decode, resize, CLAHE, tamper by ORB and MAGSAC,<br/>MOG2, YOLOX on cv2.dnn, Kalman tracker, zones and lines,<br/>DIS flow, pose, YuNet and SFace, LPD-YuNet and PP-OCRv5,<br/>SigLIP 2 on ONNX Runtime, watch engine"]
       SCAN["Scan workers: uploads in time chunks"]
       JOBS["Job worker: Telegram posts and edits,<br/>stills with faces blurred, summary,<br/>attendance, stays, retention, demo reset"]
       DB[("SQLite WAL<br/>every row under its society")]

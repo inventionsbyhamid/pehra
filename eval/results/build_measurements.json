@@ -61,19 +61,77 @@
     "date": "2026-10-25"
    }
   },
-  "text_watch": {
-   "two_cameras_mb": {
-    "value": 5242,
+  "siglip": {
+   "image_opencv_mb": {
+    "value": 828,
     "unit": "mb",
-    "what": "total memory with a watch described in words on 2 cameras, app defaults, first start while the text tower is held (over the 3,072 MB budget of a c8g.large)",
-    "source": "task-3-report.md, fix round 1, I4",
+    "what": "memory the SigLIP 2 B/32 image tower adds to a process on OpenCV DNN, one thread, dev box",
+    "source": "task-3-report.md, fix round 2 (commit 1238b92)",
     "date": "2026-10-26"
    },
-   "eight_cameras_no_text_mb": {
-    "value": 2265,
+   "image_ort_mb": {
+    "value": 400,
     "unit": "mb",
-    "what": "total memory, 8 Plaza cameras on 2 processes with the app defaults (indexing on, scan pool started) and no watch described in words",
-    "source": "task-3-report.md, fix round 1, I4",
+    "what": "the same tower on ONNX Runtime with its memory arena and weight prepacking off",
+    "source": "task-3-report.md, fix round 2 (commit 1238b92)",
+    "date": "2026-10-26"
+   },
+   "text_opencv_mb": {
+    "value": 1500,
+    "unit": "mb",
+    "what": "memory the SigLIP 2 text tower adds on OpenCV DNN",
+    "source": "task-3-report.md, fix round 2 (commit 1238b92)",
+    "date": "2026-10-26"
+   },
+   "text_ort_mb": {
+    "value": 1118,
+    "unit": "mb",
+    "what": "the same tower on ONNX Runtime, arena and prepacking off",
+    "source": "task-3-report.md, fix round 2 (commit 1238b92)",
+    "date": "2026-10-26"
+   },
+   "cosine": {
+    "value": "1.0000",
+    "unit": "text",
+    "what": "cosine between the OpenCV DNN and ONNX Runtime vectors of the same image and the same text",
+    "source": "task-3-report.md, fix round 2 (commit 1238b92)",
+    "date": "2026-10-26"
+   }
+  },
+  "text_watch_r2": {
+   "before_mb": {
+    "value": 5445,
+    "unit": "mb",
+    "what": "total memory, 8 Plaza cameras on 2 processes with app defaults and a watch in words on every camera, first start, before the change (ce710da): over the 3,072 MB budget",
+    "source": "task-3-report.md, fix round 2 (commit 1238b92)",
+    "date": "2026-10-26"
+   },
+   "after_mb": {
+    "value": 2710,
+    "unit": "mb",
+    "what": "the same after the change, once the text tower was dropped (steady state), inside the budget; container with 2 CPUs, MALLOC_ARENA_MAX=2",
+    "source": "task-3-report.md, fix round 2 (commit 1238b92)",
+    "date": "2026-10-26"
+   },
+   "no_text_before_mb": {
+    "value": 2570,
+    "unit": "mb",
+    "what": "the same 8 cameras without a watch in words, before the change",
+    "source": "task-3-report.md, fix round 2 (commit 1238b92)",
+    "date": "2026-10-26"
+   },
+   "no_text_after_mb": {
+    "value": 2074,
+    "unit": "mb",
+    "what": "the same 8 cameras without a watch in words, after the change",
+    "source": "task-3-report.md, fix round 2 (commit 1238b92)",
+    "date": "2026-10-26"
+   },
+   "fps": {
+    "value": 0.1,
+    "unit": "fps",
+    "what": "analysed frames a second per camera with a watch in words on 8 busy Plaza cameras on 2 CPUs, before and after the change: CPU, not memory, limits it (every tracked person is embedded every few seconds)",
+    "source": "task-3-report.md, fix round 2, concerns",
     "date": "2026-10-26"
    }
   }
