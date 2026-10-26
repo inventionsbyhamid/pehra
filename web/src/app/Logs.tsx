@@ -56,9 +56,13 @@ function Summary({ day, children, csv }: { day: string; children?: ReactNode; cs
   );
 }
 
-// The staff register's field names in one place (the register says when someone was seen, not in or out).
-function seen(r: AttendanceRow): { first: string | null; last: string | null } {
-  return { first: r.first_seen ?? r.first_in ?? null, last: r.last_seen ?? r.last_out ?? null };
+// The staff register's field names in one place. It says when someone was seen; in and out only come from a
+// crossing of a directed line.
+function seen(r: AttendanceRow) {
+  return {
+    first: r.first_seen ?? r.first_in ?? null, last: r.last_seen ?? r.last_out ?? null,
+    cameIn: r.came_in ?? null, wentOut: r.went_out ?? null,
+  };
 }
 
 // how long a vehicle was in, in words, from the row's own side of the pair
@@ -224,6 +228,10 @@ function StaffLog({ cameras }: { cameras: Camera[] | null }) {
     if (!r.present || !first) return status(r);
     return `First seen ${when(first)}${last ? `, last seen ${when(last)}` : ""}`;
   };
+  const crossed = (r: AttendanceRow) => {
+    const { cameIn, wentOut } = seen(r);
+    return [cameIn && `came in ${when(cameIn)}`, wentOut && `went out ${when(wentOut)}`].filter(Boolean).join(", ");
+  };
 
   return (
     <>
@@ -256,8 +264,14 @@ function StaffLog({ cameras }: { cameras: Camera[] | null }) {
                     {rows.map((r) => (
                       <tr key={r.staff_id} className={r.present ? undefined : "is-absent"}>
                         <th scope="row">{r.name}<span className="cell-sub">{sentence(r.role)}{r.active ? "" : ", no longer enrolled"}</span></th>
-                        <td className="num">{when(seen(r).first) ?? status(r)}</td>
-                        <td className="num">{r.present ? when(seen(r).last) : null}</td>
+                        <td className="num">
+                          {when(seen(r).first) ?? status(r)}
+                          {seen(r).cameIn && <span className="cell-sub">Came in {when(seen(r).cameIn)}</span>}
+                        </td>
+                        <td className="num">
+                          {r.present ? when(seen(r).last) : null}
+                          {seen(r).wentOut && <span className="cell-sub">Went out {when(seen(r).wentOut)}</span>}
+                        </td>
                         <td>{r.cameras.join(", ")}</td>
                       </tr>
                     ))}
@@ -270,6 +284,7 @@ function StaffLog({ cameras }: { cameras: Camera[] | null }) {
                     <div className="log-card">
                       <span><strong>{r.name}</strong> <span className="muted small">{sentence(r.role)}{r.active ? "" : ", no longer enrolled"}</span></span>
                       <span className="num">{line(r)}</span>
+                      {crossed(r) && <span className="num muted">{sentence(crossed(r))}</span>}
                       {r.cameras.length > 0 && <span className="muted">{r.cameras.join(", ")}</span>}
                     </div>
                   </li>

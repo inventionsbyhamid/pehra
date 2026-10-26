@@ -23,7 +23,7 @@ export function readerAllowed(id: string, purpose: string | undefined): string |
   const r = readers[id];
   if (!r || id !== "faces") return null;
   const allowed = r.purposes ?? ENTRY_PURPOSES;
-  return allowed.includes(purpose ?? "other") ? null : r.only ?? "Staff recognition is for entry cameras.";
+  return allowed.includes(purpose ?? "other") ? null : r.refused ?? "Staff recognition is for entry cameras.";
 }
 
 export function parseTask(text: string): Task {

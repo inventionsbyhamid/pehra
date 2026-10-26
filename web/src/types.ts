@@ -367,6 +367,8 @@ export interface AttendanceRow {
   last_seen?: string | null;
   first_in?: string | null;
   last_out?: string | null;
+  came_in?: string | null; // from a crossing of a directed line, when the camera has one
+  went_out?: string | null;
   cameras: string[];
 }
 
