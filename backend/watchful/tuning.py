@@ -431,6 +431,10 @@ class ResourcesTuning(_Section):
     restart_max_s: float = 300.0  # longest wait before a dead camera process is started again
     text_tower_idle_s: float = 300.0  # the app drops the image model's text tower (about 1.5 GB) after this long unused
     report_every_s: float = 1.0  # camera status to the app
+    process_report_s: float = 10.0  # each camera process's models, cameras and memory to the app
+    out_queue: int = 2000  # messages from the camera processes waiting for the app; frames are dropped past it
+    important_wait_s: float = 10.0  # an event, log row or candidate waits this long for room, then is dropped
+    viewer_queue: int = 500  # alerts and statuses waiting for one live viewer; more are dropped
     push_queue: int = 16  # pushed frames waiting for a camera process; more are dropped
     model_variants: int = 3  # models of each kind a camera process keeps for cameras with their own model settings
     # cameras whose watches need the image model (about 400 MB in each process that loads it) share a process up to

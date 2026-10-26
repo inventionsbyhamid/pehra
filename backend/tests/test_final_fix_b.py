@@ -442,3 +442,39 @@ def test_the_daily_summary_goes_only_on_a_plan_with_it(tmp_path):
     assert queue_summaries(env.worker, nine_ist) == []
     on_plan(env.a, env.a.workspace_id)
     assert queue_summaries(env.worker, nine_ist) == [env.a.workspace_id]
+
+
+# Also: queue sizes, waits and the process report interval come from Tuning
+
+def test_queue_sizes_and_waits_come_from_tuning(tmp_path):
+    import queue
+    import time
+    from watchful.components import make_blobs
+    from watchful.config import Settings
+    from watchful.pool import PoolWorker, _sender
+    from watchful.tuning import load_tuning
+    from watchful.workers import WorkerManager
+    t = load_tuning(overrides={"resources": {"process_report_s": 0, "out_queue": 7, "important_wait_s": 0.05,
+                                             "viewer_queue": 3}})
+    s = Settings(session_secret="y", data_dir=tmp_path, index_embeddings=False, scan_pool_at_start=False,
+                 _env_file=None)
+    sent = []
+    worker = PoolWorker(0, s, t, send=sent.append)
+    worker.step(0)
+    worker.step(0)
+    assert [m["type"] for m in sent] == ["process", "process"]
+    worker.close()
+    full = queue.Queue(maxsize=1)
+    full.put("x")
+    start = time.monotonic()
+    _sender(full, t.resources.important_wait_s)({"type": "events"})
+    assert time.monotonic() - start < 1.0
+    m = WorkerManager(s, t, _society_in(s, TZ), make_blobs(s), llm=FakeLLM([]), processes=1)
+    try:
+        assert m.out_q._maxsize == 7
+        sub = m.subscribe("cam")
+        for i in range(5):
+            sub.put({"type": "alert", "n": i})
+        assert [sub.get_nowait()["n"] for _ in range(3)] == [0, 1, 2]
+    finally:
+        m.shutdown()

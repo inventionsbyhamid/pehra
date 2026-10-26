@@ -506,7 +506,7 @@ class PoolWorker:
                 continue
             r.housekeeping()
         now = time.monotonic()
-        if now - self._last_report >= 10:
+        if now - self._last_report >= self.tuning.resources.process_report_s:
             self._last_report = now
             self.send(self.report())
         return len(due)
@@ -538,16 +538,16 @@ class PoolWorker:
         self.clip_writer.shutdown(wait=True)
 
 
-def _sender(out_q):
+def _sender(out_q, wait_s: float):
     def send(msg: dict) -> None:
         try:
             if msg.get("type") in IMPORTANT or msg.get("stopped"):
-                out_q.put(msg, timeout=10)
+                out_q.put(msg, timeout=wait_s)
             else:
                 out_q.put_nowait(msg)
         except queue.Full:
             if msg.get("type") in IMPORTANT:
-                log.error("the app did not take a %s message for 10 s; dropped", msg.get("type"))
+                log.error("the app did not take a %s message for %g s; dropped", msg.get("type"), wait_s)
     return send
 
 
@@ -556,7 +556,7 @@ def serve(index: int, settings_json: str, tuning_json: str, cmd_q, out_q, scanni
     settings = Settings(**json.loads(settings_json), _env_file=None)
     cv2.setNumThreads(settings.camera_threads)
     tuning = Tuning.model_validate_json(tuning_json)
-    worker = PoolWorker(index, settings, tuning, _sender(out_q), scanning)
+    worker = PoolWorker(index, settings, tuning, _sender(out_q, tuning.resources.important_wait_s), scanning)
     worker.models.detector(tuning)  # the model every camera needs, loaded before the first camera arrives
     trim_memory()
     while worker.running:
@@ -603,7 +603,7 @@ class WorkerPool:
         import multiprocessing as mp
         self.settings, self.tuning = settings, tuning or Tuning()
         self.ctx = ctx or mp.get_context("spawn")
-        self.out_q = out_q if out_q is not None else self.ctx.Queue(maxsize=2000)
+        self.out_q = out_q if out_q is not None else self.ctx.Queue(maxsize=self.tuning.resources.out_queue)
         self.scanning = scanning if scanning is not None else self.ctx.Value("i", 0)
         self.repo_for = repo_for
         n = max(1, processes or settings.camera_processes or available_cpus())

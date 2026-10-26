@@ -101,9 +101,9 @@ class _Cam:
 class Subscription:
     """One viewer: the newest frame only, and every alert and status in order."""
 
-    def __init__(self):
+    def __init__(self, size: int | None = None):
         self._frame: dict | None = None
-        self._events: queue.Queue = queue.Queue(maxsize=500)
+        self._events: queue.Queue = queue.Queue(maxsize=size or Tuning().resources.viewer_queue)
         self._cond = threading.Condition()
 
     def put(self, msg: dict) -> None:
@@ -154,7 +154,7 @@ class WorkerManager:
         self.sandboxes: set[str] = set()  # demo sandboxes among them
         self._llms: dict[str, object] = {}
         self.ctx = mp.get_context("spawn")
-        self.out_q = self.ctx.Queue(maxsize=2000)
+        self.out_q = self.ctx.Queue(maxsize=tuning.resources.out_queue)
         self.scanning = self.ctx.Value("i", 0)
         self.pool = WorkerPool(settings, processes or settings.camera_processes, tuning, self.out_q, self.scanning,
                                self.ctx, self.repo_for)
@@ -372,7 +372,7 @@ class WorkerManager:
         return c.status
 
     def subscribe(self, camera_id: str) -> Subscription:
-        q = Subscription()
+        q = Subscription(self.tuning.resources.viewer_queue)
         self.subs[camera_id].append(q)
         self.pool.viewers(camera_id, len(self.subs[camera_id]))
         return q
