@@ -205,23 +205,27 @@ CPU it stays under our goal of one analysed frame a second per camera. None of t
 
 ## 7. AWS and COOL
 
-The production deployment is one CloudFormation stack in Mumbai (`ap-south-1`), built by `deploy/deploy.sh`. It is
-built and tested with `cfn-lint`, moto and a fake `aws` command, not deployed yet; a real deploy fills the checks below.
+Pehra runs on AWS at https://aws.pehra.dijmo.com: one CloudFormation stack in Mumbai (`ap-south-1`), built by `deploy/deploy.sh`
+and tested with `cfn-lint`, moto and a fake `aws` command. The checks below come from the real deploy.
 
 | Service | Its job |
 | --- | --- |
-| EC2 c8g.xlarge (Graviton4) from the COOL image | Runs everything; the live pipeline imports COOL's OpenCV 5 |
+| EC2 [c8g.large](../eval/results/aws.json "instance_type") (Graviton4) | Runs everything; standard OpenCV 5 on our deploy, COOL's OpenCV 5 when the template is given the COOL image |
 | S3 | Pictures, clips and a Litestream copy of the SQLite database. Object Lock is on for the bucket, but the app does not lock clips yet |
-| Bedrock | Claude Haiku 5.5 through the global inference profile; the role may call only that model |
+| Bedrock | One model through its global inference profile, the only one the role may call: Amazon Nova 2 Lite on our deploy, Claude Haiku 5.5 with Marketplace access |
 | SSM Parameter Store | Settings and secrets, loaded when each service starts |
 | CloudWatch | Logs, metrics per camera process, a dashboard, six alarms |
 | SNS | Alarm emails |
 | CloudFormation and Budgets | The stack, and a monthly budget alarm |
 
-The deploy proves itself. It fails unless `cv2` is loaded from under `/opt/cool` with KleidiCV in its build and
-decodes H.264 and H.265, or if the app uses more memory than its budget. It then writes `eval/results/aws.json`:
-OpenCV not measured yet, loaded from COOL not measured yet, KleidiCV not measured yet, memory not measured yet of
-not measured yet. Running the instance is estimated at about [$105.00](../eval/results/build_measurements.json "estimates.aws_month_usd") a month at list
+The deploy proves itself. With the COOL image it fails unless `cv2` is loaded from under `/opt/cool` with KleidiCV;
+with a blank image it installs standard OpenCV 5 on Amazon Linux 2023 and fails unless that is OpenCV 5 on arm64. Both
+fail unless H.264 and H.265 decode and the app stays inside its memory budget. Our deploy wrote `eval/results/aws.json`:
+OpenCV [5.0.0](../eval/results/aws.json "opencv"), loaded from COOL [no](../eval/results/aws.json "cool"), KleidiCV [yes](../eval/results/aws.json "kleidicv"), memory [544 MB](../eval/results/aws.json "memory_mb") of
+[3,072 MB](../eval/results/aws.json "memory_budget_mb"). It runs standard OpenCV because our AWS India account can't subscribe to Marketplace
+products yet (AWS Marketplace doesn't take saved cards or UPI from AWS India accounts), which also rules out COOL and
+Claude there for now. Bedrock on our new account was still in AWS's verification at submission; until it clears,
+moments on the AWS copy are filed as not checked by the AI. Running the instance is estimated at about [$105.00](../eval/results/build_measurements.json "estimates.aws_month_usd") a month at list
 price, before Bedrock, S3 and transfer. That is an estimate, not a bill.
 
 **COOL.** `eval/bench_aws.sh --yes-spend` starts temporary instances and runs the same camera pool benchmark on a

@@ -95,29 +95,40 @@ OpenRouter.
 <!-- aws start -->
 ## AWS
 
-The production deployment for AWS is one CloudFormation stack in Mumbai (`ap-south-1`) around one Graviton instance.
-It is built and tested, not deployed yet.
+Pehra runs on AWS at https://aws.pehra.dijmo.com: one CloudFormation stack in Mumbai (`ap-south-1`) around one Graviton4
+instance, deployed with one command, `deploy/deploy.sh`. The main demo at https://pehra.dijmo.com runs the same code on our own
+server.
 
 | Service | What it does for Pehra |
 | --- | --- |
-| EC2 c8g (Graviton4), from the COOL image | Runs everything, with OpenCV 5 built for Graviton |
+| EC2 [c8g.large](eval/results/aws.json "instance_type") (Graviton4) | Runs everything: the web app, the camera processes and the job worker |
 | S3 | Pictures, clips and a Litestream copy of the database |
-| Bedrock | Claude Haiku 5.5, for the AI check, writing watches and answering questions |
+| Bedrock | The AI check, writing watches and answering questions; the role may call one model only |
 | SSM Parameter Store | Settings and secrets |
 | CloudWatch | Logs, metrics, a dashboard and alarms |
 | SNS | Alarm emails |
 | CloudFormation | The whole stack, with a budget alarm |
 
-To deploy, subscribe to COOL for Graviton4 in AWS Marketplace, turn on Claude Haiku 5.5 in Bedrock (the account
-needs the Paid plan for both), then:
+The deploy checks itself before it finishes: OpenCV [5.0.0](eval/results/aws.json "opencv") on arm64, KleidiCV [yes](eval/results/aws.json "kleidicv"), H.264 and
+H.265 decoding, memory [544 MB](eval/results/aws.json "memory_mb") of [3,072 MB](eval/results/aws.json "memory_budget_mb"), and the app's health check over HTTPS. The
+results are in [eval/results/aws.json](eval/results/aws.json).
+
+**COOL.** The same template runs on the COOL image for Graviton: put its image id in `COOL_AMI_ID`, and the deploy
+then refuses to finish unless COOL's OpenCV is the one loaded. Our deploy runs standard OpenCV 5 from
+`requirements.lock` instead, because our AWS India account can't subscribe to Marketplace products yet (AWS
+Marketplace doesn't take saved cards or UPI from AWS India accounts). For the same reason its AI is Amazon Nova 2 Lite
+on Bedrock; with Marketplace access it is Claude Haiku 5.5. Bedrock on our new account was still in AWS's verification
+when we submitted; until it clears, moments there are filed as not checked by the AI.
+
+To deploy your own:
 
 ```
-cp deploy/params.env.example deploy/params.env && chmod 600 deploy/params.env   # COOL image id, alert email, keys
+cp deploy/params.env.example deploy/params.env && chmod 600 deploy/params.env   # alert email, domain, COOL image id or blank
 deploy/deploy.sh --dry-run
 deploy/deploy.sh
 ```
 
-Point your domain at the address it prints. The deploy refuses to finish unless OpenCV from COOL is the one running.
+Point your domain at the address it prints (DNS only); Caddy gets the certificate within a minute.
 <!-- aws end -->
 
 <!-- selfhost start -->

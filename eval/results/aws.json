@@ -1,0 +1,43 @@
+{
+ "format": 1,
+ "written_by": "deploy/deploy.sh",
+ "deployed_at": "2026-10-26 18:19 UTC",
+ "region": "ap-south-1",
+ "stack": "pehra",
+ "instance_type": "c8g.large",
+ "code": "15c35056f3b0",
+ "url": "https://aws.pehra.dijmo.com",
+ "outputs": {
+  "BedrockModel": "global.amazon.nova-2-lite-v1:0",
+  "BucketName": "pehra-bucket-gvb4ifizf9z2",
+  "InstanceId": "i-040c32e36ac0e9861",
+  "PublicIp": "16.4.93.125",
+  "AlertTopicArn": "arn:aws:sns:ap-south-1:<account>:pehra-AlertTopic-FSXZ1FlP5MGO",
+  "SsmPrefix": "/pehra/",
+  "OpenCvBuild": "stock OpenCV on Amazon Linux 2023, not COOL",
+  "AccessLogGroup": "/pehra/access",
+  "AppLogGroup": "/pehra/app",
+  "DashboardUrl": "https://ap-south-1.console.aws.amazon.com/cloudwatch/home?region=ap-south-1#dashboards:name=pehra"
+ },
+ "healthz": {
+  "ok": true,
+  "opencv": "5.0.0",
+  "kleidicv": true,
+  "worker_beat_fresh": true
+ },
+ "opencv": "5.0.0",
+ "cv2_file": "/opt/watchful/venv/lib64/python3.12/site-packages/cv2/__init__.py",
+ "kleidicv": true,
+ "cool": false,
+ "opencv_build": "stock OpenCV, not COOL",
+ "machine": "aarch64",
+ "video": {
+  "h264.mp4": true,
+  "hevc.mp4": true
+ },
+ "memory_mb": 544,
+ "memory_processes": 5,
+ "memory_budget_mb": 3072,
+ "memory_ok": true,
+ "build": "stock"
+}

@@ -511,9 +511,9 @@ docker compose up -d --build`}</Code>
 }
 
 const AWS_SERVICES: [string, string][] = [
-  ["EC2 on Graviton4", "One c8g instance from the COOL image runs everything, with OpenCV 5 built for Graviton and KleidiCV."],
+  ["EC2 on Graviton4", "One c8g instance runs everything with OpenCV 5 on Arm. Given the COOL image id, the same template runs COOL's OpenCV instead."],
   ["Amazon S3", "Pictures, clips and a Litestream copy of the database."],
-  ["Amazon Bedrock", "Claude Haiku 5.5 checks flagged moments, compiles watches and answers questions."],
+  ["Amazon Bedrock", "One model checks flagged moments, compiles watches and answers questions: Amazon Nova 2 Lite on our deploy, Claude Haiku 5.5 with Marketplace access."],
   ["SSM Parameter Store", "Settings and secrets, loaded when each service starts."],
   ["CloudWatch", "Logs, metrics, a dashboard and alarms."],
   ["SNS", "Alarm emails to the operator."],
@@ -527,8 +527,8 @@ export function AwsDocs() {
       title="AWS"
       lead={
         <p>
-          On AWS, {name} runs in Mumbai on one Graviton instance, from one CloudFormation template. The stack is built
-          and tested, not deployed yet.
+          {name} runs on AWS at <a href="https://aws.pehra.dijmo.com">aws.pehra.dijmo.com</a>, in Mumbai on one
+          Graviton instance, from one CloudFormation template.
         </p>
       }
     >
