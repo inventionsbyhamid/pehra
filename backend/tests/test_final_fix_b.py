@@ -538,3 +538,37 @@ def test_removing_staff_switches_off_the_watches_about_them(app):
     assert r["disabled_watches"] == ["Ravi at the gate"]
     assert {w.text: w.enabled for w in repo.list_watches()} == {"ravi at the gate": False, "someone at the gate": True}
     assert cam.id in app.state.ctx.manager.started  # the camera runs again without it
+
+
+# Also: plain words where codes and parser text reached people
+
+def test_a_session_without_its_society_gets_plain_words(app):
+    from sqlalchemy import delete
+    from accounts import SOCIETY, browser
+    from watchful.db import models as m
+    c = browser(app)
+    with app.state.ctx.db.tx() as s:
+        s.execute(delete(m.Member).where(m.Member.workspace_id == SOCIETY))
+    r = c.get("/api/cameras")
+    assert r.status_code == 403 and "no_workspace" not in r.text
+    assert "sign in again" in r.json()["detail"] and "start a new demo" in r.json()["detail"]
+
+
+def test_an_unreadable_ai_reply_reaches_nobody_as_parser_text():
+    r = compile_watch("someone at the gate", CompileContext(), FakeLLM(["not json", "{", "still not"]))
+    assert r.watch is None and r.error and "Expecting" not in r.error and "line 1" not in r.error
+    assert "Try again" in r.error
+
+
+def test_the_approval_subject_carries_the_brand():
+    from watchful.brand import BRAND
+    from watchful.notify import ApprovalNotifier
+    from watchful.store.db import AlertRow
+    sent = []
+
+    class Box:
+        def send(self, subject, body):
+            sent.append(subject)
+    ApprovalNotifier(Box()).approve(AlertRow("a1", "cam", "w1", 1.0, "critical", "alert", "Smoke at the gate", None,
+                                             None, [], None, "fp", None))
+    assert sent == [f"{BRAND.name}: Smoke at the gate"] and "Watchful" not in sent[0]

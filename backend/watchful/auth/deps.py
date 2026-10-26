@@ -111,12 +111,16 @@ def session_member(conn: HTTPConnection) -> CurrentMember | None:
     return membership(ctx, data.user_id, data.workspace_id) if data else None
 
 
+NOT_A_MEMBER = ("You are not a member of this society any more. Sign out and sign in again to open your own, or start "
+                "a new demo from the home page.")
+
+
 def current_member(request: Request, user: m.User = Depends(current_user),
                    session: SessionData = Depends(current_session)) -> CurrentMember:
     ctx = auth_context(request)
     member = membership(ctx, user.id, session.workspace_id)
     if member is None:
-        raise HTTPException(403, "no_workspace")
+        raise HTTPException(403, NOT_A_MEMBER)
     try:
         ctx.limits.api.reserve(member.workspace.id)
     except TooManyTries as e:

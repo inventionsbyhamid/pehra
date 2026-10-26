@@ -3,6 +3,7 @@ import secrets
 import time
 from typing import Protocol
 
+from watchful.brand import BRAND
 from watchful.registry import register
 
 log = logging.getLogger("watchful.notify")
@@ -75,6 +76,6 @@ class ApprovalNotifier:
         if self._last is not None and now - self._last < self.min_gap_s:
             return False
         self._last = now
-        self.notifier.send(f"Watchful: {alert.summary[:80]}", f"{alert.summary}\nCamera: {alert.camera_id}")
+        self.notifier.send(f"{BRAND.name}: {alert.summary[:80]}", f"{alert.summary}\nCamera: {alert.camera_id}")
         return True
 

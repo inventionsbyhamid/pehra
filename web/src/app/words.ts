@@ -30,6 +30,8 @@ const HEALTH: Record<string, [string, Tone]> = {
 export function healthOf(cam: Camera): { word: string; tone: Tone } {
   if (cam.kind === "file") return { word: "Recording", tone: "off" };
   if (!cam.enabled) return { word: cam.off_reason === "plan" ? "Switched off by the plan" : "Paused", tone: "off" };
+  // its camera process could not start it: nothing is watched, whatever health was judged before
+  if (cam.status.running && cam.status.source === "failed") return { word: "Offline", tone: "down" };
   const judged = cam.health ?? cam.status.health;
   if (judged && HEALTH[judged]) {
     const [word, tone] = HEALTH[judged];

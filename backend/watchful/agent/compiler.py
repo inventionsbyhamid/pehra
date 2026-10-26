@@ -539,4 +539,4 @@ def compile_watch(text: str, ctx: CompileContext | list[str], llm: LLM,
         cannot = _finish([Cannot(text, reason, alternative)], text,
                          mentions_age(text, ctx.place_names) or data.get("about_age") is True, [], ctx.place_names)
         return CompileResult(None, [], [], cannot)
-    return CompileResult(None, error=f"I couldn't turn that into a watch: {last}")
+    return CompileResult(None, error=words["unreadable"])  # never the parser's own words
