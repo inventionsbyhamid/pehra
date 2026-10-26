@@ -27,6 +27,38 @@ ws, cam, severity, reason = sys.argv[1:5]
 print(open_or_touch_incident(make_repo(get_settings(), ws), cam, None, severity, reason).id)
 `;
 
+// a camera health moment as the manager files it: measured by OpenCV, no AI check, no clip
+const MEASURED = `
+import sys, time
+from watchful.agent.verifier import Verdict
+from watchful.alerts.incidents import after_check
+from watchful.components import make_repo
+from watchful.config import get_settings
+from watchful.rules.engine import Candidate
+from watchful.store.db import AlertRow
+ws, cam = sys.argv[1:3]
+repo = make_repo(get_settings(), ws)
+now = time.time()
+c = Candidate("camera_problem", cam, now, None, "warning", {"reasons": ["camera covered"], "method": "camera"}, [],
+              "fp_measured", "A camera is covered")
+v = Verdict("measured", "A camera is covered: camera covered.")
+a = repo.add_alert(AlertRow(None, cam, c.watch_id, now, "warning", v.status, v.summary, None, None, [], None,
+                            c.fingerprint, None))
+print(after_check(repo, c, v, a.id, now=now).id)
+`;
+
+// every AI check of the day used, as the checks would record them
+const USE_UP_CHECKS = `
+import sys
+from watchful.billing.limits import daily_ai_cap
+from watchful.components import make_repo
+from watchful.config import get_settings
+settings = get_settings()
+repo = make_repo(settings, sys.argv[1])
+for _ in range(daily_ai_cap(repo, settings.ai_daily_call_limit)):
+    repo.record_ai_call("verify")
+`;
+
 function openIncident(workspace: string, camera: string, severity: string, reason: string): string {
   return execFileSync(PYTHON, ["-c", OPEN_INCIDENT, workspace, camera, severity, reason], { encoding: "utf8" }).trim().split("\n").pop()!;
 }
@@ -491,9 +523,33 @@ test("a starting camera says Starting, and a refused address says what to do", a
   await expect(wall.locator(".section-head")).toContainText("Starting");
   await expect(wall).not.toContainText("0 of 1 live");
 
+  // a camera its process could not start reads Offline at once, whatever health was judged before
+  await page.route("**/api/cameras", (r) => r.fulfill({ json: [{ ...as("failed"), health: "live" }] }));
+  await page.goto("/app");
+  await expect(wall.getByRole("listitem").first()).toContainText("Offline");
+  await expect(wall.locator(".section-head")).toContainText("0 of 1 live");
+
   await page.route(`**/api/cameras/${id}`, (r) => r.fulfill({ json: as("refused") }));
   await page.goto(`/app/cameras/${id}`);
   await expect(page.locator(".page-sub")).toContainText("Address refused");
   await expect(page.getByText("Its address points inside a private network, so this server won't read it.")).toBeVisible();
   await check(page, "38-camera-refused");
+});
+
+test("a measured camera health incident says no AI ran and offers no clip; used up AI checks are said calmly", async ({ page }) => {
+  const { origin, workspace } = await signInFresh(page);
+  const gate = await addCamera(page, origin, "Main gate", "main gate");
+  const id = execFileSync(PYTHON, ["-c", MEASURED, workspace, gate], { encoding: "utf8" }).trim().split("\n").pop()!;
+  await page.goto(`/app/incidents/${id}`);
+  await expect(page.getByRole("list", { name: "What happened" })).toContainText("Measured by OpenCV, no AI check needed");
+  await expect(page.getByRole("button", { name: "Play the clip" })).toHaveCount(0);
+  await expect(page.locator("main")).not.toContainText("Possible");
+  await check(page, "39-incident-measured");
+
+  await page.goto("/app");
+  await expect(page.getByText("Today's AI checks are used up.")).toHaveCount(0);
+  execFileSync(PYTHON, ["-c", USE_UP_CHECKS, workspace], { encoding: "utf8" });
+  await page.reload();
+  await expect(page.getByRole("status").filter({ hasText: "Today's AI checks are used up." })).toBeVisible();
+  await check(page, "39-control-room-checks-used-up");
 });

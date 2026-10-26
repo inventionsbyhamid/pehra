@@ -40,6 +40,41 @@ ledger.check_stays(make_repo(settings, ws))
 print(made["passages"], made["staff"])
 `;
 
+// the gate log and the staff register come with the Society plan: a new society is on Free until comped here
+const PLAN = `
+import sys
+from datetime import UTC, datetime, timedelta
+from watchful.billing.comp import end, give
+from watchful.components import make_db
+from watchful.config import get_settings
+ws, plan = sys.argv[1:3]
+db = make_db(get_settings())
+end(db, ws) if plan == "free" else give(db, ws, plan, 4, datetime.now(UTC) + timedelta(days=1))
+`;
+
+function onPlan(workspace: string, plan: "society" | "free") {
+  execFileSync(PYTHON, ["-c", PLAN, workspace, plan], { encoding: "utf8" });
+}
+
+// a row a log watch wrote and a note (an incident at the info level), the way the camera processes and the manager
+// write them
+const WATCH_LOG = `
+import sys, time
+from watchful.alerts.incidents import open_or_touch_incident
+from watchful.components import make_repo
+from watchful.config import get_settings
+from watchful.store.db import EventRow
+ws, cam = sys.argv[1:3]
+repo = make_repo(get_settings(), ws)
+now = time.time()
+repo.add_events([EventRow(None, cam, now - 600, "watch_log", 3, "car", None,
+                          {"watch_id": "w1", "watch": "Cabs at the gate", "reasons": ["a yellow plate came in"]},
+                          None, None, None, None),
+                 EventRow(None, cam, now - 300, "cross", 4, "person", "gate line", {"direction": "in"}, None, None,
+                          None, None)])
+open_or_touch_incident(repo, cam, "w_note", "info", "A delivery came in", now=now - 120)
+`;
+
 const FLIP = `
 import sys, cv2
 cv2.imwrite(sys.argv[2], cv2.flip(cv2.imread(sys.argv[1]), 1))
@@ -82,6 +117,13 @@ test("the gate log: a day of passages, plates in plain words, overstay, search, 
   const { origin, workspace } = await signInFresh(page);
   await page.goto("/app/logs");
   await expect(page).toHaveURL(/\/app\/logs\/vehicles$/);
+  await expect(page.getByText("The gate log of every vehicle comes with the Society plan")).toBeVisible();
+  await expect(page.getByRole("link", { name: "See plans and billing" })).toHaveAttribute("href", "/app/settings/billing");
+  expect((await page.request.get("/api/logs/vehicles")).status()).toBe(403);
+  await check(page, "40-gate-log-not-in-plan");
+
+  onPlan(workspace, "society");
+  await page.reload();
   await expect(page.getByText("Plate reading is not on yet")).toBeVisible();
   await check(page, "40-gate-log-empty");
 
@@ -141,6 +183,9 @@ test("the gate log: a day of passages, plates in plain words, overstay, search, 
 test("the staff register: first in and last out per person, search, CSV and the plan's limit", async ({ page }) => {
   const { origin, workspace } = await signInFresh(page);
   await page.goto("/app/logs/staff");
+  await expect(page.getByText("The staff register from consented faces comes with the Society plan")).toBeVisible();
+  onPlan(workspace, "society");
+  await page.reload();
   await expect(page.getByText("Nobody is enrolled yet")).toBeVisible();
   await expect(page.getByRole("link", { name: "Go to People" })).toBeVisible();
 
@@ -162,9 +207,35 @@ test("the staff register: first in and last out per person, search, CSV and the 
   expect((await download.text()).split("\n")[0]).toMatch(/^Date,Name,Role,/);
 
   // six made up staff are over the free plan's five: People says so plainly instead of the form
+  onPlan(workspace, "free");
   await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "People" }).click();
   await expect(page.getByRole("status").filter({ hasText: /^Your plan names up to 5 staff members\./ })).toBeVisible();
   await expect(page.getByLabel("Name")).toHaveCount(0);
+});
+
+test("the watch log: rows log watches wrote and notes, on every plan, and on the camera's history", async ({ page }) => {
+  const { origin, workspace } = await signInFresh(page);
+  await page.goto("/app/logs/watches");
+  await expect(page.getByText("Nothing in the watch log on this day")).toBeVisible();
+  const gate = await addCamera(page, origin, "Main gate", "main gate");
+  execFileSync(PYTHON, ["-c", WATCH_LOG, workspace, gate], { encoding: "utf8" });
+  await page.reload();
+  const table = page.getByRole("table", { name: /The watch log, Today/ });
+  await expect(table.getByRole("row")).toHaveCount(3);
+  await expect(table).toContainText("Cabs at the gate");
+  await expect(table).toContainText("A yellow plate came in");
+  await expect(table.getByRole("link", { name: "A delivery came in" })).toBeVisible();
+  await expect(page.locator(".log-summary")).toContainText("1 row from log watches, 1 note");
+  await check(page, "47-watch-log");
+  const download = await page.request.get((await page.getByRole("link", { name: "Download CSV" }).getAttribute("href"))!);
+  expect((await download.text()).split("\n")[0]).toBe("Date,Time,Camera,Watch,What,Kind");
+
+  await page.goto(`/app/cameras/${gate}/history`);
+  const events = page.locator(".events");
+  await expect(events).toContainText("Cabs at the gate: a yellow plate came in");
+  await expect(events).toContainText("Someone crossed gate line going in");
+  await expect(events.getByRole("link", { name: "A delivery came in" })).toBeVisible();
+  await check(page, "48-camera-history");
 });
 
 test("enrol a staff member from 3 photos with consent, and remove them on exit", async ({ page }) => {
