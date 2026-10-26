@@ -380,6 +380,25 @@ def test_i5_a_device_camera_keeps_faces_only_at_an_entry(tmp_path):
         assert needs_faces(repo, cam.id) is keeps, purpose
 
 
+def test_i5_a_purpose_change_makes_a_sending_device_check_its_blur(tmp_path):
+    from watchful.ingest.push import push_parts
+    app = app_for(tmp_path)
+    c = browser(app)
+    cam = c.post("/api/cameras", json={"name": "Desk", "kind": "webcam", "purpose": "lobby"}).json()
+
+    class Device:
+        nudged = 0
+
+        def nudge(self):
+            self.nudged += 1
+    device = Device()
+    push_parts(app.state.ctx)[0]._senders[cam["id"]] = [device]
+    assert c.patch(f"/api/cameras/{cam['id']}", json={"name": "Front desk"}).status_code == 200
+    assert device.nudged == 0
+    assert c.patch(f"/api/cameras/{cam['id']}", json={"purpose": "pool"}).status_code == 200
+    assert device.nudged == 1
+
+
 # ---- I6: request bodies have a size limit ----
 
 def test_i6_a_large_body_is_refused_before_it_is_read(tmp_path):

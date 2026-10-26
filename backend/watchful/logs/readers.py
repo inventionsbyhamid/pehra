@@ -62,10 +62,10 @@ def entry_purposes() -> list[str]:
 
 
 def entry_camera(purpose: str | None) -> bool:
-    """Whether a camera with this purpose may match faces at all: a watch about who someone is (known, unknown or one
-    staff member), a person lookout, or a device sending with faces. Anywhere else (a pool, a play area) faces stay
-    blurred and nobody is matched."""
-    return (purpose or "") in entry_purposes()
+    """Whether a camera with this purpose may match faces at all, by the staff register's own purpose rule
+    (`refused`): a watch about who someone is (known, unknown or one staff member), a person lookout, a person search
+    or a device sending with faces. Anywhere else (a pool, a play area) faces stay blurred and nobody is matched."""
+    return refused(FACES, purpose) is None
 
 
 def entry_words() -> str:

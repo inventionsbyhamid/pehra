@@ -192,6 +192,7 @@ def make_router(ctx) -> APIRouter:
             raise HTTPException(403, refused)
         if body.name is not None:
             cam.name = body.name
+        entry_before = readers_.entry_camera(cam.purpose)  # a device's blur follows the purpose too
         if purpose is not None:
             cam.purpose = purpose
         if body.zones is not None:
@@ -228,7 +229,8 @@ def make_router(ctx) -> APIRouter:
                       "disabled_watches": disabled})
         if not cam.enabled:
             hub.close(cam.id, CLOSE_OFF)
-        elif disabled or faces_before != readers_.has(cam, readers_.FACES):
+        elif disabled or faces_before != readers_.has(cam, readers_.FACES) or \
+                entry_before != readers_.entry_camera(cam.purpose):
             hub.poke(cam.id)  # its watches changed: a device checks whether its blur still matches
         if cam.kind in LIVE_KINDS:
             manager.restart(cam.id) if cam.enabled else manager.stop(cam.id)
