@@ -163,8 +163,10 @@ test("type a watch, see what it will and can't watch with its backtest, and save
   const { origin } = await signInFresh(page);
   const pool = await addCamera(page, origin, "Pool", "pool");
   await page.goto(`/app/cameras/${pool}`);
-  await expect(page.getByText("No watches yet")).toBeVisible();
-  await check(page, "09-camera-no-watches");
+  // every society starts with the camera health watch, on every camera
+  const health = page.locator(".watch-list > li").filter({ hasText: "Every camera" });
+  await expect(health).toHaveCount(1);
+  await check(page, "09-camera-health-watch");
   await page.getByRole("link", { name: "Add a watch" }).click();
 
   await expect(page.getByRole("heading", { name: "Add a watch", level: 1 })).toBeVisible();
@@ -193,11 +195,11 @@ test("type a watch, see what it will and can't watch with its backtest, and save
 
   await expect(page).toHaveURL(new RegExp(`/app/cameras/${pool}$`));
   await expect(page.getByRole("status").filter({ hasText: "Watch saved" })).toBeVisible();
-  const watch = page.locator(".watch-list > li").first();
-  await expect(watch).toContainText("Someone in the water after 10 PM");
+  const watch = page.locator(".watch-list > li").filter({ hasText: "Someone in the water after 10 PM" });
   await expect(watch).toContainText("Critical");
   const rows = await (await page.request.get(`/api/cameras/${pool}/watches`)).json();
-  expect(rows.map((r: { text: string; severity: string }) => [r.text, r.severity])).toEqual([["someone in the water after 10 PM", "critical"]]);
+  expect(rows.filter((r: { scope: string }) => r.scope === "camera").map((r: { text: string; severity: string }) => [r.text, r.severity]))
+    .toEqual([["someone in the water after 10 PM", "critical"]]);
   await check(page, "13-camera-with-watch");
 
   // the zone editor opens only from a setup task the watch needs, with the zone's name ready
@@ -263,13 +265,21 @@ test("settings, people and the printable notice", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Telegram", level: 1 })).toBeVisible();
   await check(page, "16-settings-telegram");
 
+  await expect(page.getByText("Anyone in a connected group can press Acknowledge or False alarm")).toBeVisible();
+  await expect(page.getByText(/posted in the group again 2 minutes later, and every 2 minutes after that, up to 3 times/)).toBeVisible();
+
   await sub.getByRole("link", { name: "Privacy" }).click();
   await expect(page.getByText(/kept for \d+ days/)).toBeVisible();
+  const contact = page.getByLabel("Whom to ask about the cameras");
+  await expect(page.getByText(/Until you set it, they show owner.*@example.com/)).toBeVisible();
+  await contact.fill("The society office, 98200 00000");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved." })).toBeVisible();
+  expect((await (await page.request.get("/api/notice-contact")).json()).contact).toBe("The society office, 98200 00000");
   await check(page, "17-settings-privacy");
   await page.getByRole("link", { name: "Print the notices" }).click();
   const notice = page.getByRole("article", { name: "Notice for Pool" });
   await expect(notice).toContainText(`Pool, ${SOCIETY}`);
-  await page.getByLabel("Whom to ask").fill("The society office, 98200 00000");
   await expect(notice).toContainText("The society office, 98200 00000");
   await page.emulateMedia({ media: "print" });
   await expect(page.locator(".app-header")).toBeHidden();
@@ -326,8 +336,164 @@ test("someone new to the app is asked to name their society first", async ({ pag
   await page.goto(new URL(url).pathname);
   await page.getByRole("button", { name: /^Sign in to / }).click();
   await expect(page.getByRole("heading", { name: "Name your society to begin." })).toBeVisible();
-  if (SHOTS) for (const size of [WIDE, PHONE]) {
-    await page.setViewportSize(size);
-    await page.screenshot({ path: `${SHOTS}/27-welcome-${size.width}.png`, fullPage: true });
+  await check(page, "27-welcome");
+});
+
+test("the other ways in: a phone by QR, a recorder, the bridge with its line once, and a recording", async ({ page }) => {
+  test.setTimeout(300_000);
+  await signInFresh(page);
+  const how = async (way: RegExp) => {
+    await page.goto("/app/cameras/new");
+    await page.getByRole("radio", { name: way }).check();
+    await page.getByRole("button", { name: "Next" }).click();
+  };
+
+  await page.goto("/app/cameras/new");
+  for (const way of ["This device", "A phone", "A recorder", "Through the bridge", "A camera address", "Upload a recording"]) {
+    await expect(page.getByRole("radio", { name: new RegExp(`^${way}`) })).toBeVisible();
   }
+
+  // a phone: the QR code loads and points at the device page
+  await how(/^A phone/);
+  await page.getByLabel("Name").fill("Pool phone");
+  await page.getByRole("radio", { name: "Pool" }).check();
+  await page.getByRole("button", { name: "Add camera" }).click();
+  await expect(page.getByRole("heading", { name: "Open it on the phone", level: 1 })).toBeVisible();
+  const qr = page.getByRole("img", { name: /QR code/ });
+  await expect.poll(() => qr.evaluate((img: HTMLImageElement) => (img.complete ? img.naturalWidth : 0)), { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect(page.getByLabel("The phone's camera page")).toHaveValue(/\/cam\//);
+  await check(page, "30-add-phone");
+
+  // a recorder the server reads: the address is built from the brand's template and shown without its password
+  await how(/^A recorder/);
+  await expect(page.getByRole("radio", { name: "Hikvision" })).toBeChecked();
+  await page.getByLabel("Name").fill("Gate recorder");
+  await page.getByRole("radio", { name: "Main gate" }).check();
+  await page.getByLabel("Recorder address").fill("gate.example.com");
+  await page.getByLabel("Camera number").fill("2");
+  await page.getByLabel("User").fill("viewer");
+  await page.getByLabel("Password").fill("s3cret");
+  await check(page, "31-add-recorder");
+  await page.getByRole("button", { name: "Add camera" }).click();
+  await expect(page.getByRole("heading", { name: "Keep the suggested watches" })).toBeVisible();
+  const cams = await (await page.request.get("/api/cameras")).json();
+  const rec = cams.find((c: { name: string }) => c.name === "Gate recorder");
+  expect([rec.kind, rec.url]).toEqual(["stream", "rtsp://viewer:***@gate.example.com:554/Streaming/Channels/202"]);
+
+  // through the bridge: the cameras.txt line is shown once, with the bridge's steps and files
+  await how(/^Through the bridge/);
+  await page.getByRole("radio", { name: "CP Plus" }).check();
+  await page.getByLabel("Name").fill("Lobby via bridge");
+  await page.getByRole("radio", { name: "Lobby" }).check();
+  await page.getByLabel("Recorder address").fill("192.168.1.64");
+  await page.getByLabel("User").fill("admin");
+  await page.getByLabel("Password").fill("pw");
+  await page.getByRole("button", { name: "Add camera" }).click();
+  await expect(page.getByRole("heading", { name: "Set up the bridge", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Line for cameras.txt")).toHaveValue(/^[\w-]+=rtsp:\/\/admin:pw@192\.168\.1\.64:554\/cam\/realmonitor\?channel=1&subtype=1$/);
+  await expect(page.getByLabel("Control room address for the bridge")).toHaveValue(/^--server http/);
+  const readme = await page.request.get(await page.getByRole("link", { name: "the bridge steps" }).getAttribute("href") ?? "");
+  expect(readme.ok() && (await readme.text()).includes("Through the bridge")).toBeTruthy();
+  expect((await page.request.get("/bridge/camera-bridge.zip")).headers()["content-type"]).toBe("application/zip");
+  await check(page, "32-add-bridge");
+
+  // a recording: uploaded with its progress, scanned, then opened
+  await how(/^Upload a recording/);
+  await expect(page.getByRole("heading", { name: "Pick the recording" })).toBeVisible();
+  await page.getByLabel("Video file").setInputFiles(`${process.env.SAMPLES_DIR ?? "../data/samples"}/vtest20.mp4`);
+  await page.getByLabel("Name (optional)").fill("Plaza clip");
+  await page.getByRole("button", { name: "Upload and scan" }).click();
+  await expect(page.getByRole("heading", { name: "Scanning the recording" })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText(/Scanned \d+:\d\d of video in \d+ s\./)).toBeVisible({ timeout: 240_000 });
+  await check(page, "33-add-recording");
+  await page.getByRole("button", { name: "Open Plaza clip" }).click();
+  await expect(page.getByRole("heading", { name: "Plaza clip", level: 1 })).toBeVisible();
+});
+
+test("plate reading is a camera setting, and removing a camera says what goes with it", async ({ page }) => {
+  const { origin } = await signInFresh(page);
+  const gate = await addCamera(page, origin, "Main gate", "main gate");
+  await page.goto(`/app/cameras/${gate}`);
+  await page.getByRole("button", { name: "Edit" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("checkbox", { name: /Plate reading/ }).check();
+  await check(page, "34-camera-edit-readers");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect.poll(async () => (await (await page.request.get(`/api/cameras/${gate}`)).json()).readers).toEqual(["plates"]);
+
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(dialog.getByRole("checkbox", { name: /Plate reading/ })).toBeChecked();
+  await dialog.getByRole("button", { name: "Connect a phone" }).click();
+  const link = page.getByRole("dialog", { name: "Connect a phone?" });
+  await expect(link).toContainText("Any device on the old one stops at once.");
+  await link.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await dialog.getByRole("button", { name: "Remove this camera" }).click();
+  await expect(dialog).toContainText("Its watches, incidents and gate log entries, and what it saw, are deleted with it.");
+  await check(page, "35-camera-remove");
+});
+
+test("a watch that needs plate reading turns it on from its card", async ({ page }) => {
+  test.setTimeout(300_000);
+  const { origin } = await signInFresh(page);
+  const gate = await addCamera(page, origin, "Main gate", "main gate");
+  await page.goto(`/app/watches/new?camera=${gate}`);
+  await page.getByLabel(`What should ${BRAND.name} watch for?`).fill("tell me when a cab with a yellow plate comes in");
+  await page.getByRole("button", { name: "Check it" }).click();
+  const card = page.getByTestId("watch-card");
+  await expect(card).toBeVisible({ timeout: 120_000 });
+  const turnOn = card.getByRole("button", { name: "Turn on plate reading" });
+  await expect(turnOn).toBeVisible();
+  await check(page, "36-watch-card-plate-reading");
+  await turnOn.click();
+  await expect(turnOn).toHaveCount(0);
+  await expect(card.locator(".task-done")).toContainText("Turn on plate reading");
+  expect((await (await page.request.get(`/api/cameras/${gate}`)).json()).readers).toEqual(["plates"]);
+});
+
+test("this device keeps sending while a watch is added, and says so on other pages", async ({ page }) => {
+  test.setTimeout(240_000);
+  const { origin } = await signInFresh(page);
+  const desk = await addCamera(page, origin, "Front desk", "lobby");
+  const pushes: string[] = [];
+  page.on("websocket", (ws) => ws.url().endsWith(`/ws/cameras/${desk}/push`) && pushes.push(ws.url()));
+  await page.goto(`/app/cameras/${desk}?webcam=start`);
+  const sent = page.getByText(/(\d[\d,]*) sent\./);
+  await expect(sent).toBeVisible({ timeout: 30_000 });
+
+  await page.getByRole("link", { name: "Add a watch" }).click();
+  const bar = page.getByRole("region", { name: "This device" });
+  await expect(bar).toContainText("This device is sending pictures for Front desk.");
+  await check(page, "37-device-bar");
+  await page.getByRole("link", { name: "Control room" }).first().click();
+  await expect(bar).toBeVisible();
+  const before = await (await page.request.get(`/api/cameras/${desk}`)).json();
+  await page.waitForTimeout(3000);
+  const after = await (await page.request.get(`/api/cameras/${desk}`)).json();
+  expect(after.status.stats.frames ?? 0).toBeGreaterThan(before.status.stats.frames ?? 0);
+
+  await bar.getByRole("link", { name: "Open Front desk" }).click();
+  await expect(page.getByRole("button", { name: "Stop this device" })).toBeVisible();
+  await expect(bar).toHaveCount(0);
+  expect(pushes).toHaveLength(1); // one socket all along: never stopped, never pressed again
+  await page.getByRole("button", { name: "Stop this device" }).click();
+  await expect(page.getByRole("button", { name: "Use this device" })).toBeVisible();
+});
+
+test("a starting camera says Starting, and a refused address says what to do", async ({ page }) => {
+  const { origin } = await signInFresh(page);
+  const id = await addCamera(page, origin, "Gate", "main gate");
+  const real = await (await page.request.get(`/api/cameras/${id}`)).json();
+  const as = (source: string, running = true) => ({ ...real, kind: "stream", health: null, status: { ...real.status, running, source } });
+  await page.route("**/api/cameras", (r) => r.fulfill({ json: [as("starting")] }));
+  await page.goto("/app");
+  const wall = page.locator(".control-wall");
+  await expect(wall.locator(".section-head")).toContainText("Starting");
+  await expect(wall).not.toContainText("0 of 1 live");
+
+  await page.route(`**/api/cameras/${id}`, (r) => r.fulfill({ json: as("refused") }));
+  await page.goto(`/app/cameras/${id}`);
+  await expect(page.locator(".page-sub")).toContainText("Address refused");
+  await expect(page.getByText("Its address points inside a private network, so this server won't read it.")).toBeVisible();
+  await check(page, "38-camera-refused");
 });

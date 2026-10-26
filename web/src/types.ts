@@ -34,6 +34,7 @@ export interface Camera {
   last_frame_at?: number | null;
   health?: Health | null; // the camera's health, once the server reports it under its own key
   off_reason?: string | null; // "plan" when the society's plan switched it off
+  readers?: string[]; // "plates" (plate reading), "faces" (staff register): data/readers.json
   status: {
     running: boolean;
     source: string;
@@ -259,13 +260,6 @@ export interface Timeline {
   people: PeopleGroup[];
 }
 
-export interface Person {
-  person_id: string;
-  name: string;
-  consent_ts: number | null;
-  thumbnail_url: string | null;
-}
-
 export interface ScanStats {
   duration_s: number;
   wall_s: number;
@@ -324,6 +318,7 @@ export interface TelegramStatus {
   message: string | null;
   groups: { id: string; title: string | null; connected_at: string | null }[];
   warnings: boolean;
+  reminders?: { every_min: number; times: number }; // an unacknowledged critical is posted again (Tuning)
 }
 
 export type LiveMessage =
@@ -331,3 +326,91 @@ export type LiveMessage =
   | { type: "overlay"; ts: number; tracks: LiveTrack[] }
   | { type: "alert"; alert: Alert }
   | { type: "status"; camera_id: string; source_status: string; loops: number; fps: number; stats: PipelineStats; stopped?: boolean };
+
+// the gate log (api/logs.py, logs/ledger.py)
+export type PlateColour = "yellow" | "white" | "green" | "black" | "unknown";
+
+export interface Passage {
+  id: string;
+  at: string;
+  direction: "in" | "out";
+  vehicle: string;
+  cls: string;
+  plate: string | null;
+  plate_conf: number | null;
+  plate_colour: PlateColour;
+  camera_id: string;
+  camera: string;
+  line: string | null;
+  picture_url: string | null;
+  paired_id: string | null;
+  paired_at: string | null;
+  stayed_s: number | null;
+  alerted: string[];
+}
+
+export interface GateLog {
+  day: string;
+  q: string | null;
+  counts: { in: number; out: number; unread: number };
+  passages: Passage[];
+}
+
+// the staff register: first in and last out per person per day
+export interface AttendanceRow {
+  staff_id: string;
+  name: string;
+  role: string;
+  active: boolean;
+  present: boolean;
+  first_seen?: string | null; // the register's names after the Task 6b review; first_in and last_out before it
+  last_seen?: string | null;
+  first_in?: string | null;
+  last_out?: string | null;
+  cameras: string[];
+}
+
+export interface StaffRegister {
+  day: string;
+  present: number;
+  staff: AttendanceRow[];
+}
+
+export interface StaffMember {
+  id: string;
+  name: string;
+  role: string;
+  active: boolean;
+  faces: number;
+  consent_at: string | null;
+  consent_text: string | null;
+  created_at: string;
+  removed_at: string | null;
+}
+
+export interface StaffList {
+  roles: string[];
+  photos: { min: number; max: number };
+  consent_text: string;
+  adults_only: string;
+  limit: number | null;
+  count: number;
+  notice: string | null;
+  staff: StaffMember[];
+}
+
+export interface NvrBrand {
+  id: string;
+  label: string;
+  port: number;
+  hint: string;
+}
+
+export interface Scan {
+  state: "scanning" | "checking" | "done" | "failed";
+  progress: number;
+  stats: ScanStats | null;
+  alert_ids: string[];
+  camera_id: string;
+  error: string | null;
+}

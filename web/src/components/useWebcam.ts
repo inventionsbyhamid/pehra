@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { wsUrl } from "../api";
 import brand from "../site/brand";
 
@@ -7,17 +7,19 @@ const WIDTH = 960;
 
 export type WebcamState = "off" | "starting" | "on" | "error";
 
-// Sends this browser's camera to the server as JPEG frames over a WebSocket.
-export function useWebcam(cameraId: string) {
+// Sends this browser's camera to the server as JPEG frames over a WebSocket. Frames are drawn from a video element of
+// its own that is never on the page, so it keeps sending while the person moves between pages; pages show `stream`.
+export function useWebcam(cameraId: string | null) {
   const [on, setOn] = useState(false);
   const [state, setState] = useState<WebcamState>("off");
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(0);
-  const video = useRef<HTMLVideoElement | null>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
 
   useEffect(() => {
-    if (!on) {
+    if (!on || !cameraId) {
       setState("off");
+      setStream(null);
       return;
     }
     let stream: MediaStream | null = null;
@@ -52,11 +54,12 @@ export function useWebcam(cameraId: string) {
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
-      const v = video.current ?? document.createElement("video");
+      const v = document.createElement("video");
       v.muted = true;
       v.playsInline = true;
       v.srcObject = stream;
       await v.play().catch(() => {});
+      setStream(stream);
       ws = new WebSocket(wsUrl(`/ws/cameras/${cameraId}/push`));
       ws.binaryType = "arraybuffer";
       ws.onopen = () => setState("on");
@@ -91,9 +94,9 @@ export function useWebcam(cameraId: string) {
       window.clearInterval(timer);
       ws?.close();
       stream?.getTracks().forEach((t) => t.stop());
-      if (video.current) video.current.srcObject = null;
+      setStream(null);
     };
   }, [on, cameraId]);
 
-  return { on, setOn, state, error, sent, video };
+  return { on, setOn, state, error, sent, stream };
 }

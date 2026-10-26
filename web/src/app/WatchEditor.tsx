@@ -6,6 +6,7 @@ import { useLoad, useTitle } from "../hooks";
 import brand from "../site/brand";
 import type { Severity, Watch, WatchCard } from "../types";
 import { useCan, useSession } from "./session";
+import { parseTask } from "./setup";
 import { Fact, Facts } from "./ui/Card";
 import { Choices } from "./ui/Choices";
 import { Page, PageHead, Problem } from "./ui/Page";
@@ -29,6 +30,21 @@ function TheCard({ card, cameraId, onInstead, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const others = (cameras.data ?? []).filter((c) => c.id !== cameraId);
+  const home = (cameras.data ?? []).find((c) => c.id === cameraId);
+
+  // "Turn on plate reading for this camera." is the camera's own setting (Edit on its page); it can be done here too
+  async function turnOn(reader: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await api.setReaders(cameraId, [...new Set([...(home?.readers ?? []), reader])]);
+      cameras.setData((cameras.data ?? []).map((c) => (c.id === cameraId ? updated : c)));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   // a clause the AI wrote as a signal's name (dwell_s) says nothing to a person; its tier still shows in the others
   const covered = card.coverage.filter((c) => c.tier !== "X" && !/^[a-z]+(_[a-z]+)+$/.test(c.clause.trim()));
   const bt = card.backtest;
@@ -94,7 +110,23 @@ function TheCard({ card, cameraId, onInstead, onSaved }: {
         {!watch && card.cannot.length === 0 && card.problem && <Fact term="Problem">{plain(card.problem)}</Fact>}
         {watch && card.setup.length > 0 && (
           <Fact term="Before it starts">
-            <ul>{card.setup.map((s) => <li key={s}>{plain(s)}</li>)}</ul>
+            <ul>
+              {card.setup.map((s) => {
+                const task = parseTask(s);
+                if (task.kind !== "reader") return <li key={s}>{plain(s)}</li>;
+                const on = (home?.readers ?? []).includes(task.reader);
+                return (
+                  <li key={s} className="task-row">
+                    <span className={on ? "task-done" : undefined}>{plain(s)}{on && <span className="sr-only"> Done.</span>}</span>
+                    {!on && (
+                      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => turnOn(task.reader)}>
+                        Turn on {task.label.toLowerCase()}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </Fact>
         )}
         {watch && (

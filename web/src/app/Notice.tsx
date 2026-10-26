@@ -6,6 +6,7 @@ import brand from "../site/brand";
 import { currentPlan } from "./Settings";
 import { useSession } from "./session";
 import { Page, PageHead, Problem } from "./ui/Page";
+import { Link } from "react-router-dom";
 import { purposeLabel } from "./words";
 
 // One printable notice per camera zone, one to a page: what the camera is for, how long footage is kept, whom to ask.
@@ -13,7 +14,7 @@ export default function Notice() {
   useTitle("Camera zone notices");
   const { me, purposes } = useSession();
   const cameras = useLoad(() => api.cameras(), []);
-  const [contact, setContact] = useState("");
+  const contact = useLoad(() => api.noticeContact(), []);
   const [only, setOnly] = useState("");
   const society = me.workspace?.name ?? "";
   const days = currentPlan(me.workspace?.plan).limits.retention_days;
@@ -26,11 +27,10 @@ export default function Notice() {
           sub={<span>One page for each camera, with {society}'s name on it.</span>}
           actions={<button className="btn btn-primary" onClick={() => window.print()} disabled={!list.length}>Print</button>} />
         <div className="row" style={{ alignItems: "flex-end" }}>
-          <label className="field" style={{ flex: "1 1 18rem" }}>
-            <span>Whom to ask</span>
-            <input className="input" value={contact} onChange={(e) => setContact(e.target.value)} maxLength={120}
-              placeholder="For example: the society office, 98200 00000" />
-          </label>
+          <div className="field" style={{ flex: "1 1 18rem" }}>
+            <span className="label">Whom to ask</span>
+            <p>{contact.data?.shown ?? "The society office"} <Link className="small" to="/app/settings/privacy">Change</Link></p>
+          </div>
           <label className="field" style={{ flex: "1 1 12rem" }}>
             <span>Cameras</span>
             <select className="select" value={only} onChange={(e) => setOnly(e.target.value)}>
@@ -62,7 +62,7 @@ export default function Notice() {
               </div>
               <div>
                 <dt>Questions or complaints</dt>
-                <dd>{contact.trim() || "The society office."}</dd>
+                <dd>{contact.data?.shown || "The society office."}</dd>
               </div>
             </dl>
             <p className="notice-foot"><Mark size={24} />Watched with {brand.name} for {society}. The society decides how footage is used.</p>

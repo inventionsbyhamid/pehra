@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigationType } from "react-router-dom";
 import { Mark } from "../components/Mark";
 import brand from "../site/brand";
 import { DemoBar } from "./DemoBar";
+import { DeviceBar } from "./device";
 import { useCan, useSession } from "./session";
 
 const ROOM = ["/app/cameras", "/app/watches", "/app/incidents"];
@@ -19,7 +20,10 @@ export function Shell({ children }: { children: ReactNode }) {
 
   const nav = [
     { to: "/app", label: "Control room", current: pathname === "/app" || ROOM.some((p) => pathname.startsWith(p)) },
-    ...(supervisor ? [{ to: "/app/people", label: "People", current: pathname.startsWith("/app/people") }] : []),
+    ...(supervisor ? [
+      { to: "/app/logs", label: "Logs", current: pathname.startsWith("/app/logs") },
+      { to: "/app/people", label: "People", current: pathname.startsWith("/app/people") },
+    ] : []),
     { to: "/app/settings", label: "Settings", current: pathname.startsWith("/app/settings") },
   ];
 
@@ -38,6 +42,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </header>
       {me.user.demo && <DemoBar />}
+      <DeviceBar />
       <main id="main" tabIndex={-1}>{children}</main>
     </div>
   );

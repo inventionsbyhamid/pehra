@@ -1,5 +1,5 @@
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 import { api } from "../api";
 import { useLoad, useTitle } from "../hooks";
 import { camerasText, plans, retentionText, rupees } from "../site/plans";
@@ -8,7 +8,7 @@ import { atLeast, useSession } from "./session";
 import { Team } from "./Team";
 import { Telegram } from "./Telegram";
 import { Fact, Facts } from "./ui/Card";
-import { Page } from "./ui/Page";
+import { Page, Problem } from "./ui/Page";
 
 const BillingPanel = lazy(() => import("../billing/BillingPanel"));
 
@@ -68,6 +68,53 @@ function Society() {
   );
 }
 
+// Whom people near a camera can ask: printed on each notice and shown on a phone used as a camera.
+function NoticeContact() {
+  const admin = atLeast(useSession().me.role, "admin");
+  const contact = useLoad(() => api.noticeContact(), []);
+  const [value, setValue] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const shown = value ?? contact.data?.contact ?? "";
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      contact.setData(await api.setNoticeContact(shown));
+      setValue(null);
+      setSaved(true);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card stack" aria-labelledby="contact-title">
+      <h2 id="contact-title" className="h2">Whom to ask about the cameras</h2>
+      <p className="small muted">
+        Printed on each camera zone notice, and shown on a phone or laptop used as a camera.
+        {contact.data && !contact.data.contact && contact.data.shown && <> Until you set it, they show {contact.data.shown}.</>}
+      </p>
+      <Problem>{contact.error ?? error}</Problem>
+      {admin ? (
+        <form className="copy" onSubmit={save}>
+          <input className="input" value={shown} maxLength={120} aria-label="Whom to ask about the cameras"
+            placeholder="For example: the society office, 98200 00000"
+            onChange={(e) => { setValue(e.target.value); setSaved(false); }} />
+          <button className="btn" disabled={busy || value === null}>{busy ? "Saving" : "Save"}</button>
+        </form>
+      ) : <p>{contact.data?.shown ?? "The society office"}</p>}
+      {saved && <p className="hint" role="status">Saved.</p>}
+    </section>
+  );
+}
+
 function Privacy() {
   const { me } = useSession();
   const plan = currentPlan(me.workspace?.plan);
@@ -91,6 +138,7 @@ function Privacy() {
         <p>Put a printed notice where each camera can see people. It says what the camera is for, how long footage is kept and whom to ask.</p>
         <div><Link className="btn btn-primary" to="/app/settings/privacy/notice">Print the notices</Link></div>
       </section>
+      <NoticeContact />
       <p className="small">Read the full <Link to="/privacy">privacy notice</Link> and the <Link to="/terms">terms</Link>.</p>
     </>
   );

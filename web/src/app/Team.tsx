@@ -9,8 +9,8 @@ import { Problem } from "./ui/Page";
 import { Table } from "./ui/Table";
 
 const ROLES: { role: Role; label: string; can: string }[] = [
-  { role: "viewer", label: "Viewer", can: "Sees the cameras, incidents and logs, and asks what happened." },
-  { role: "supervisor", label: "Supervisor", can: "Also acknowledges incidents, marks false alarms and sees enrolled staff." },
+  { role: "viewer", label: "Viewer", can: "Sees the cameras and incidents, and asks what happened." },
+  { role: "supervisor", label: "Supervisor", can: "Also acknowledges incidents, marks false alarms, and sees the logs and enrolled staff." },
   { role: "admin", label: "Admin", can: "Also adds cameras and watches, enrols staff, connects Telegram and invites people." },
   { role: "owner", label: "Owner", can: "Also changes roles and removes people." },
 ];

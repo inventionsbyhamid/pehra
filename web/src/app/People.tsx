@@ -1,108 +1,191 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
-import { Thumb } from "../components/Thumb";
-import { initials } from "../format";
 import { useLoad, useTitle } from "../hooks";
 import brand from "../site/brand";
-import type { Person } from "../types";
+import type { StaffList, StaffMember } from "../types";
 import { useCan } from "./session";
 import { Dialog, useDialog } from "./ui/Dialog";
 import { Empty, Page, PageHead, Problem } from "./ui/Page";
+import { sentence } from "./words";
 
-const NO_FACE = "No face was found in that photo. Use a clear photo of the face, looking at the camera, in good light.";
+const agreed = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : null;
 
-export default function People() {
-  useTitle("People");
-  const admin = useCan("admin");
-  const people = useLoad(() => api.people(), []);
+type Pick = { file: File; url: string };
+
+function EnrolForm({ form, onDone }: { form: StaffList; onDone: (name: string) => void }) {
   const [name, setName] = useState("");
-  const [photo, setPhoto] = useState<File | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [role, setRole] = useState("");
+  const [photos, setPhotos] = useState<Pick[]>([]);
   const [consent, setConsent] = useState(false);
-  const [adult, setAdult] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
-  const [removing, setRemoving] = useState<Person | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const confirm = useDialog();
+  const input = useRef<HTMLInputElement>(null);
+  const kept = useRef<Pick[]>([]);
+  kept.current = photos;
+  const { min, max } = form.photos;
+  const who = name.trim() || "This person";
 
-  function choose(f: File | null) {
-    setPhoto(f);
-    if (preview) URL.revokeObjectURL(preview);
-    setPreview(f ? URL.createObjectURL(f) : null);
+  useEffect(() => () => kept.current.forEach((p) => URL.revokeObjectURL(p.url)), []);
+
+  function add(files: FileList | null) {
+    const more = Array.from(files ?? []).slice(0, Math.max(0, max - photos.length))
+      .map((file) => ({ file, url: URL.createObjectURL(file) }));
+    setPhotos([...photos, ...more]);
+    if (input.current) input.current.value = "";
+  }
+
+  function drop(i: number) {
+    URL.revokeObjectURL(photos[i]!.url);
+    setPhotos(photos.filter((_, j) => j !== i));
   }
 
   async function enrol(e: React.FormEvent) {
     e.preventDefault();
-    if (!photo || !consent || !adult || !name.trim()) return;
+    if (busy || !consent || photos.length < min || !name.trim() || !role) return;
     setBusy(true);
     setError(null);
-    setDone(null);
-    const form = new FormData();
-    form.append("name", name.trim());
-    form.append("consent", "true");
-    form.append("photo", photo);
+    const body = new FormData();
+    body.append("name", name.trim());
+    body.append("role", role);
+    body.append("consent", "true");
+    photos.forEach((p) => body.append("photos", p.file));
     try {
-      const r = await api.enrol(form);
-      setDone(`${r.name} is enrolled. ${brand.name} uses this name when it recognises their face.`);
+      const r = await api.enrolStaff(body);
+      photos.forEach((p) => URL.revokeObjectURL(p.url));
+      setPhotos([]);
       setName("");
-      choose(null);
+      setRole("");
       setConsent(false);
-      setAdult(false);
-      if (fileInput.current) fileInput.current.value = "";
-      people.reload();
+      onDone(r.name);
     } catch (err) {
-      const msg = (err as Error).message;
-      setError(msg === "No face found in that picture." ? NO_FACE : msg);
+      setError((err as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
-  async function forget() {
+  return (
+    <form className="card stack" style={{ gap: 18 }} onSubmit={enrol} aria-labelledby="enrol-title">
+      <div className="stack" style={{ gap: 8 }}>
+        <h2 id="enrol-title" className="h2">Enrol a staff member</h2>
+        <ul className="list rules">
+          <li>Adults only, with their consent. Never enrol a child.</li>
+          <li>No photo is kept. Each photo becomes a face template, then the photo is dropped.</li>
+        </ul>
+      </div>
+      {form.notice ? (
+        <p className="notice notice-warn" role="status">{form.notice}</p>
+      ) : (
+        <>
+          <label className="field"><span>Name</span>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} required autoComplete="off" />
+          </label>
+          <label className="field"><span>Role</span>
+            <select className="select" value={role} onChange={(e) => setRole(e.target.value)} required>
+              <option value="" disabled>Pick a role</option>
+              {form.roles.map((r) => <option key={r} value={r}>{sentence(r)}</option>)}
+            </select>
+          </label>
+          <div className="field">
+            <label htmlFor="enrol-photos" className="label">Photos of their face</label>
+            <span className="hint" id="photos-hint">
+              {min} to {max} clear photos, each of them alone, in good light. They stay on this device until you press Enrol.
+            </span>
+            {photos.length > 0 && (
+              <ul className="list photo-picks" aria-label="Chosen photos">
+                {photos.map((p, i) => (
+                  <li key={p.url} className="photo-pick">
+                    <img src={p.url} alt={`Photo ${i + 1}`} />
+                    <button type="button" onClick={() => drop(i)} aria-label={`Take out photo ${i + 1}`}>&times;</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="file-pick">
+              {photos.length < max && (
+                <>
+                  <input id="enrol-photos" ref={input} className="sr-only" type="file" accept="image/*" multiple
+                    aria-describedby="photos-hint" onChange={(e) => add(e.target.files)} />
+                  <label htmlFor="enrol-photos" className="btn btn-sm">{photos.length ? "Add more photos" : "Choose photos"}</label>
+                </>
+              )}
+              <span className="hint" aria-live="polite">{photos.length ? `${photos.length} of ${max} chosen` : ""}</span>
+            </div>
+          </div>
+          <div className="stack" style={{ gap: 10 }}>
+            <p className="consent-text" id="consent-text">{form.consent_text.replace(/^This person/, who)}</p>
+            <label className="check">
+              <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} aria-describedby="consent-text" />
+              <span>{who === "This person" ? "They agreed" : `${who} agreed`} to this, and it is true.</span>
+            </label>
+          </div>
+          <Problem>{error}</Problem>
+          <div>
+            <button className="btn btn-primary" disabled={busy || !consent || photos.length < min || !name.trim() || !role}>
+              {busy ? "Enrolling" : "Enrol"}
+            </button>
+          </div>
+        </>
+      )}
+    </form>
+  );
+}
+
+export default function People() {
+  useTitle("People");
+  const admin = useCan("admin");
+  const staff = useLoad(() => api.staff(), []);
+  const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<StaffMember | null>(null);
+  const [busy, setBusy] = useState(false);
+  const confirm = useDialog();
+  const data = staff.data;
+  const list = data?.staff ?? [];
+
+  async function remove() {
     if (!removing) return;
+    setBusy(true);
+    setError(null);
     try {
-      await api.forget(removing.person_id);
-      setDone(`${removing.name} was removed. Their face data is deleted and they are no longer recognised.`);
-      people.reload();
+      await api.removeStaff(removing.id);
+      setDone(`${removing.name} is removed and will not be recognised again. Their past days stay in the staff register.`);
+      staff.reload();
+      confirm.close();
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      confirm.close();
+      setBusy(false);
     }
   }
 
-  const list = people.data ?? [];
-
   return (
     <Page>
-      <PageHead title="People" sub={<span>Staff who agreed to be recognised by face. Everyone else stays unknown, and their faces are never kept.</span>} />
+      <PageHead title="People" sub={<span>Staff who agreed to be recognised by face, for the staff register. Everyone else stays unknown.</span>} />
       {done && <p className="notice" role="status">{done}</p>}
       <div className="people-grid">
         <section className="section" aria-labelledby="enrolled-title">
           <div className="section-head">
-            <h2 id="enrolled-title">Enrolled</h2>
-            <span className="small muted">{list.length === 1 ? "1 person" : `${list.length} people`}</span>
+            <h2 id="enrolled-title">Enrolled staff</h2>
+            {data && <span className="small muted">{data.limit != null ? `${data.count} of ${data.limit} on your plan` : `${data.count} enrolled`}</span>}
           </div>
-          <Problem>{people.error}</Problem>
-          {people.loading && !people.data ? null : list.length === 0 ? (
-            <Empty title="Nobody is enrolled">
-              {admin ? "Enrol staff who agree, such as guards, maids and drivers, so alerts and logs use their names." : "An admin can enrol staff who agree."}
+          <Problem>{staff.error}</Problem>
+          {staff.loading && !data ? null : list.length === 0 ? (
+            <Empty title="Nobody is enrolled yet">
+              {admin ? "Enrol staff who agree, such as guards, maids and drivers. The staff register then records when they come and go." : "An admin can enrol staff who agree."}
             </Empty>
           ) : (
             <ul className="list card people-rows">
               {list.map((p) => (
-                <li key={p.person_id}>
-                  <Thumb src={p.thumbnail_url} alt={`Enrolment photo of ${p.name}`} w={48} h={48} label={initials(p.name)} />
+                <li key={p.id}>
                   <div className="grow">
-                    <p><strong>{p.name}</strong></p>
-                    {p.consent_ts && (
-                      <p className="small muted">Agreed on {new Date(p.consent_ts * 1000).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</p>
-                    )}
+                    <p><strong>{p.name}</strong> <span className="muted small">{sentence(p.role)}</span></p>
+                    {agreed(p.consent_at) && <p className="small muted">Agreed on {agreed(p.consent_at)}</p>}
                   </div>
                   {admin && (
-                    <button className="btn btn-sm btn-quiet btn-danger" onClick={() => { setRemoving(p); confirm.open(); }}>
+                    <button className="btn btn-sm btn-quiet btn-danger" onClick={() => { setError(null); setRemoving(p); confirm.open(); }}>
                       Remove<span className="sr-only"> {p.name}</span>
                     </button>
                   )}
@@ -110,42 +193,23 @@ export default function People() {
               ))}
             </ul>
           )}
+          {list.length > 0 && <p className="small"><Link to="/app/logs/staff">See when they came and went</Link></p>}
         </section>
 
-        {admin && (
-          <form className="card stack" onSubmit={enrol} aria-labelledby="enrol-title">
-            <h2 id="enrol-title" className="h2">Enrol someone</h2>
-            <label className="field"><span>Name</span>
-              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Sunita, cook" maxLength={60} required />
-            </label>
-            <div className="field">
-              <label htmlFor="enrol-photo" className="label">Photo of their face</label>
-              <div className="row">
-                {preview && <img src={preview} alt="The chosen photo" className="enrol-preview" />}
-                <input id="enrol-photo" ref={fileInput} type="file" accept="image/*" onChange={(e) => choose(e.target.files?.[0] ?? null)} />
-              </div>
-              <span className="hint">One clear photo of the face, looking at the camera, in good light.</span>
-            </div>
-            <label className="check">
-              <input type="checkbox" checked={adult} onChange={(e) => setAdult(e.target.checked)} />
-              <span>This person is an adult member of staff.</span>
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-              <span>They agreed to be recognised on these cameras, and know they can ask to be removed.</span>
-            </label>
-            <Problem>{error}</Problem>
-            <div>
-              <button className="btn btn-primary" disabled={busy || !consent || !adult || !photo || !name.trim()}>{busy ? "Enrolling" : "Enrol"}</button>
-            </div>
-          </form>
+        {admin && data && (
+          <EnrolForm form={data} onDone={(name) => {
+            setDone(`${name} is enrolled. ${brand.name} now names them in the staff register.`);
+            staff.reload();
+          }} />
         )}
       </div>
 
       <Dialog dialog={confirm} title={`Remove ${removing?.name ?? ""}?`} id="remove-title" onClose={() => setRemoving(null)}>
-        <p className="small">Their face data is deleted and {brand.name} stops recognising them on every camera.</p>
+        <p>{removing?.name} will not be recognised again, on any camera. Their face templates are deleted now.</p>
+        <p className="small muted">Their past days stay in the staff register. To recognise them again, enrol them again with their consent.</p>
+        <Problem>{error}</Problem>
         <div className="row">
-          <button className="btn btn-primary" onClick={forget}>Remove</button>
+          <button className="btn btn-primary" disabled={busy} onClick={remove}>{busy ? "Removing" : `Remove ${removing?.name ?? ""}`}</button>
           <button className="btn" onClick={confirm.close}>Keep</button>
         </div>
       </Dialog>

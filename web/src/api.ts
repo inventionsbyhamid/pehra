@@ -1,7 +1,8 @@
 import brand from "./site/brand";
 import type {
-  Answer, Camera, Incident, IncidentDetail, Me, Member, Metrics, PendingInvite, Person, Purposes, Role, SavedWatch,
-  Society, StateExample, TelegramStatus, Timeline, Watch, WatchCard, WatchRow, Zone,
+  Answer, Camera, GateLog, Incident, IncidentDetail, Me, Member, Metrics, NvrBrand, PendingInvite, Purposes,
+  Role, SavedWatch, Scan, Society, StaffList, StaffRegister, StateExample, TelegramStatus, Timeline, Watch, WatchCard,
+  WatchRow, Zone,
 } from "./types";
 
 export type { Me, Society } from "./types";
@@ -84,6 +85,7 @@ export interface DeviceLink {
   token: string;
   url: string;
   qr_url: string;
+  bridge_camera?: string; // the bridge's cameras.txt line for a recorder camera, with its password: shown once
 }
 
 export interface WatchBody {
@@ -117,7 +119,7 @@ export const api = {
   // notice: why the plan leaves a new camera unwatched (it is added, paused)
   addCamera: (body: { name: string; kind: "stream" | "webcam"; url?: string; purpose?: string }) =>
     post<Camera & { notice?: string | null }>("/api/cameras", body),
-  patchCamera: (id: string, patch: { name?: string; purpose?: string; zones?: Zone[]; enabled?: boolean }) =>
+  patchCamera: (id: string, patch: { name?: string; purpose?: string; zones?: Zone[]; enabled?: boolean; readers?: string[] }) =>
     request<Camera & { disabled_watches?: string[] }>("PATCH", `/api/cameras/${id}`, patch),
   deleteCamera: (id: string) => del<{ ok: boolean }>(`/api/cameras/${id}`),
   examples: (cameraId: string) => get<StateExample[]>(`/api/cameras/${cameraId}/examples`),
@@ -154,17 +156,73 @@ export const api = {
     post<Answer>("/api/ask", { question, camera_id: cameraId || null }),
   timeline: (cameraId: string) => get<Timeline>(`/api/cameras/${cameraId}/timeline`),
 
-  people: () => get<Person[]>("/api/people"),
-  enrol: (form: FormData) => post<{ person_id: string; name: string }>("/api/people", form),
-  forget: (id: string) => del<{ ok: boolean }>(`/api/people/${id}`),
-
   metrics: () => get<Metrics>("/api/metrics"),
 
   deviceLink: (cameraId: string) => post<DeviceLink>(`/api/cameras/${cameraId}/device-token`),
   demo: () => get<DemoInfo>("/api/demo"),
   demoLogin: (signOut = false) => post<{ next: string }>("/api/demo/login", { sign_out: signOut }),
   telegramPreview: (incidentId: string) => get<TelegramMessage>(`/api/incidents/${incidentId}/telegram`),
+
+  nvr: () => get<{ brands: NvrBrand[]; default_stream: string }>("/api/nvr"),
+  addRecorder: (body: { name: string; purpose: string; bridge: boolean; nvr: NvrIn }) =>
+    post<Camera & { notice?: string | null }>("/api/cameras", {
+      name: body.name, purpose: body.purpose, kind: body.bridge ? "webcam" : "stream", nvr: body.nvr,
+    }),
+  setReaders: (id: string, readers: string[]) => request<Camera>("PATCH", `/api/cameras/${id}`, { readers }),
+  rescan: (id: string) => post<{ scan_id: string }>(`/api/cameras/${id}/scan`),
+  scan: (id: string) => get<Scan>(`/api/scans/${id}`),
+
+  gateLog: (day: string, q: string) => get<GateLog>(`/api/logs/vehicles?${logQuery({ day, q })}`),
+  staffRegister: (day: string) => get<StaffRegister>(`/api/logs/staff?${logQuery({ day })}`),
+  staff: () => get<StaffList>("/api/staff"),
+  enrolStaff: (form: FormData) => post<{ id: string; name: string; faces: number }>("/api/staff", form),
+  removeStaff: (id: string) => del<{ ok: boolean }>(`/api/staff/${id}`),
+
+  noticeContact: () => get<{ contact: string | null; shown: string | null }>("/api/notice-contact"),
+  setNoticeContact: (contact: string) =>
+    request<{ contact: string | null; shown: string | null }>("PUT", "/api/notice-contact", { contact }),
 };
+
+export interface NvrIn {
+  brand: string;
+  host: string;
+  channel: number;
+  user: string;
+  password: string;
+  port?: number;
+}
+
+export function logQuery(params: Record<string, string>): string {
+  return new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+}
+
+export const csvUrl = (log: "vehicles" | "staff", params: Record<string, string>) =>
+  `/api/logs/${log}.csv?${logQuery(params)}`;
+
+// An upload with its progress (fetch has none): resolves with the server's reply, rejects with its words.
+export function upload<T>(path: string, form: FormData, onProgress: (share: number) => void): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.onerror = () => reject(new ApiError(0, `${brand.name} can't be reached. Check your connection and try again.`));
+    xhr.onload = () => {
+      let body: unknown = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        body = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as T);
+      else {
+        if (xhr.status === 401) onSignedOut();
+        reject(new ApiError(xhr.status, messageFrom(xhr.status, body)));
+      }
+    };
+    xhr.send(form);
+  });
+}
 
 export function wsUrl(path: string): string {
   const proto = location.protocol === "https:" ? "wss" : "ws";

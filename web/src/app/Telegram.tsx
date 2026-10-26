@@ -6,6 +6,8 @@ import { atLeast, useSession } from "./session";
 import { Copy } from "./ui/Copy";
 import { Problem } from "./ui/Page";
 
+const minutes = (m: number) => (m === 1 ? "1 minute" : Number.isInteger(m) ? `${m} minutes` : `${Math.round(m * 60)} seconds`);
+
 export function Telegram() {
   const { me } = useSession();
   const admin = atLeast(me.role, "admin");
@@ -15,6 +17,7 @@ export function Telegram() {
   const [error, setError] = useState<string | null>(null);
   const s = status.data;
   const bot = code?.bot_username ?? s?.bot_username;
+  const reminders = s?.reminders;
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -33,8 +36,22 @@ export function Telegram() {
     <>
       <h1>Telegram</h1>
       <p className="lede" style={{ marginTop: -16 }}>
-        Critical alerts go to your security group on Telegram at once, with a picture, the camera and buttons to acknowledge.
+        Critical alerts go to your security group on Telegram at once, with a picture, the camera and two buttons:
+        Acknowledge and False alarm.
       </p>
+      <section className="card stack" aria-labelledby="group-rules-title">
+        <h2 id="group-rules-title" className="h2">How the group works</h2>
+        <ul className="list rules">
+          <li>Anyone in a connected group can press Acknowledge or False alarm, even if they are not in this app. The app shows who pressed it.</li>
+          {reminders && reminders.times > 0 && (
+            <li>
+              A critical alert nobody acknowledges is posted in the group again {minutes(reminders.every_min)} later, and
+              every {minutes(reminders.every_min)} after that, up to {reminders.times === 1 ? "once" : `${reminders.times} times`}.
+            </li>
+          )}
+          <li>Pictures sent to the group have the faces of people who are not enrolled staff blurred. Clips stay in the app.</li>
+        </ul>
+      </section>
       <Problem>{status.error ?? error}</Problem>
       {s && !s.ready && (
         <p className="notice">{s.message ?? "Telegram is not connected."} Once the operator gives this server a Telegram bot, you can connect your security group here.</p>

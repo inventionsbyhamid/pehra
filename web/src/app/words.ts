@@ -3,7 +3,7 @@ import type { Camera, Incident, Purposes, Severity } from "../types";
 export const SEVERITY_WORDS: Record<Severity, string> = { critical: "Critical", warning: "Warning", info: "Info" };
 
 export const SEVERITY_HELP: Record<Severity, string> = {
-  critical: "Sent to your Telegram group at once, and again if nobody acknowledges it.",
+  critical: "Sent to your Telegram group at once, and posted there again while nobody acknowledges it.",
   warning: "Shown here, and on Telegram if your society turns that on.",
   info: "Kept in the logs and the 9 AM daily summary.",
 };
@@ -38,10 +38,27 @@ export function healthOf(cam: Camera): { word: string; tone: Tone } {
   if (cam.kind === "webcam" && !cam.status.running) return { word: "Waiting for its device", tone: "off" };
   if (!cam.status.running) return { word: "Offline", tone: "down" };
   const src = cam.status.source;
+  if (src === "refused") return { word: "Address refused", tone: "down" };
   if (src === "reconnecting" || src === "error") return { word: "Offline", tone: "down" };
   if (src === "starting" || src === "connecting") return { word: "Starting", tone: "off" };
   return { word: "Live", tone: "" };
 }
+
+// Why a camera shows what it shows, in a line under its name, when the word alone does not say what to do.
+export function healthHelp(cam: Camera): string | null {
+  if (cam.enabled && cam.status.source === "refused") {
+    return "Its address points inside a private network, so this server won't read it. Add the camera through the bridge instead.";
+  }
+  return null;
+}
+
+// Indian plate colours in plain words: yellow is commercial, such as a cab.
+export const PLATE_WORDS: Record<string, string> = {
+  yellow: "Yellow plate, commercial or cab",
+  white: "White plate, private",
+  green: "Green plate, electric",
+  black: "Black plate, rented",
+};
 
 export function purposeLabel(purposes: Purposes | null, key: string | undefined): string {
   if (!key) return "Other";

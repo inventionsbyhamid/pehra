@@ -112,3 +112,32 @@ export function scanLine(stats: { duration_s: number; wall_s: number; x_realtime
 export function initials(name: string): string {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
 }
+
+// days as the server names them (YYYY-MM-DD in the society's time zone)
+export function todayKey(): string {
+  return dayKey.format(new Date());
+}
+
+export function shiftDay(day: string, by: number): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + by);
+  return d.toISOString().slice(0, 10);
+}
+
+// "Today", "Yesterday", else "Mon 20 Oct"
+export function dayTitle(day: string): string {
+  const today = todayKey();
+  if (day === today) return "Today";
+  if (day === shiftDay(today, -1)) return "Yesterday";
+  const d = new Date(`${day}T12:00:00Z`);
+  const words = new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  return words.format(d).replace(",", "");
+}
+
+// "2 h 5 min", "45 min", "under a minute"
+export function stayed(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  if (m < 1) return "under a minute";
+  const h = Math.floor(m / 60);
+  return h ? `${h} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`;
+}

@@ -1,35 +1,39 @@
+import READERS from "@data/readers";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, frameUrl } from "../api";
+import { api, frameUrl, type DeviceLink } from "../api";
 import { LiveView, type LiveHandle } from "../components/LiveView";
 import { Thumb } from "../components/Thumb";
-import { useWebcam } from "../components/useWebcam";
+import type { useWebcam } from "../components/useWebcam";
 import { count, dayLabel, plain, span } from "../format";
 import { useLoad, useTitle } from "../hooks";
 import brand from "../site/brand";
 import type { Answer, Camera, StateExample, WatchRow, Zone } from "../types";
-import { taskDone, tasksFor, watchWords, zoneNamed, type Task } from "./setup";
+import { DeviceVideo, useDevice } from "./device";
+import { readerAllowed, taskDone, tasksFor, watchWords, zoneNamed, type Task } from "./setup";
 import { useCan, useSession } from "./session";
+import { Copy } from "./ui/Copy";
 import { Dialog, useDialog } from "./ui/Dialog";
 import { Feed, sortIncidents } from "./ui/Feed";
 import { Health } from "./ui/Health";
 import { Empty, Page, PageHead, Problem, Section } from "./ui/Page";
 import { SeverityTag } from "./ui/Severity";
-import { purposeLabel, sentence } from "./words";
+import { healthHelp, purposeLabel, sentence } from "./words";
 import { ZoneEditor, type Want } from "./ZoneEditor";
 
 function Stage({ cam, liveRef, webcam }: {
-  cam: Camera; liveRef: React.RefObject<LiveHandle>; webcam: ReturnType<typeof useWebcam>;
+  cam: Camera; liveRef: React.RefObject<LiveHandle>; webcam: ReturnType<typeof useWebcam> | null;
 }) {
+  const video = useRef<HTMLVideoElement>(null);
   if (cam.kind === "file") {
     return <div className="stage"><img src={frameUrl(cam.id)} alt={`A frame from ${cam.name}`} /></div>;
   }
-  if (cam.kind === "webcam" && webcam.on) {
+  if (cam.kind === "webcam" && webcam?.on) {
     // this browser shows its own camera at full frame rate; the server adds boxes from its analysis
     return (
-      <LiveView ref={liveRef} cameraId={cam.id} zones={cam.zones} mode="overlay" video={webcam.video}
+      <LiveView ref={liveRef} cameraId={cam.id} zones={cam.zones} mode="overlay" video={video}
         videoActive={webcam.state === "on"} idle={webcam.state === "starting" ? "Starting this device's camera." : "Waiting for this device's camera."}>
-        <video ref={webcam.video} className="stage-video" muted playsInline aria-hidden="true" />
+        <DeviceVideo stream={webcam.stream} video={video} />
       </LiveView>
     );
   }
@@ -65,7 +69,8 @@ function WatchItem({ row, cam, examples, admin, onToggle, onTask }: {
                   <span>{t.text}{done && <span className="sr-only"> Done.</span>}</span>
                   {!done && admin && t.kind !== "other" && !blocked && (
                     <button type="button" className="btn btn-sm" onClick={() => onTask(t)}>
-                      {t.kind === "pictures" ? "Save a picture now" : t.kind === "line" ? "Draw the line" : "Draw the zone"}
+                      {t.kind === "pictures" ? "Save a picture now" : t.kind === "line" ? "Draw the line"
+                        : t.kind === "reader" ? `Turn on ${t.label.toLowerCase()}` : "Draw the zone"}
                     </button>
                   )}
                 </li>
@@ -141,8 +146,65 @@ function LookBack({ cam }: { cam: Camera }) {
   );
 }
 
-function EditCamera({ cam, dialog, onSaved, onZones }: {
-  cam: Camera; dialog: ReturnType<typeof useDialog>; onSaved: (c: Camera) => void; onZones: () => void;
+// A camera that sends its own pictures gets a new link: the phone or bridge on the old one stops at once.
+function LinkDialog({ cam, dialog }: { cam: Camera; dialog: ReturnType<typeof useDialog> }) {
+  const [link, setLink] = useState<DeviceLink | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const bridge = !!cam.url;
+
+  async function make() {
+    setBusy(true);
+    setError(null);
+    try {
+      setLink(await api.deviceLink(cam.id));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog dialog={dialog} id="link-title" onClose={() => { setLink(null); setError(null); }}
+      title={link ? (bridge ? "The new bridge line" : "Open it on the phone") : bridge ? "Make a new bridge line?" : "Connect a phone?"}>
+      {link ? (
+        <>
+          {bridge ? (
+            <>
+              <p className="small">Put this line in the bridge's cameras.txt in place of the old one, then start the bridge again. It holds the recorder's password, so it is shown only now.</p>
+              <Copy value={link.bridge_camera ?? link.url} label="Line for cameras.txt" />
+            </>
+          ) : (
+            <div className="qr-box">
+              <img src={link.qr_url} alt="QR code for the phone's camera page" width={200} height={200} />
+              <div className="stack" style={{ gap: 10 }}>
+                <p className="small">Scan this with the phone's camera, open the page and press Start.</p>
+                <Copy value={link.url} label="The phone's camera page" />
+              </div>
+            </div>
+          )}
+          <div><button className="btn" onClick={dialog.close}>Done</button></div>
+        </>
+      ) : (
+        <>
+          <p className="small">
+            {bridge ? "A new line stops the old one at once, so the bridge needs the new line to keep sending."
+              : "This makes a new QR code for a phone or laptop. Any device on the old one stops at once."}
+          </p>
+          <Problem>{error}</Problem>
+          <div className="row">
+            <button className="btn btn-primary" disabled={busy} onClick={make}>{busy ? "Making it" : bridge ? "Make a new line" : "Make a QR code"}</button>
+            <button className="btn" onClick={dialog.close}>Cancel</button>
+          </div>
+        </>
+      )}
+    </Dialog>
+  );
+}
+
+function EditCamera({ cam, dialog, onSaved, onZones, onLink }: {
+  cam: Camera; dialog: ReturnType<typeof useDialog>; onSaved: (c: Camera) => void; onZones: () => void; onLink: () => void;
 }) {
   const { purposes } = useSession();
   const navigate = useNavigate();
@@ -151,6 +213,8 @@ function EditCamera({ cam, dialog, onSaved, onZones }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [reading, setReading] = useState<string[]>(cam.readers ?? []);
+  useEffect(() => setReading(cam.readers ?? []), [cam.readers]);
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);
@@ -167,7 +231,8 @@ function EditCamera({ cam, dialog, onSaved, onZones }: {
   const save = (e: React.FormEvent) => {
     e.preventDefault();
     return run(async () => {
-      onSaved(await api.patchCamera(cam.id, { name: name.trim() || cam.name, purpose }));
+      const readers = cam.kind === "file" ? undefined : reading;
+      onSaved(await api.patchCamera(cam.id, { name: name.trim() || cam.name, purpose, readers }));
       dialog.close();
     });
   };
@@ -176,7 +241,10 @@ function EditCamera({ cam, dialog, onSaved, onZones }: {
     <Dialog dialog={dialog} title={removing ? `Remove ${cam.name}?` : `Edit ${cam.name}`} id="edit-cam-title" onClose={() => setRemoving(false)}>
       {removing ? (
         <>
-          <p className="small">This stops the camera and deletes its watches, events and incidents. It can't be undone.</p>
+          <p className="small">
+            This stops the camera. Its watches, incidents and gate log entries, and what it saw, are deleted with it. It
+            can't be undone.
+          </p>
           <Problem>{error}</Problem>
           <div className="row">
             <button className="btn btn-primary" disabled={busy} onClick={() => run(async () => {
@@ -198,6 +266,25 @@ function EditCamera({ cam, dialog, onSaved, onZones }: {
               ))}
             </select>
           </label>
+          {cam.kind !== "file" && (
+            <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 10 }}>
+              <legend className="label" style={{ marginBottom: 8 }}>Reads on this camera</legend>
+              {Object.entries(READERS).map(([id, r]) => {
+                const not = readerAllowed(id, purpose);
+                const on = reading.includes(id);
+                return (
+                  <label key={id} className="check">
+                    <input type="checkbox" checked={on} disabled={!!not && !on}
+                      onChange={(e) => setReading(e.target.checked ? [...reading, id] : reading.filter((x) => x !== id))} />
+                    <span>
+                      <strong>{r.label}</strong>
+                      <span className="hint" style={{ display: "block" }}>{not ?? r.about}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </fieldset>
+          )}
           <Problem>{error}</Problem>
           <div className="row">
             <button className="btn btn-primary" disabled={busy}>Save</button>
@@ -207,6 +294,11 @@ function EditCamera({ cam, dialog, onSaved, onZones }: {
             <button type="button" className="btn btn-quiet" style={{ justifyContent: "flex-start" }} onClick={() => { dialog.close(); onZones(); }}>
               Adjust zones and lines
             </button>
+            {cam.kind === "webcam" && (
+              <button type="button" className="btn btn-quiet" style={{ justifyContent: "flex-start" }} onClick={() => { dialog.close(); onLink(); }}>
+                {cam.url ? "Make a new bridge line" : "Connect a phone"}
+              </button>
+            )}
             {cam.kind !== "file" && (
               <button type="button" className="btn btn-quiet" style={{ justifyContent: "flex-start" }} disabled={busy}
                 onClick={() => run(async () => { onSaved(await api.patchCamera(cam.id, { enabled: !cam.enabled })); dialog.close(); })}>
@@ -291,13 +383,15 @@ export default function CameraPage() {
   const liveRef = useRef<LiveHandle>(null);
   const edit = useDialog();
   const pictureDialog = useDialog();
-  const webcam = useWebcam(id);
+  const linkDialog = useDialog();
+  const device = useDevice();
+  const webcam = device.camera?.id === id ? device.webcam : null;
   const cam = camera.data;
   useTitle(cam?.name ?? "Camera");
 
   useEffect(() => {
     if (cam?.kind === "webcam" && params.get("webcam") === "start") {
-      webcam.setOn(true);
+      device.start(cam.id, cam.name);
       params.delete("webcam");
       setParams(params, { replace: true });
     }
@@ -322,8 +416,16 @@ export default function CameraPage() {
     setEditing({ background: snap ?? frameUrl(cam!.id, String(Date.now())), want });
   }
 
-  function onTask(task: Task) {
-    if (task.kind === "zone" || task.kind === "line") openEditor({ name: task.name, kind: task.kind === "line" ? "line" : "area" });
+  async function onTask(task: Task) {
+    if (task.kind === "reader") {
+      setError(null);
+      try {
+        camera.setData(await api.setReaders(cam!.id, [...new Set([...(cam!.readers ?? []), task.reader])]));
+        setNotice(`${task.label} is on. Change it in Edit.`);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    } else if (task.kind === "zone" || task.kind === "line") openEditor({ name: task.name, kind: task.kind === "line" ? "line" : "area" });
     else if (task.kind === "pictures") {
       setPicture(task);
       pictureDialog.open();
@@ -370,7 +472,8 @@ export default function CameraPage() {
         actions={admin && <button className="btn" onClick={edit.open}>Edit</button>}
       />
       {notice && <p className="notice" role="status">{notice}</p>}
-      <Problem>{error ?? webcam.error}</Problem>
+      {healthHelp(cam) && <p className="notice notice-warn">{healthHelp(cam)}</p>}
+      <Problem>{error ?? webcam?.error}</Problem>
 
       <div className="campage">
         <div className="campage-live">
@@ -382,13 +485,14 @@ export default function CameraPage() {
           )}
           {!editing && cam.kind === "webcam" && (
             <div className="row" style={{ marginTop: 12 }}>
-              <button className={`btn ${webcam.on ? "" : "btn-primary"}`} onClick={() => webcam.setOn(!webcam.on)}>
-                {webcam.on ? "Stop this device" : "Use this device"}
+              <button className={`btn ${webcam?.on ? "" : "btn-primary"}`}
+                onClick={() => (webcam?.on ? device.stop() : device.start(cam.id, cam.name))}>
+                {webcam?.on ? "Stop this device" : "Use this device"}
               </button>
               <span className="live-note" style={{ marginTop: 0 }}>
-                {webcam.state === "on"
-                  ? <>Sending this device's camera to {brand.name}. Keep this page open. <span className="num">{count(webcam.sent)} sent.</span></>
-                  : "This laptop or phone becomes the camera while this page is open."}
+                {webcam?.state === "on"
+                  ? <>Sending this device's camera to {brand.name}. Keep this tab open. <span className="num">{count(webcam.sent)} sent.</span></>
+                  : "This laptop or phone becomes the camera while this tab is open."}
               </span>
             </div>
           )}
@@ -425,7 +529,8 @@ export default function CameraPage() {
         <div className="campage-back"><LookBack cam={cam} /></div>
       </div>
 
-      {admin && <EditCamera cam={cam} dialog={edit} onSaved={(c) => camera.setData(c)} onZones={() => openEditor(null)} />}
+      {admin && <EditCamera cam={cam} dialog={edit} onSaved={(c) => camera.setData(c)} onZones={() => openEditor(null)} onLink={linkDialog.open} />}
+      {admin && cam.kind === "webcam" && <LinkDialog cam={cam} dialog={linkDialog} />}
       <PictureDialog dialog={pictureDialog} task={picture} cam={cam}
         onDone={(e) => { examples.setData([...(examples.data ?? []), e]); setNotice("Picture saved."); }} />
     </Page>

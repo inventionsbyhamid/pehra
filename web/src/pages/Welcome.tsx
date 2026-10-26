@@ -1,10 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { api, type Invite } from "../api";
 import { Mark } from "../components/Mark";
 import { useTitle } from "../hooks";
 import brand from "../site/brand";
 
 const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata";
+
+// The app's header over a narrow page, for someone signed in with no society open yet.
+function Frame({ children }: { children: ReactNode }) {
+  return (
+    <div className="app" style={{ "--brand": brand.theme_color } as CSSProperties}>
+      <header className="app-header">
+        <div className="wrap">
+          <span className="wordmark"><Mark /><span>{brand.name}</span></span>
+        </div>
+      </header>
+      <main id="main" className="wrap page page-narrow">{children}</main>
+    </div>
+  );
+}
 
 export default function Welcome({ onDone }: { onDone: () => void }) {
   useTitle("Name your society");
@@ -26,28 +40,31 @@ export default function Welcome({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <main className="login" id="main">
-      <div className="login-copy">
-        <div className="brand"><Mark size={36} /><span className="brand-name">{brand.name}</span></div>
-        <h1 className="login-title">Name your society to begin.</h1>
-        <p className="lede">You can add cameras and invite your team next. If someone already set up your society, ask them for an invite link instead.</p>
+    <Frame>
+      <div className="page-head">
+        <div>
+          <h1>Name your society to begin.</h1>
+          <p className="page-sub">You add cameras and invite your team next. If someone already set up your society, ask them for an invite link instead.</p>
+        </div>
       </div>
-      <form className="panel login-form stack" onSubmit={submit}>
+      <form className="card stack" style={{ gap: 16 }} onSubmit={submit}>
         <label className="field"><span>Society name</span>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required autoFocus />
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required autoFocus
+            placeholder="For example: Green Park Residency" />
         </label>
         {error && <p className="notice notice-error" role="alert">{error}</p>}
-        <button className="btn btn-primary" disabled={busy || !name.trim()}>{busy ? "Saving" : "Continue"}</button>
+        <div><button className="btn btn-primary" disabled={busy || !name.trim()}>{busy ? "Saving" : "Continue"}</button></div>
       </form>
-    </main>
+    </Frame>
   );
 }
 
-const ROLES: Record<string, string> = {
-  viewer: "a viewer: you can see the cameras, alerts and the log, and ask what happened",
-  supervisor: "a supervisor: you can act on alerts and set lookouts",
-  admin: "an admin: you can manage cameras, watches, staff and invites",
-  owner: "an owner: you can do everything, including changing roles",
+// What each role can do, as Settings, Team says it.
+const ROLES: Record<string, { label: string; a: string; can: string }> = {
+  viewer: { label: "Viewer", a: "a viewer", can: "Sees the cameras and incidents, and asks what happened." },
+  supervisor: { label: "Supervisor", a: "a supervisor", can: "Also acknowledges incidents, marks false alarms, and sees the logs and enrolled staff." },
+  admin: { label: "Admin", a: "an admin", can: "Also adds cameras and watches, enrols staff, connects Telegram and invites people." },
+  owner: { label: "Owner", a: "an owner", can: "Can do everything, including changing roles and removing people." },
 };
 
 function inviteProblem(err: unknown): string {
@@ -57,6 +74,7 @@ function inviteProblem(err: unknown): string {
   return "This invite link does not work. Ask for a new one.";
 }
 
+// An invite link shows the society and the role, and joins only when the person presses Join.
 export function Join({ token, onDone }: { token: string; onDone: () => void }) {
   useTitle("Join your society");
   const [invite, setInvite] = useState<Invite | null>(null);
@@ -79,23 +97,38 @@ export function Join({ token, onDone }: { token: string; onDone: () => void }) {
     }
   }
 
+  const role = invite ? ROLES[invite.role] : undefined;
   return (
-    <main className="login" id="main">
-      <div className="login-copy">
-        <div className="brand"><Mark size={36} /><span className="brand-name">{brand.name}</span></div>
+    <Frame>
+      <div className="page-head">
+        <div>
+          <h1>{invite ? `Join ${invite.society}` : "Your invite"}</h1>
+          {invite && (
+            <p className="page-sub">
+              {invite.invited_by ? `${invite.invited_by} invited you` : "You are invited"} to join as {role?.a ?? invite.role}.
+            </p>
+          )}
+        </div>
       </div>
-      <div className="panel login-form stack">
-        {invite ? (
-          <>
-            <h1 className="h2">Join {invite.society}</h1>
-            <p>{invite.invited_by ? `${invite.invited_by} invited you` : "You are invited"} to join as {ROLES[invite.role] ?? invite.role}.</p>
-          </>
-        ) : <h1 className="h2">Your invite</h1>}
-        {error && <p className="notice notice-error" role="alert">{error}</p>}
-        {!invite && !error && <p className="small">One moment.</p>}
-        {invite && !error && <button className="btn btn-primary" onClick={accept} disabled={busy}>{busy ? "Joining" : `Join ${invite.society}`}</button>}
-        <button className="btn" onClick={onDone}>{invite && !error ? "Not now" : "Continue"}</button>
-      </div>
-    </main>
+      {error && <p className="notice notice-error" role="alert">{error}</p>}
+      {!invite && !error && <p className="working" role="status"><span className="spinner" aria-hidden="true" />Opening your invite</p>}
+      {invite && !error && (
+        <section className="card stack" style={{ gap: 18 }} aria-label="The invite">
+          <dl className="facts">
+            <div><dt>Society</dt><dd><strong>{invite.society}</strong></dd></div>
+            <div>
+              <dt>Your role</dt>
+              <dd><span>{role?.label ?? invite.role}</span>{role && <span className="hint" style={{ display: "block" }}>{role.can}</span>}</dd>
+            </div>
+          </dl>
+          <p className="small muted">Nothing changes until you press Join.</p>
+          <div className="row">
+            <button className="btn btn-primary" onClick={accept} disabled={busy}>{busy ? "Joining" : `Join ${invite.society}`}</button>
+            <button className="btn btn-quiet" onClick={onDone}>Not now</button>
+          </div>
+        </section>
+      )}
+      {error && <div><button className="btn" onClick={onDone}>Continue</button></div>}
+    </Frame>
   );
 }

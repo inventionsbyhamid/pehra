@@ -27,7 +27,10 @@ export default function ControlRoom() {
   const open = feed.filter((i) => i.status === "open");
   const alerting = new Set(open.map((i) => i.camera_id));
   const live = list.filter((c) => healthOf(c).word === "Live").length;
+  const starting = list.filter((c) => healthOf(c).word === "Starting").length;
   const trouble = list.filter((c) => ["bad", "down"].includes(healthOf(c).tone)).length;
+  // a camera process takes a few seconds to start: "Starting" rather than "0 of 1 live"
+  const liveWords = starting && !live ? "Starting" : `${live} of ${list.length} live${starting ? `, ${starting} starting` : ""}`;
 
   return (
     <Page>
@@ -61,7 +64,7 @@ export default function ControlRoom() {
             <h2 id="wall-title">Cameras</h2>
             {list.length > 0 && (
               <span className="small muted">
-                {live} of {list.length} live{trouble > 0 && <>, <span className="state-bad">{plural(trouble, "needs", "need")} a look</span></>}
+                {liveWords}{trouble > 0 && <>, <span className="state-bad">{plural(trouble, "needs", "need")} a look</span></>}
               </span>
             )}
           </div>

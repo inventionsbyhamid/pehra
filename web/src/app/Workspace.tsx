@@ -6,9 +6,11 @@ import Welcome, { Join } from "../pages/Welcome";
 import type { Me, Purposes } from "../types";
 import AddCamera from "./AddCamera";
 import CameraPage from "./CameraPage";
+import { DeviceProvider } from "./device";
 import ControlRoom from "./ControlRoom";
 import History from "./History";
 import IncidentPage from "./IncidentPage";
+import Logs from "./Logs";
 import Notice from "./Notice";
 import People from "./People";
 import { SessionContext } from "./session";
@@ -34,6 +36,8 @@ function AppRoutes() {
       <Route path="/app/cameras/:id/history" element={<History />} />
       <Route path="/app/watches/new" element={<WatchEditor />} />
       <Route path="/app/incidents/:id" element={<IncidentPage />} />
+      <Route path="/app/logs" element={<Navigate to="/app/logs/vehicles" replace />} />
+      <Route path="/app/logs/:log" element={<Logs />} />
       <Route path="/app/people" element={<People />} />
       <Route path="/app/settings" element={<Navigate to="/app/settings/society" replace />} />
       <Route path="/app/settings/privacy/notice" element={<Notice />} />
@@ -94,9 +98,11 @@ export default function Workspace() {
 
   return (
     <SessionContext.Provider value={{ me, purposes, reload: load, signOut }}>
-      <Shell>
-        <AppRoutes />
-      </Shell>
+      <DeviceProvider>
+        <Shell>
+          <AppRoutes />
+        </Shell>
+      </DeviceProvider>
     </SessionContext.Provider>
   );
 }
