@@ -143,7 +143,7 @@ class Perceiver:
                 self.counts["detector_skipped"] += 1
                 self._since_detect += 1
                 dets = []
-            up = self.tracker.update(dets, ts)
+            up = self.tracker.update(dets, ts, work)
             started = {t.id for t in up.started}
             for t in up.active:
                 observations.append(self._observe(work, t, ts, t.id in started))

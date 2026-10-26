@@ -80,8 +80,10 @@ def test_scan_matches_single_pass(settings, clip40, tmp_path):
     pipe.finish(last.ts, last.pos)
     single = [e for e in repo.query_events(camera_id="cam1", kinds=["enter", "exit"], limit=5000)]
 
-    with ScanPool(settings, Tuning(), workers=4) as pool:
-        result = scan_file(clip40, cam, [], pool, blobs, settings, Tuning(), start_epoch=0)
+    # chunks against one pass on the same detector (the scan's own faster one finds its own boxes)
+    same = settings.model_copy(update={"scan_detector": settings.detector})
+    with ScanPool(same, Tuning(), workers=4) as pool:
+        result = scan_file(clip40, cam, [], pool, blobs, same, Tuning(), start_epoch=0)
     scanned = [e for e in result.events if e.kind in ("enter", "exit")]
     assert abs(len(scanned) - len(single)) <= max(2, 0.1 * len(single))
     matched = sum(any(s.kind == e.kind and abs(s.ts - e.ts) <= 0.4 for s in scanned) for e in single)

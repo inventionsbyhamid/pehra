@@ -33,6 +33,15 @@ class TrackTuning(_Section):
     max_age_s: float = 2.0
     min_hits: int = 2
     high_score: float = 0.5
+    # what the IoU passes leave, at the 1 to 2 analysed frames a second a shared process may deliver: same class,
+    # heights within far_size_ratio, centre within far_base + speed * seconds since last seen of the Kalman
+    # prediction, both in body heights; the speed is per class
+    far_base: float = 0.3
+    far_speed: float = 1.0  # body heights a second a person may cover
+    far_speed_by_class: dict[str, float] = {"bicycle": 3.0, "motorcycle": 4.0, "car": 4.0, "bus": 3.0, "truck": 3.0}
+    far_size_ratio: float = 1.6
+    far_appearance: float = 0.5  # weight of the clothing difference (0 to 1) against the share of the gate used
+    signature_every_s: float = 1.0  # a track's clothing signature is taken again at most this often
 
 
 class PoseTuning(_Section):
