@@ -274,7 +274,7 @@ function StaffLog({ cameras }: { cameras: Camera[] | null }) {
             <>
               <div className="log-wide card card-flush">
                 <table className="table log-table">
-                  <caption className="sr-only">Staff first in and last out, {dayTitle(day)}</caption>
+                  <caption className="sr-only">Staff first seen and last seen, {dayTitle(day)}</caption>
                   <thead>
                     <tr><th scope="col">Name</th><th scope="col">First seen</th><th scope="col">Last seen</th><th scope="col">Seen on</th></tr>
                   </thead>
@@ -296,7 +296,7 @@ function StaffLog({ cameras }: { cameras: Camera[] | null }) {
                   </tbody>
                 </table>
               </div>
-              <ul className="log-narrow list log-cards" aria-label={`Staff first in and last out, ${dayTitle(day)}`}>
+              <ul className="log-narrow list log-cards" aria-label={`Staff first seen and last seen, ${dayTitle(day)}`}>
                 {rows.map((r) => (
                   <li key={r.staff_id} className={r.present ? undefined : "is-absent"}>
                     <div className="log-card">

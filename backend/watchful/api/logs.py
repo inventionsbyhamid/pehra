@@ -1,5 +1,5 @@
-"""The society's logs for supervisors and above: the gate log (vehicle passages) and the staff register (first in and
-last out), each on a plan that includes it (data/plans.json features), and the watch log (rows log watches wrote, and
+"""The society's logs for supervisors and above: the gate log (vehicle passages) and the staff register (first and
+last seen), each on a plan that includes it (data/plans.json features), and the watch log (rows log watches wrote, and
 notes: incidents at the info level), one day at a time in the society's time zone, each also as CSV. Every CSV
 download is audited."""
 import csv

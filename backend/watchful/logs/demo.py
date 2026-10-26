@@ -1,6 +1,6 @@
 """A plausible day of the gate log and the staff register for the judges' demo (demo.py's seeding hook calls seed):
 residents' cars out in the morning and back in the evening, cabs and deliveries in and out, a few plates the reader
-could not read, one cab still inside past the overstay time, and made up staff with their first in and last out.
+could not read, one cab still inside past the overstay time, and made up staff with when each was first and last seen.
 
 Nothing here comes from a real person: plates are rendered with OpenCV (the passage picture is the rendered plate),
 names are made up, and each staff member's face templates are random unit vectors that match no face."""

@@ -180,7 +180,7 @@ test("the gate log: a day of passages, plates in plain words, overstay, search, 
   await page.setViewportSize(WIDE);
 });
 
-test("the staff register: first in and last out per person, search, CSV and the plan's limit", async ({ page }) => {
+test("the staff register: first seen and last seen per person, search, CSV and the plan's limit", async ({ page }) => {
   const { origin, workspace } = await signInFresh(page);
   await page.goto("/app/logs/staff");
   await expect(page.getByText("The staff register from consented faces comes with the Society plan")).toBeVisible();
@@ -192,7 +192,7 @@ test("the staff register: first in and last out per person, search, CSV and the 
   const gate = await addCamera(page, origin, "Service gate", "service gate");
   execFileSync(PYTHON, ["-c", FILL_LOGS, workspace, gate], { encoding: "utf8" });
   await page.reload();
-  const table = page.getByRole("table", { name: /Staff first in and last out, Today/ });
+  const table = page.getByRole("table", { name: /Staff first seen and last seen, Today/ });
   await expect(table.getByRole("row")).toHaveCount(7);
   const sunita = table.getByRole("row").filter({ hasText: "Sunita" });
   await expect(sunita).toContainText("Maid");

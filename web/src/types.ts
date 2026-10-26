@@ -358,7 +358,7 @@ export interface GateLog {
   passages: Passage[];
 }
 
-// the staff register: first in and last out per person per day
+// the staff register: first and last seen per person per day
 export interface AttendanceRow {
   staff_id: string;
   name: string;
