@@ -187,9 +187,16 @@ class PerceiveTuning(_Section):
     keyframe_every_s: float = 2.0
     scene_every_s: float = 3.0  # a whole frame for the search index while something moves
     scene_idle_every_s: float = 60.0  # and now and then when nothing does
-    embed_every_s: float = 3.0  # people's current crop, while a watch or search needs embeddings (local, no AI)
-    max_embeds_per_track: int = 0  # 0 means no limit
     jpeg_quality: int = 80
+
+
+class EmbedTuning(_Section):
+    """Track crops for the image model, the cost behind every watch about how something looks: about half a second
+    a crop on one thread, so only tracks a watch can use, once on a first stable look, then again on a change."""
+    min_side: int = 32  # a track is first embedded once its box is this many pixels on its shorter side
+    change: float = 0.3  # embedded again once its HSV clothing signature moved this far (Bhattacharyya distance)
+    every_s: float = 10.0  # or after this long, whichever comes first
+    max_per_frame: int = 2  # crops embedded per analysed frame per camera, tracks never embedded first; others wait
 
 
 class EvidenceTuning(_Section):
@@ -449,9 +456,9 @@ class ResourcesTuning(_Section):
     push_queue: int = 16  # pushed frames waiting for a camera process; more are dropped
     model_variants: int = 3  # models of each kind a camera process keeps for cameras with their own model settings
     # cameras whose watches need the image model (about 400 MB in each process that loads it) share a process up to
-    # this many, so the model loads in as few processes as can hold them; more on one process would starve them of
-    # CPU (each person crop is about half a second on one thread) while another process idles
-    image_cameras_per_process: int = 4
+    # this many, so the model loads in fewer processes; more on one process starve them of CPU (a person crop is
+    # about half a second on one thread): measured, 4 busy text cameras on one process ran at about 0.1 fps
+    image_cameras_per_process: int = 2
 
 
 class Tuning(_Section):
@@ -466,6 +473,7 @@ class Tuning(_Section):
     tamper: TamperTuning = TamperTuning()
     signals: SignalTuning = SignalTuning()
     perceive: PerceiveTuning = PerceiveTuning()
+    embed: EmbedTuning = EmbedTuning()
     scan: ScanTuning = ScanTuning()
     clips: ClipTuning = ClipTuning()
     alerts: AlertTuning = AlertTuning()

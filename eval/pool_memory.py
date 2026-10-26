@@ -90,7 +90,8 @@ def main() -> None:
                   + "  ".join(f"{r[2]}" for r in rows), flush=True)
         for cam in cams:
             st = m.status(cam.id)
-            print(f"{cam.name}: process {st.process}, {st.fps:.2f} analysed fps, latency p50 "
+            print(f"{cam.name}: process {st.process}, {st.fps:.2f} analysed fps, {st.stats.get('frames')} frames, "
+                  f"{st.stats.get('embeds')} embeds, {st.stats.get('ms_per_frame', 0):.0f} ms a frame, latency p50 "
                   f"{st.stats.get('latency_p50_ms')} p95 {st.stats.get('latency_p95_ms')} ms", flush=True)
         check = subprocess.run([sys.executable, str(ROOT / "deploy" / "check_memory.py"), "--pid", str(os.getpid()),
                                 "--wait-s", "0"], capture_output=True, text=True)

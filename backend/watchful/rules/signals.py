@@ -280,7 +280,7 @@ def returns(ctx, cond, track):
         "The view inside a zone (the whole picture when the condition names no zone) matches params.text better "
         "than params.not_text for params.hold_s seconds (open vocabulary, for example 'an open gate' against 'a "
         "closed gate', 'smoke' against 'clear air').",
-        needs=("embed",), tier="B", own_hold=True, label="the zone's look", params=("text",),
+        needs=("embedder",), tier="B", own_hold=True, label="the zone's look", params=("text",),
         caveat="An image and text model judges the look of the zone; the AI double checks each alert.")
 def zone_looks_like(ctx, cond, track):
     import numpy as np

@@ -177,24 +177,48 @@ def validate(w: Watch, zones: set[str] | dict[str, str | None]) -> list[str]:
     return problems + stay_problems(w)
 
 
+MOMENTS = {"entered", "exited", "crossed"}  # true on one tick only: the subject's look must be known by then
+INSIDE = {"in_zone", "dwell_s", "climbing"}  # true only while the subject stays inside the condition's zones
+
+
+def _embed_places(w: Watch) -> set[str]:
+    """The zones a subject of w must be inside for w to fire, while a later look still counts; empty: anywhere."""
+    if any(c.signal in MOMENTS for c in w.conditions):
+        return set()
+    places = set(w.zones)
+    if w.combine == "all":
+        places |= {z for c in w.conditions if c.signal in INSIDE for z in c.zones}
+    return places
+
+
 def needs_for(watches: list[Watch]) -> Needs:
+    """What the watches need. Track crops are embedded only for the classes and inside the zones of the watches that
+    use them (embed_zones None: a watch that looks anywhere)."""
     classes: set[str] = set()
     needs = Needs(classes=classes)
+    embed_classes: set[str] = set()
+    embed_zones: set[str] | None = set()
     for w in watches:
         classes.update(w.subject.classes or COCO)
         if w.subject.who != "anyone":
             needs.faces = True
-        if w.subject.looks_like or w.subject.same_as:
-            needs.embed = True
+        embeds = bool(w.subject.looks_like or w.subject.same_as)
         for c in w.conditions:
             spec = REGISTRY.get(c.signal)
             if spec:
                 needs.pose |= "pose" in spec.needs
                 needs.posture |= "posture" in spec.needs
                 needs.faces |= "faces" in spec.needs
-                needs.embed |= "embed" in spec.needs
+                embeds |= "embed" in spec.needs
                 needs.slow |= "slow" in spec.needs
                 needs.embedder |= "embedder" in spec.needs
+        if embeds:
+            needs.embed = True
+            embed_classes.update(w.subject.classes or COCO)
+            places = _embed_places(w)
+            embed_zones = None if embed_zones is None or not places else embed_zones | places
+    if needs.embed:
+        needs.embed_classes, needs.embed_zones = embed_classes, embed_zones
     return needs
 
 

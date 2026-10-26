@@ -686,14 +686,14 @@ class WorkerManager:
         try:
             watches, _ = self._watches(camera_id, cam.zones)
             needs = needs_for([w for _, w in watches]) if watches else Needs(classes={"person"})
-            if needs.embed and self._embedder is None:
+            if (needs.embed or needs.embedder) and self._embedder is None:
                 self._embedder = make_embedder(self.settings)
             # the recording's own clock: its creation time, kept the same across rescans
             start_epoch = ((cam.last_scan or {}).get("start_epoch") or probe_start_time(cam.url) or time.time())
             result = scan_file(cam.url, cam, watches, self._pool(), SocietyBlobs(self.blobs, repo.workspace_id),
                                self.settings, self.tuning,
                                start_epoch=start_epoch, enrollments=repo.list_enrollments,
-                               embedder=self._embedder if needs.embed else None,
+                               embedder=self._embedder if needs.embed or needs.embedder else None,
                                on_progress=lambda p: info.update(progress=round(p, 3)),
                                timezone=ledger.society_zone(repo).key)
             repo.delete_camera_events(cam.id)  # a rescan replaces the earlier timeline

@@ -48,7 +48,7 @@ def test_compiler_turns_actions_into_local_watches():
     assert "eating" in text and "hold_s" in text and "never refuse" in text.lower()
 
 
-def test_people_are_embedded_from_their_current_crop_every_few_seconds(tmp_path):
+def test_a_person_is_embedded_once_while_they_look_the_same(tmp_path):
     from test_pipeline import StubDetector
     from watchful.config import Settings
     from watchful.ingest.sources import Frame
@@ -72,4 +72,4 @@ def test_people_are_embedded_from_their_current_crop_every_few_seconds(tmp_path)
         img = np.full((360, 640, 3), 40, np.uint8)
         img[100:250, 100 + i % 3:160 + i % 3] = 200
         p.perceive(Frame(img, i * 0.2, i))
-    assert 3 <= Emb.calls <= 5  # every 3 s, with no cap per track
+    assert Emb.calls == 1  # 10 s in the same clothes: one look (Tuning embed.every_s and embed.change)

@@ -10,13 +10,14 @@ from watchful.ingest.sources import Frame
 from watchful.store.blobs import BlobStore, society_key
 from watchful.store.db import Camera
 from watchful.tuning import Tuning
-from watchful.vision.appearance import signature
+from watchful.vision.appearance import same_person, signature
 from watchful.vision.detect import Detector
 from watchful.vision.faces import FaceIndex, FaceMatch, judge
 from watchful.vision.motion import MotionGate
 from watchful.vision.pose import PoseEstimator, PoseResult
 from watchful.vision.quality import brighten, is_dark, sharpness
 from watchful.vision.tamper import TamperEvent, TamperMonitor
+from watchful.vision.zones import foot_point
 from watchful.vision.track import Track, Tracker
 
 
@@ -27,9 +28,11 @@ class Needs:
     pose: bool = False  # every person, for hands and climbing
     posture: bool = False  # only people whose box looks like a fall may be happening
     faces: bool = False
-    embed: bool = False
+    embed: bool = False  # embed track crops (looks_like, a described subject, same_as)
     slow: bool = False  # detect every zones.slow_tick_s even when nothing moves, for parked or left things
     embedder: bool = False  # load the image model for zone pictures, without embedding every person
+    embed_classes: set[str] = field(default_factory=lambda: {"person"})  # the classes those watches are about
+    embed_zones: set[str] | None = None  # the zones they look in; None: anywhere
 
 
 @dataclass
@@ -79,6 +82,7 @@ class _TrackMemo:
     embed_ts: float = float("-inf")
     embeds: int = 0
     embedding: np.ndarray | None = None
+    embed_signature: np.ndarray | None = None  # the clothes when last embedded
 
 
 def crop(image: np.ndarray, box) -> np.ndarray:
@@ -107,6 +111,7 @@ class Perceiver:
         self.counts = {"frames": 0, "frames_skipped": 0, "detector_runs": 0, "detector_skipped": 0, "pose_runs": 0,
                        "face_runs": 0, "embeds": 0, "ms_total": 0.0}
         self._since_detect = 0
+        self._due: list[tuple] = []  # tracks this frame that want their crop embedded
         self.stride = max(1, tuning.detect.stride)  # a camera that must not miss a passing vehicle lowers it
         self._last_scene = float("-inf")
         self._last_slow = float("-inf")
@@ -154,6 +159,7 @@ class Perceiver:
                 if self.plates is not None:
                     obs.attributes = self.plates.observe(image, t, ts)
                 observations.append(obs)
+            self._embed_due(work, ts)
             for t in up.ended:
                 m = self.memo.pop(t.id, _TrackMemo())
                 observations.append(Observation(ts, t.id, t.cls, t.box, t.score, face=m.face, signature=m.signature,
@@ -224,19 +230,38 @@ class Perceiver:
                 m.face = judge(m.looks, self.t.faces)
         if started or ts - m.keyframe_ts >= self.t.perceive.keyframe_every_s:
             self._keyframe(image, t, ts, m)
-        cap = self.t.perceive.max_embeds_per_track
-        if person and self.embedder and self.needs.embed and (not cap or m.embeds < cap) \
-                and ts - m.embed_ts >= self.t.perceive.embed_every_s:
-            now_crop = crop(image, t.box)
-            if min(now_crop.shape[:2]) >= 24:
-                # what the person looks like now, so actions like eating show up, not their sharpest moment
-                m.embed_ts = ts
-                m.embeds += 1
-                self.counts["embeds"] += 1
-                m.embedding = self.embedder.image(now_crop)
+        if self._wants_embed(image, t, ts, m):
+            self._due.append((m.embeds > 0, m.embed_ts, t.id, t, m, obs))
         obs.face, obs.signature, obs.embedding = m.face, m.signature, m.embedding
         obs.keyframe_key, obs.best_key = m.keyframe_key, m.best_key
         return obs
+
+    def _wants_embed(self, image: np.ndarray, t: Track, ts: float, m: _TrackMemo) -> bool:
+        """Cheap tests first: a class and a place a watch can use, a stable box big enough, then due (never looked
+        at, or every_s passed) or changed clothes."""
+        n, c = self.needs, self.t.embed
+        if not (self.embedder and n.embed) or t.cls not in n.embed_classes or min(t.box[2], t.box[3]) < c.min_side:
+            return False
+        if n.embed_zones is not None:
+            size = (image.shape[1], image.shape[0])
+            foot = foot_point(t.box)
+            if not any(z.name in n.embed_zones and z.contains(foot, size) for z in self.camera.zones):
+                return False
+        if m.embeds == 0 or ts - m.embed_ts >= c.every_s or m.embed_signature is None:
+            return True
+        return same_person(m.embed_signature, signature(image, t.box, self.t.appearance)) >= c.change
+
+    def _embed_due(self, image: np.ndarray, ts: float) -> None:
+        """At most embed.max_per_frame crops this frame, tracks never embedded first, then the longest waiting; the
+        rest wait for a later frame, so analysis never waits on a queue of crops."""
+        due, self._due = sorted(self._due, key=lambda d: d[:3]), []
+        for _, _, _, t, m, obs in due[:max(0, self.t.embed.max_per_frame)]:
+            # what it looks like now, so actions like eating show up, not its sharpest moment
+            m.embedding = self.embedder.image(crop(image, t.box))
+            m.embed_ts, m.embed_signature = ts, signature(image, t.box, self.t.appearance)
+            m.embeds += 1
+            self.counts["embeds"] += 1
+            obs.embedding = m.embedding
 
     def keep_people(self, person_ids: set[str]) -> None:
         """Forgets every face look and name of someone no longer enrolled, so they are not named again."""
