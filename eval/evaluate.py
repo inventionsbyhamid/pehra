@@ -182,7 +182,8 @@ def picture(clip: Path, t: float, setup: dict, ticks: list, title: str, track: i
         for tid, cls, (x, y, bw, bh) in tracks:
             colour, thick = ((0, 0, 255), 3) if tid == track else ((255, 255, 255), 1)
             cv2.rectangle(img, (int(x * sx), int(y * sy)), (int((x + bw) * sx), int((y + bh) * sy)), colour, thick)
-            cv2.putText(img, str(tid), (int(x * sx), int(y * sy) - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.45, colour, 1)
+            cv2.putText(img, str(tid % 10000), (int(x * sx), int(y * sy) - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        colour, 1)  # the tail of the id: camera processes put their own prefix on it
         title += f" (boxes from {at:.1f} s)"
     cv2.rectangle(img, (0, 0), (w, 26), (0, 0, 0), -1)
     cv2.putText(img, title, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
@@ -206,14 +207,14 @@ def evaluate(labels_path: Path, rates: list[float], out: Path, name: str) -> dic
     unknown = sorted({e for _, e in labels} - set(events))
     if unknown:
         raise SystemExit(f"labels name events no watch answers: {', '.join(unknown)}")
-    truth = {e: [t for t, ev in labels if ev == e and lo <= t <= hi] for e in events}
+    truth = {e: [t for t, ev in labels if ev == e] for e in events}  # score() keeps the window
     pictures = out / "failures"
     where = labels_path.relative_to(ROOT).as_posix() if labels_path.is_relative_to(ROOT) else str(labels_path)
     result = {"clip": setup["clip"], "about": setup.get("about"), "labelled_by": setup.get("labelled_by"),
               "rules": setup.get("rules"), "labels": where, "code": git_sha(), "engine": engine_sha(),
               "date": datetime.now(timezone.utc).isoformat(timespec="seconds"), "machine": machine(),
               "duration_s": round(duration, 1), "skip_start_s": skip, "skip_end_s": round(duration - hi, 1),
-              "scored_s": round(hi - lo, 1), "tolerance_s": tol, "truth": {e: len(v) for e, v in truth.items()},
+              "scored_s": round(hi - lo, 1), "tolerance_s": tol, "truth": {e: sum(1 for t in v if lo <= t <= hi) for e, v in truth.items()},
               "runs": {}}
     for fps in rates:
         work = Path(tempfile.mkdtemp(prefix="eval-"))
