@@ -63,7 +63,6 @@ getent group caddy > /dev/null || groupadd --system caddy
 id caddy > /dev/null 2>&1 || useradd --system --gid caddy --home-dir /var/lib/caddy --create-home \
   --shell /usr/sbin/nologin caddy
 install -d -m 755 /etc/caddy
-install -d -m 755 -o caddy -g caddy /var/log/caddy
 install -m 644 "$SRC/deploy/caddy.service" /etc/systemd/system/caddy.service
 else
 say "packages"
@@ -177,6 +176,7 @@ sed -e "s|@APP@|$APP|g" "$SRC/deploy/egress.service" > /etc/systemd/system/watch
 sed -e "s|@DOMAIN@|$DOMAIN|g" -e "s|@ACME_EMAIL@|$ACME_EMAIL|g" "$SRC/deploy/Caddyfile" > /etc/caddy/Caddyfile
 install -d -o caddy -g caddy /var/log/caddy
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+chown -R caddy:caddy /var/log/caddy  # validate runs as root and opens the access log; Caddy runs as caddy
 install -m 644 "$SRC/deploy/logrotate.conf" /etc/logrotate.d/watchful
 sed -e "s|@APP_LOG_GROUP@|$APP_LOG_GROUP|g" -e "s|@ACCESS_LOG_GROUP@|$ACCESS_LOG_GROUP|g" \
   "$SRC/deploy/cloudwatch-agent.json" > /opt/aws/amazon-cloudwatch-agent/etc/watchful.json
