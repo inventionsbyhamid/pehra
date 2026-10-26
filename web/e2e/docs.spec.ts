@@ -77,15 +77,25 @@ test.describe("without JavaScript", () => {
     for (const route of DOCS) expect(sitemap).toContain(`<loc>${SITE}${route}</loc>`);
   });
 
-  test("the landing page links to the docs, and the docs show the overview and the real steps", async ({ page, request }) => {
+  test("the landing page links to the docs, and the docs show the diagrams and the real steps", async ({ page, request }) => {
     await page.goto(BASE + "/");
     await expect(page.locator('footer a[href="/docs"]')).toBeVisible();
+    for (const [route, pictures] of [
+      ["/docs/how-it-works", ["overview", "architecture", "agent workflow"]],
+      ["/docs/aws", ["architecture"]],
+    ] as const) {
+      await page.goto(BASE + route);
+      const imgs = page.locator("main figure img");
+      await expect(imgs).toHaveCount(pictures.length);
+      for (const [i, picture] of pictures.entries()) {
+        const img = imgs.nth(i);
+        await expect(img).toHaveAttribute("alt", new RegExp(`${picture}: .*OpenCV`));
+        const svg = await request.get(BASE + ((await img.getAttribute("src")) ?? ""));
+        expect(svg.status()).toBe(200);
+        expect(await svg.text()).not.toMatch(/Gradient|filter/i);
+      }
+    }
     await page.goto(BASE + "/docs/how-it-works");
-    const img = page.locator("main figure img");
-    await expect(img).toHaveAttribute("alt", /OpenCV/);
-    const svg = await request.get(BASE + ((await img.getAttribute("src")) ?? ""));
-    expect(svg.status()).toBe(200);
-    expect(await svg.text()).not.toMatch(/Gradient|filter/i);
     await expect(page.locator("main")).toContainText("cv2.KalmanFilter");
     await page.goto(BASE + "/docs/self-hosting");
     const main = page.locator("main");

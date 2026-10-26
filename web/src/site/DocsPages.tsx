@@ -1,4 +1,6 @@
 import { Link } from "react-router-dom";
+import agentWorkflow from "@docs/agent-workflow.svg";
+import architecture from "@docs/architecture.svg";
 import overview from "@docs/overview.svg";
 import { DEMO_URL } from "./actions";
 import brand, { mailto } from "./brand";
@@ -7,19 +9,50 @@ import { cameraPlan, freePlan, plans, retentionText } from "./plans";
 
 const name = brand.name;
 
-function Overview({ caption = true }: { caption?: boolean }) {
+function Figure(props: { src: string; width: number; height: number; alt: string; caption: string }) {
   return (
     <figure className="docs-figure">
-      <a href={overview}>
-        <img
-          src={overview}
-          width={1040}
-          height={744}
-          alt={`${name} overview: cameras feed ingest and OpenCV perception; watches in plain words and an agent with OpenCV tools turn flagged moments into incidents for the control room and Telegram; logs feed the gate log and the staff register; it runs on one box on AWS or any Linux machine.`}
-        />
+      <a href={props.src}>
+        <img src={props.src} width={props.width} height={props.height} alt={props.alt} />
       </a>
-      {caption && <figcaption>Every piece at a glance. Open the picture for full size.</figcaption>}
+      <figcaption>{props.caption} Open the picture for full size.</figcaption>
     </figure>
+  );
+}
+
+function Overview() {
+  return (
+    <Figure
+      src={overview}
+      width={1040}
+      height={560}
+      alt={`${name} overview: cameras feed ingest and OpenCV perception; watches in plain words and an agent with OpenCV tools turn flagged moments into incidents for the control room and Telegram; logs feed the gate log and the staff register; it runs on one box on AWS or any Linux machine.`}
+      caption="Every piece at a glance."
+    />
+  );
+}
+
+function Architecture() {
+  return (
+    <Figure
+      src={architecture}
+      width={1120}
+      height={748}
+      alt={`${name} architecture: the committee in a browser, a phone or laptop, the ${name} bridge and CCTV recorders over RTSP reach one EC2 Graviton4 instance with COOL in AWS Mumbai. On it the web app, the camera processes running OpenCV 5, the AI check with its OpenCV tools and the job worker; flagged moments go to the AI check, incidents to the job worker, and alerts to the society's Telegram group. S3, Bedrock, Parameter Store, CloudWatch, SNS and CloudFormation complete the stack.`}
+      caption="The parts and where they run."
+    />
+  );
+}
+
+function AgentWorkflow() {
+  return (
+    <Figure
+      src={agentWorkflow}
+      width={1040}
+      height={772}
+      alt={`${name} agent workflow: OpenCV perceives each frame, the watch engine flags a moment or sends nothing, camera health and staff faces skip the AI, and the AI check calls OpenCV tools (more frames, zoom, brighten, denoise, flow, pose, path walked) in a loop until it alerts with a grade, asks a person, cannot judge, or dismisses. An incident goes to the control room and Telegram, and Acknowledge or False alarm comes back.`}
+      caption="Perceive, decide, act: the AI check and its OpenCV tools."
+    />
   );
 }
 
@@ -218,6 +251,7 @@ export function HowItWorks() {
         <li>An incident opens, graded critical, warning or info, with a still and a clip, in the control room and on Telegram.</li>
         <li>Gate crossings and staff seen at entries are written to the logs.</li>
       </ol>
+      <Architecture />
 
       <h2>What OpenCV does</h2>
       <div className="docs-table" role="region" aria-label="OpenCV in each step" tabIndex={0}>
@@ -244,6 +278,7 @@ export function HowItWorks() {
       </div>
 
       <h2>The agent</h2>
+      <AgentWorkflow />
       <p>
         The agent is an LLM that sees only a flagged moment: a few stills and the watch's words. It can look closer
         with OpenCV tools (frames from the moment, a sharpened zoom, brighten, denoise or sharpen, optical flow inside
@@ -268,9 +303,7 @@ export function HowItWorks() {
       </p>
       <p>
         The full design, the evaluation and the failure cases are in the{" "}
-        <a href={repoFile("docs/report.md")}>technical report</a>, with the{" "}
-        <a href={repoFile("docs/architecture.svg")}>detailed architecture</a> and the{" "}
-        <a href={repoFile("docs/agent-workflow.svg")}>agent workflow</a>.
+        <a href={repoFile("docs/report.md")}>technical report</a>.
       </p>
     </DocsPage>
   );
@@ -495,10 +528,11 @@ export function AwsDocs() {
       lead={
         <p>
           On AWS, {name} runs in Mumbai on one Graviton instance, from one CloudFormation template. The stack is built
-          and tested, but it has not run on AWS yet.
+          and tested, not deployed yet.
         </p>
       }
     >
+      <Architecture />
       <h2>What each service does</h2>
       <dl className="docs-terms">
         {AWS_SERVICES.map(([service, job]) => (

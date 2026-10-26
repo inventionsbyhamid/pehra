@@ -12,8 +12,7 @@ Pehra (पहरा, "the watch") is an AI control room for the CCTV cameras an 
 * Video: not set yet
 * Code: https://github.com/inventionsbyhamid/pehra
 
-The live demo runs on our own server, with stock OpenCV and an OpenRouter model. The AWS stack below is built and
-tested but not deployed yet.
+The live demo runs on our own server, with stock OpenCV and an OpenRouter model.
 <!-- try end -->
 
 <p align="center">
@@ -45,8 +44,11 @@ alert when a camera goes offline, is covered, turned or blurred.
 4. When a rule fires, the AI agent looks at a few stills of that moment, never the stream, and decides.
 5. The incident shows up in the control room and, if it matters, on Telegram.
 
-Each replaceable part (detector, AI, storage, alerts) is picked by a setting. The [detailed
-architecture](docs/architecture.svg) and the [agent workflow](docs/agent-workflow.svg) show the full picture.
+Each replaceable part (detector, AI, storage, alerts) is picked by a setting.
+
+<p align="center">
+  <img src="docs/architecture.svg" width="100%" alt="Pehra architecture: the committee in a browser, a phone or laptop, the Pehra bridge and CCTV recorders over RTSP reach one EC2 Graviton4 instance with COOL in AWS Mumbai. On it the web app, the camera processes running OpenCV 5 (decode, motion gate, detect, track, zones and lines, pose, faces at entries, plates, camera health), the AI check with its OpenCV tools and the job worker. Flagged moments go to the AI check, incidents to the job worker, and alerts to the society's Telegram group. S3, Bedrock, Parameter Store, CloudWatch, SNS and CloudFormation complete the stack.">
+</p>
 
 ## How OpenCV is used
 
@@ -76,6 +78,10 @@ because it needs far less memory there; OpenCV still prepares every crop, and `E
 The AI never watches video. It has three jobs: turn a watch written in plain words into signals OpenCV can check;
 look at a flagged moment and decide; and answer questions about what happened.
 
+<p align="center">
+  <img src="docs/agent-workflow.svg" width="100%" alt="Pehra agent workflow: a camera frame goes through OpenCV, the watch engine flags a moment or sends nothing, camera health and staff faces skip the AI, and the AI check calls OpenCV tools (more frames, zoom, brighten, denoise, flow, pose, path walked) in a loop until it alerts with a grade, asks a person, cannot judge, or dismisses. An incident goes to the control room and Telegram, and Acknowledge or False alarm comes back.">
+</p>
+
 To check a moment, the agent can ask for more frames, zoom in, brighten or denoise, measure optical flow inside the
 box, read the person's pose over time, or draw the path they walked. Each of those is an OpenCV call. It then raises
 the alert with a grade, dismisses it, asks a person, or says it cannot judge, which is what it must say about anyone's
@@ -89,8 +95,8 @@ OpenRouter.
 <!-- aws start -->
 ## AWS
 
-We built the production deployment for AWS in Mumbai (`ap-south-1`): one CloudFormation stack around one Graviton
-instance. It has not run on AWS yet.
+The production deployment for AWS is one CloudFormation stack in Mumbai (`ap-south-1`) around one Graviton instance.
+It is built and tested, not deployed yet.
 
 | Service | What it does for Pehra |
 | --- | --- |

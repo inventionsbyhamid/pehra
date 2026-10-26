@@ -7,5 +7,4 @@
 * Video: {{link.video}}
 * Code: {{link.repo}}
 
-The live demo runs on our own server, with stock OpenCV and an OpenRouter model. The AWS stack below is built and
-tested but not deployed yet.
+The live demo runs on our own server, with stock OpenCV and an OpenRouter model.

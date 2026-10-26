@@ -1,7 +1,7 @@
 ## AWS
 
-We built the production deployment for AWS in Mumbai (`ap-south-1`): one CloudFormation stack around one Graviton
-instance. It has not run on AWS yet.
+The production deployment for AWS is one CloudFormation stack in Mumbai (`ap-south-1`) around one Graviton instance.
+It is built and tested, not deployed yet.
 
 | Service | What it does for Pehra |
 | --- | --- |

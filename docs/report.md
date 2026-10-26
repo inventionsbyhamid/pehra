@@ -51,8 +51,9 @@ One Python service (FastAPI) holds the society API, sign in, live sockets and th
 CPU by default, each run the OpenCV pipeline for several cameras. Scan workers take uploads in time chunks. A job
 worker sends Telegram messages, makes blurred stills and the daily summary, and deletes old footage. Every row, file
 and socket belongs to one society. Replaceable parts (detector, pose, faces, image model, AI, storage, database,
-alerts, metrics) are registered by name and picked by a setting. The [detailed architecture](architecture.svg) and
-the [agent workflow](agent-workflow.svg) show every piece.
+alerts, metrics) are registered by name and picked by a setting.
+
+![Pehra architecture: the committee in a browser, a phone or laptop, the Pehra bridge and CCTV recorders over RTSP reach one EC2 Graviton4 instance with COOL in AWS Mumbai. On it the web app, the camera processes running OpenCV 5 (decode, motion gate, detect, track, zones and lines, pose, faces at entries, plates, camera health), the AI check with its OpenCV tools and the job worker. Flagged moments go to the AI check, incidents to the job worker, and alerts to the society's Telegram group. S3, Bedrock, Parameter Store, CloudWatch, SNS and CloudFormation complete the stack.](architecture.svg)
 
 ## 4. How OpenCV is used
 
@@ -106,7 +107,7 @@ picture is made; a frame is never sent unless detection ran on it.
 
 ## 5. The AI check
 
-![Agent workflow](agent-workflow.svg)
+![Pehra agent workflow: a camera frame goes through OpenCV, the watch engine flags a moment or sends nothing, camera health and staff faces skip the AI, and the AI check calls OpenCV tools (more frames, zoom, brighten, denoise, flow, pose, path walked) in a loop until it alerts with a grade, asks a person, cannot judge, or dismisses. An incident goes to the control room and Telegram, and Acknowledge or False alarm comes back.](agent-workflow.svg)
 
 Rules decide in code whether a moment is worth a look. Some moments never reach the AI: camera health and enrolled
 faces are measured by OpenCV and filed at once. A critical moment goes to Telegram before the check, and the verdict
@@ -204,8 +205,8 @@ CPU it stays under our goal of one analysed frame a second per camera. None of t
 
 ## 7. AWS and COOL
 
-The production deployment is one CloudFormation stack in Mumbai (`ap-south-1`), built by `deploy/deploy.sh`. It has
-not run on AWS yet. We test it with `cfn-lint`, moto and a fake `aws` command; a real deploy fills the checks below.
+The production deployment is one CloudFormation stack in Mumbai (`ap-south-1`), built by `deploy/deploy.sh`. It is
+built and tested with `cfn-lint`, moto and a fake `aws` command, not deployed yet; a real deploy fills the checks below.
 
 | Service | Its job |
 | --- | --- |
@@ -228,7 +229,7 @@ c8g.large with COOL, on the same instance with stock OpenCV 5.0.0.93, and on a c
 terminates them. Every frame is resized, converted, blurred, run through MOG2 and morphology and often CLAHE, which is
 the imgproc work COOL targets; the DNN forwards are most of a busy frame's time. COOL over stock OpenCV on the same
 Graviton instance: not measured yet. Per camera on a c8g.large with COOL:
-not measured yet. The run waits on the owner's go ahead.
+not measured yet. Both fill in when the benchmark runs on AWS.
 
 The same app also runs anywhere with Docker. The root `Dockerfile` and `compose.yaml` build an image of
 [4,254 MB](../eval/results/build_measurements.json "selfhost.image_mb") with every model, which we built and started on our own server.

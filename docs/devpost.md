@@ -54,15 +54,17 @@ playwright, axe-core, pytest, docker
 
 ## About the project
 
-### What is live today, and what waits
+### What is live today, and what is next
 
-* **Live today on our test server** (https://pehra.dijmo.com): the public site, Try the demo with a private sandbox society per
+* **Live today on our own server** (https://pehra.dijmo.com): the public site, Try the demo with a private sandbox society per
   visitor, the control room, camera pages, the watch editor with its coverage card and backtest, incidents with the
   exact Telegram message, the gate log and staff register, adding a laptop or phone as a camera, settings and the
   billing panel. It is one x86 container with stock OpenCV 5.0.0.93; files stay on its disk, and the AI runs on
   DeepSeek V4.1 Flash through OpenRouter. The only demo camera today is OpenCV's sample clip of a plaza.
-* **Built and tested, waiting on the owner:** the AWS deployment (EC2 c8g.xlarge from the COOL image, S3, Bedrock,
-  CloudWatch, SSM, one CloudFormation stack in Mumbai), Google sign in keys, Polar products, and consented recordings of a pool, a main gate and a service gate.
+* **Built and tested, not deployed yet:** the AWS deployment (EC2 c8g.xlarge from the COOL image, S3, Bedrock,
+  CloudWatch, SSM, one CloudFormation stack in Mumbai).
+* **Not set up yet:** Google sign in keys, Polar products, and consented recordings of a pool, a main gate and a
+  service gate.
 * **Planned:** the COOL benchmark on AWS (`eval/bench_aws.sh --yes-spend`).
 
 ### Inspiration
@@ -118,7 +120,7 @@ memory (its preprocessing is OpenCV, and OpenCV DNN is one setting away):
 * **Privacy in pixels:** Telegram stills blur every face that is not that person's own enrolled face (YuNet, SFace,
   pose for the head); a phone used as a camera blurs faces with OpenCV.js before sending.
 * **Scale:** one camera process per vCPU sharing its models, every row, picture and face index scoped by society.
-* **AWS (built, waiting on the owner's go ahead):** one CloudFormation stack in Mumbai: EC2 c8g.xlarge from the COOL
+* **AWS (built and tested, not deployed yet):** one CloudFormation stack in Mumbai: EC2 c8g.xlarge from the COOL
   image, S3, Bedrock, CloudWatch logs, metrics, dashboard and alarms, SSM for secrets, an egress rule against camera
   redirects, and a one command deploy with no SSH that fails unless COOL is the OpenCV loaded.
 

@@ -1,37 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="940" viewBox="0 0 1300 940" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="748" viewBox="0 0 1120 748" role="img" aria-labelledby="title desc">
   <title id="title">Pehra architecture</title>
-  <desc id="desc">Recorders, the Pehra bridge, laptops and phones at a housing society send pictures to one EC2 c8g.xlarge from the COOL image in AWS Mumbai. Camera processes run the OpenCV 5 pipeline; the FastAPI app runs the verifier agent with OpenCV tools; a job worker sends Telegram alerts with faces blurred. S3, Bedrock, CloudWatch, SSM and CloudFormation complete the AWS side.</desc>
+  <desc id="desc">At the society: the committee in a browser, a phone or laptop as a camera, the Pehra bridge, and CCTV cameras and recorders over RTSP. In AWS Mumbai, one EC2 Graviton4 instance with COOL (OpenCV 5 built for Graviton) runs the web app, the camera processes (decode, motion gate, detect, track, zones and lines, pose, faces at entries, plates, camera health), the AI check with its OpenCV tools, and the job worker. S3 keeps pictures, clips and the database copy; Bedrock runs the AI check; Parameter Store holds settings and secrets; CloudWatch has logs, metrics and alarms; SNS sends alarm email; CloudFormation builds the whole stack. Alerts go to the society's Telegram group.</desc>
   <style>
-    .bg { fill: #ffffff; }
     .t { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
-    .h1 { font-size: 22px; font-weight: 700; }
-    .h2 { font-size: 14.5px; font-weight: 700; }
-    .b { font-size: 12.5px; }
-    .s { font-size: 11.5px; }
+    .h { font-size: 16px; font-weight: 700; }
+    .d { font-size: 14px; }
+    .l { font-size: 13px; fill: #57606a; }
     .m { fill: #57606a; }
     .cvt { fill: #4a2fa0; }
     .awt { fill: #9a4700; }
+    .agt { fill: #1f5f99; }
+    .halo { paint-order: stroke; stroke: #ffffff; stroke-width: 5px; stroke-linejoin: round; }
     .box { fill: #f6f8fa; stroke: #8c959f; stroke-width: 1.2; }
     .cv { fill: #f3f0ff; stroke: #5b3cc4; stroke-width: 1.6; }
-    .aws { fill: #fff4e5; stroke: #c65d00; stroke-width: 1.6; }
+    .ag { fill: #eef6ff; stroke: #2f6fbf; stroke-width: 1.4; }
+    .aws { fill: #fff4e5; stroke: #c65d00; stroke-width: 1.4; }
     .region { fill: none; stroke: #c65d00; stroke-width: 1.4; stroke-dasharray: 7 5; }
-    .inst { fill: none; stroke: #8c959f; stroke-width: 1.2; }
+    .inst { fill: #ffffff; stroke: #8c959f; stroke-width: 1.2; }
     .ln { fill: none; stroke: #57606a; stroke-width: 1.5; }
     .hd { fill: #57606a; }
-    @media (prefers-color-scheme: dark) {
-      .bg { fill: #0d1117; }
-      .t { fill: #e6edf3; }
-      .m { fill: #9198a1; }
-      .cvt { fill: #c4b5ff; }
-      .awt { fill: #f5b56f; }
-      .box { fill: #161b22; stroke: #3d444d; }
-      .cv { fill: #1d1638; stroke: #a991ff; }
-      .aws { fill: #2a1d0c; stroke: #f0a35a; }
-      .region { stroke: #f0a35a; }
-      .inst { stroke: #3d444d; }
-      .ln { stroke: #9198a1; }
-      .hd { fill: #9198a1; }
-    }
   </style>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -39,198 +26,123 @@
     </marker>
   </defs>
 
-  <rect class="bg" x="0" y="0" width="1300" height="940" rx="12"/>
-  <text class="t h1" x="24" y="40">Pehra architecture</text>
-  <text class="t s m" x="24" y="60">OpenCV 5 in violet, AWS in orange, other parts in grey. The AWS deployment is built and tested and waits on the owner's go ahead.</text>
+  <rect x="0.5" y="0.5" width="1119" height="747" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+
+  <!-- AWS -->
+  <rect class="region" x="280" y="24" width="586" height="668" rx="12"/>
+  <text class="t h awt" x="296" y="50">AWS Mumbai</text>
+
+  <rect class="inst" x="296" y="64" width="554" height="428" rx="10"/>
+  <text class="t h" x="312" y="92"><tspan class="awt">EC2 Graviton4</tspan> with <tspan class="cvt">COOL</tspan></text>
+  <text class="t d m" x="312" y="112">OpenCV 5 built for Graviton</text>
 
   <!-- at the society -->
-  <rect class="box" x="24" y="92" width="250" height="64" rx="8"/>
-  <text class="t h2" x="40" y="116">Recorders and IP cameras</text>
-  <text class="t b m" x="40" y="137">Hikvision, CP Plus, Dahua; RTSP</text>
+  <rect class="box" x="24" y="72" width="220" height="64" rx="8"/>
+  <text class="t h" x="40" y="98">Committee</text>
+  <text class="t d m" x="40" y="120">in a browser</text>
 
-  <rect class="box" x="24" y="196" width="250" height="66" rx="8"/>
-  <text class="t h2" x="40" y="220">Committee and supervisor</text>
-  <text class="t b m" x="40" y="241">the web app, over HTTPS</text>
+  <rect class="cv" x="24" y="152" width="220" height="64" rx="8"/>
+  <text class="t h cvt" x="40" y="178">Phone or laptop</text>
+  <text class="t d" x="40" y="200">faces blurred on the device</text>
 
-  <rect class="cv" x="24" y="282" width="250" height="92" rx="8"/>
-  <text class="t h2 cvt" x="40" y="306">Pehra bridge</text>
-  <text class="t b" x="40" y="327">a computer at the society: OpenCV</text>
-  <text class="t b" x="40" y="345">reads RTSP on the LAN and pushes</text>
-  <text class="t b" x="40" y="363">JPEG out; no port forwarding</text>
+  <rect class="cv" x="24" y="232" width="220" height="64" rx="8"/>
+  <text class="t h cvt" x="40" y="258">Pehra bridge</text>
+  <text class="t d" x="40" y="280">on the society's network</text>
 
-  <rect class="cv" x="24" y="394" width="250" height="92" rx="8"/>
-  <text class="t h2 cvt" x="40" y="418">A laptop or phone as a camera</text>
-  <text class="t b" x="40" y="439">a link or a QR code; OpenCV.js</text>
-  <text class="t b" x="40" y="457">YuNet blurs every face before a</text>
-  <text class="t b" x="40" y="475">frame leaves the device</text>
+  <rect class="box" x="24" y="356" width="220" height="64" rx="8"/>
+  <text class="t h" x="40" y="382">CCTV and recorders</text>
+  <text class="t d m" x="40" y="404">Hikvision, CP Plus, Dahua</text>
 
-  <text class="t s m" x="24" y="526">Bridge and phone push over a</text>
-  <text class="t s m" x="24" y="543">WebSocket with a camera device</text>
-  <text class="t s m" x="24" y="560">token, kept only as a hash.</text>
-  <text class="t s m" x="24" y="594">The test server runs the same code</text>
-  <text class="t s m" x="24" y="611">in one x86 container: stock OpenCV,</text>
-  <text class="t s m" x="24" y="628">local disk, OpenRouter for the AI.</text>
+  <path class="ln" d="M244,104 H262 V264 H244"/>
+  <path class="ln" d="M244,184 H262"/>
+  <path class="ln" d="M262,155 H312" marker-end="url(#a)"/>
 
-  <rect class="cv" x="24" y="664" width="250" height="196" rx="8"/>
-  <text class="t h2 cvt" x="40" y="688">COOL</text>
-  <text class="t b" x="40" y="709">Cloud Optimized OpenCV Library</text>
-  <text class="t b" x="40" y="727">for Graviton4, from AWS</text>
-  <text class="t b" x="40" y="745">Marketplace: OpenCV 5 built with</text>
-  <text class="t b" x="40" y="763">Arm KleidiCV. Every OpenCV call</text>
-  <text class="t b" x="40" y="781">on the instance runs on it.</text>
-  <text class="t b" x="40" y="799">Proof: cv2 is loaded from under</text>
-  <text class="t b" x="40" y="817">/opt/cool (deploy/cv2_info.py).</text>
-  <text class="t s m" x="40" y="843">Not yet run on AWS.</text>
+  <path class="ln" d="M244,388 H312" marker-end="url(#a)"/>
+  <text class="t l halo" x="270" y="380" text-anchor="middle">RTSP</text>
 
-  <!-- AWS region -->
-  <rect class="region" x="300" y="72" width="718" height="808" rx="12"/>
-  <text class="t h2 awt" x="316" y="94">AWS, ap-south-1 (Mumbai)</text>
 
-  <!-- RTSP pull, over the top into the camera processes -->
-  <path class="ln" d="M274,112 H699 V158" marker-end="url(#a)"/>
-  <text class="t s m" x="532" y="106">RTSP pull, rtsp and rtsps only</text>
+  <rect class="box" x="314" y="126" width="224" height="58" rx="8"/>
+  <text class="t h" x="330" y="150">Web app</text>
+  <text class="t d m" x="330" y="171">control room, sign in</text>
 
-  <!-- HTTPS and WebSocket bus into Caddy -->
-  <path class="ln" d="M274,229 H287"/>
-  <path class="ln" d="M274,328 H287"/>
-  <path class="ln" d="M274,440 H287"/>
-  <path class="ln" d="M287,440 V187 H332" marker-end="url(#a)"/>
+  <path class="ln" d="M426,186 V208" marker-start="url(#a)" marker-end="url(#a)"/>
 
-  <rect class="inst" x="318" y="124" width="688" height="516" rx="10"/>
-  <text class="t h2" x="334" y="146">EC2 c8g.xlarge: Graviton4, from the COOL image</text>
+  <rect class="cv" x="314" y="210" width="224" height="266" rx="8"/>
+  <text class="t h cvt" x="330" y="236">Camera processes</text>
+  <text class="t d m" x="330" y="256">OpenCV 5</text>
+  <text class="t d" x="330" y="284">decode</text>
+  <text class="t d" x="330" y="306">motion gate</text>
+  <text class="t d" x="330" y="328">detect</text>
+  <text class="t d" x="330" y="350">track</text>
+  <text class="t d" x="330" y="372">zones and lines</text>
+  <text class="t d" x="330" y="394">pose</text>
+  <text class="t d" x="330" y="416">faces at entries</text>
+  <text class="t d" x="330" y="438">plates</text>
+  <text class="t d" x="330" y="460">camera health</text>
 
-  <!-- column 1: Caddy, app, verifier -->
-  <rect class="box" x="334" y="160" width="232" height="54" rx="8"/>
-  <text class="t h2" x="350" y="182">Caddy</text>
-  <text class="t b m" x="350" y="201">TLS; tokens cut from the log</text>
-  <path class="ln" d="M450,214 V228" marker-end="url(#a)"/>
+  <path class="ln" d="M538,334 H606" marker-end="url(#a)"/>
+  <text class="t l" x="572" y="310" text-anchor="middle">flagged</text>
+  <text class="t l" x="572" y="326" text-anchor="middle">moments</text>
 
-  <rect class="box" x="334" y="230" width="232" height="108" rx="8"/>
-  <text class="t h2" x="350" y="253">FastAPI app</text>
-  <text class="t s m" x="350" y="271">one uvicorn worker</text>
-  <text class="t b" x="350" y="291">society API, sign in, roles</text>
-  <text class="t b" x="350" y="309">live and device sockets</text>
-  <text class="t b" x="350" y="327">camera manager, billing, demo</text>
-  <path class="ln" d="M450,338 V352" marker-end="url(#a)"/>
+  <rect class="box" x="608" y="126" width="226" height="102" rx="8"/>
+  <text class="t h" x="624" y="152">Job worker</text>
+  <text class="t d m" x="624" y="174">Telegram posts, reminders</text>
+  <text class="t d m" x="624" y="194">blurred stills</text>
+  <text class="t d m" x="624" y="214">daily summary, retention</text>
 
-  <rect class="cv" x="334" y="354" width="232" height="174" rx="8"/>
-  <text class="t h2 cvt" x="350" y="378">Verifier agent</text>
-  <text class="t s m" x="350" y="396">in the app's check pool,</text>
-  <text class="t s m" x="350" y="412">live critical first</text>
-  <text class="t b" x="350" y="434">OpenCV tools: frames, zoom,</text>
-  <text class="t b" x="350" y="452">CLAHE, denoise, DIS flow,</text>
-  <text class="t b" x="350" y="470">pose history, the path walked</text>
-  <text class="t b" x="350" y="492">alert with a grade, dismiss,</text>
-  <text class="t b" x="350" y="510">ask a person, cannot judge</text>
-  <path class="ln" d="M450,528 V658" marker-end="url(#a)"/>
-  <text class="t s m" x="458" y="600">flagged</text>
-  <text class="t s m" x="458" y="615">moments only</text>
+  <path class="ln" d="M721,288 V230" marker-end="url(#a)"/>
+  <text class="t l" x="730" y="264">incidents</text>
 
-  <!-- app and camera processes -->
-  <path class="ln" d="M568,284 H596" marker-start="url(#a)" marker-end="url(#a)"/>
+  <rect class="ag" x="608" y="290" width="226" height="88" rx="8"/>
+  <text class="t h agt" x="624" y="316">AI check</text>
+  <text class="t d" x="624" y="338">OpenCV tools: frames, zoom,</text>
+  <text class="t d" x="624" y="358">brighten, flow, pose, path</text>
 
-  <!-- column 2: camera processes -->
-  <rect class="cv" x="598" y="160" width="202" height="464" rx="8"/>
-  <text class="t h2 cvt" x="614" y="184">Camera processes</text>
-  <text class="t s m" x="614" y="202">one per vCPU; models loaded</text>
-  <text class="t s m" x="614" y="218">once per process</text>
-  <text class="t b" x="614" y="242">decode with FFmpeg, resize</text>
-  <text class="t b" x="614" y="261">night: CLAHE on lightness</text>
-  <text class="t b" x="614" y="280">health: ORB, MAGSAC,</text>
-  <text class="t b" x="614" y="299">Laplacian, meanStdDev</text>
-  <text class="t b" x="614" y="318">MOG2 motion gate</text>
-  <text class="t b" x="614" y="337">YOLOX through cv2.dnn</text>
-  <text class="t b" x="614" y="356">Kalman tracker, 3 passes</text>
-  <text class="t b" x="614" y="375">zones and directed lines</text>
-  <text class="t b" x="614" y="394">DIS optical flow</text>
-  <text class="t s m" x="614" y="418">when a watch needs it:</text>
-  <text class="t b" x="614" y="437">MediaPipe pose</text>
-  <text class="t b" x="614" y="456">YuNet and SFace</text>
-  <text class="t b" x="614" y="475">LPD-YuNet and PP-OCRv5</text>
-  <text class="t b" x="614" y="494">SigLIP 2 (ONNX Runtime)</text>
-  <text class="t b" x="614" y="518">watch engine: signals,</text>
-  <text class="t b" x="614" y="537">rules, candidates</text>
-  <text class="t s m" x="614" y="561">reports to the app by</text>
-  <text class="t s m" x="614" y="577">messages; never opens</text>
-  <text class="t s m" x="614" y="593">the database</text>
-  <path class="ln" d="M699,624 V658" marker-end="url(#a)"/>
-  <text class="t s m" x="707" y="655">keyframes, clips</text>
-
-  <!-- column 3: scan workers, job worker, database -->
-  <rect class="cv" x="816" y="160" width="178" height="70" rx="8"/>
-  <text class="t h2 cvt" x="832" y="184">Scan workers</text>
-  <text class="t b" x="832" y="204">uploads in time chunks</text>
-  <text class="t b" x="832" y="221">on every core</text>
-
-  <rect class="cv" x="816" y="246" width="178" height="208" rx="8"/>
-  <text class="t h2 cvt" x="832" y="270">Job worker</text>
-  <text class="t b" x="832" y="292">Telegram posts, edits</text>
-  <text class="t b" x="832" y="310">and reminders</text>
-  <text class="t b" x="832" y="328">stills: faces blurred</text>
-  <text class="t b" x="832" y="346">(YuNet, SFace, pose)</text>
-  <text class="t b" x="832" y="364">daily summary</text>
-  <text class="t b" x="832" y="382">staff attendance</text>
-  <text class="t b" x="832" y="400">stays at the gate</text>
-  <text class="t b" x="832" y="418">retention, demo reset</text>
-  <text class="t b" x="832" y="436">billing sweep</text>
-  <path class="ln" d="M905,456 V470" marker-start="url(#a)" marker-end="url(#a)"/>
-
-  <rect class="box" x="816" y="472" width="178" height="68" rx="8"/>
-  <text class="t h2" x="832" y="495">SQLite (WAL)</text>
-  <text class="t b m" x="832" y="514">every row under its</text>
-  <text class="t b m" x="832" y="531">society; the job queue</text>
-  <path class="ln" d="M905,540 V658" marker-end="url(#a)"/>
-  <text class="t s m" x="913" y="600">Litestream</text>
-  <text class="t s m" x="913" y="615">copy</text>
-
-  <!-- Telegram, outside AWS -->
-  <path class="ln" d="M994,330 H1034" marker-end="url(#a)"/>
-    <rect class="box" x="1036" y="262" width="246" height="132" rx="8"/>
-  <text class="t h2" x="1052" y="286">Society's Telegram group</text>
-  <text class="t b" x="1052" y="307">one message per incident,</text>
-  <text class="t b" x="1052" y="325">edited as it changes; a still</text>
-  <text class="t b" x="1052" y="343">crop, never a clip; Acknowledge</text>
-  <text class="t b" x="1052" y="361">and False alarm, back by webhook</text>
-  <text class="t s m" x="1052" y="379">posted through the Bot API</text>
-
-  <rect class="box" x="1036" y="412" width="246" height="80" rx="8"/>
-  <text class="t h2" x="1052" y="436">Also outside AWS</text>
-  <text class="t b" x="1052" y="457">Polar billing, Google sign in;</text>
-  <text class="t b" x="1052" y="475">OpenRouter on the test server</text>
+  <path class="ln" d="M721,378 V506" marker-end="url(#a)"/>
 
   <!-- AWS services -->
-  <rect class="aws" x="334" y="660" width="232" height="96" rx="8"/>
-  <text class="t h2 awt" x="350" y="684">Amazon Bedrock</text>
-  <text class="t b" x="350" y="705">Claude Haiku 5.5, the only model</text>
-  <text class="t b" x="350" y="723">the role may call; daily caps</text>
-  <text class="t b m" x="350" y="741">per society and for the demo</text>
+  <rect class="aws" x="296" y="508" width="178" height="76" rx="8"/>
+  <text class="t h awt" x="312" y="534">S3</text>
+  <text class="t d" x="312" y="555">pictures, clips,</text>
+  <text class="t d" x="312" y="573">database copy</text>
 
-  <rect class="aws" x="598" y="660" width="396" height="96" rx="8"/>
-  <text class="t h2 awt" x="614" y="684">Amazon S3</text>
-  <text class="t b" x="614" y="705">pictures, clips and the database copy, every key under its</text>
-  <text class="t b" x="614" y="723">society; versioned, encrypted, TLS only, no public access</text>
-  <text class="t b m" x="614" y="741">Object Lock is on for the bucket, not yet used by the app</text>
+  <rect class="aws" x="484" y="508" width="178" height="76" rx="8"/>
+  <text class="t h awt" x="500" y="534">Parameter Store</text>
+  <text class="t d" x="500" y="555">settings and secrets</text>
 
-  <rect class="aws" x="334" y="772" width="232" height="94" rx="8"/>
-  <text class="t h2 awt" x="350" y="796">Amazon CloudWatch</text>
-  <text class="t b" x="350" y="817">logs, metrics, a dashboard,</text>
-  <text class="t b" x="350" y="835">six alarms by SNS email</text>
+  <rect class="aws" x="672" y="508" width="178" height="76" rx="8"/>
+  <text class="t h awt" x="688" y="534">Bedrock</text>
+  <text class="t d" x="688" y="555">the AI check</text>
 
-  <rect class="aws" x="598" y="772" width="182" height="94" rx="8"/>
-  <text class="t h2 awt" x="614" y="796">SSM</text>
-  <text class="t b" x="614" y="817">Parameter Store:</text>
-  <text class="t b" x="614" y="835">settings, secrets</text>
+  <rect class="aws" x="296" y="598" width="178" height="76" rx="8"/>
+  <text class="t h awt" x="312" y="624">CloudWatch</text>
+  <text class="t d" x="312" y="645">logs, metrics, alarms</text>
 
-  <rect class="aws" x="796" y="772" width="198" height="94" rx="8"/>
-  <text class="t h2 awt" x="812" y="796">CloudFormation</text>
-  <text class="t b" x="812" y="817">one command deploy,</text>
-  <text class="t b" x="812" y="835">no SSH; a budget alarm</text>
+  <rect class="aws" x="484" y="598" width="178" height="76" rx="8"/>
+  <text class="t h awt" x="500" y="624">SNS</text>
+  <text class="t d" x="500" y="645">alarm email</text>
+
+  <rect class="aws" x="672" y="598" width="178" height="76" rx="8"/>
+  <text class="t h awt" x="688" y="624">CloudFormation</text>
+  <text class="t d" x="688" y="645">the whole stack</text>
+
+  <!-- Telegram -->
+  <path class="ln" d="M834,177 H898" marker-end="url(#a)"/>
+  <text class="t l halo" x="866" y="169" text-anchor="middle">alerts</text>
+
+  <rect class="box" x="900" y="126" width="196" height="102" rx="8"/>
+  <text class="t h" x="916" y="152">Telegram group</text>
+  <text class="t d m" x="916" y="174">a still, faces blurred</text>
+  <text class="t d m" x="916" y="194">Acknowledge,</text>
+  <text class="t d m" x="916" y="214">False alarm</text>
 
   <!-- legend -->
-  <rect class="cv" x="24" y="900" width="14" height="14" rx="3"/>
-  <text class="t s" x="46" y="912">OpenCV 5</text>
-  <rect class="aws" x="112" y="900" width="14" height="14" rx="3"/>
-  <text class="t s" x="134" y="912">AWS</text>
-  <rect class="box" x="180" y="900" width="14" height="14" rx="3"/>
-  <text class="t s" x="202" y="912">other parts</text>
+  <rect class="cv" x="24" y="716" width="14" height="14" rx="3"/>
+  <text class="t l" x="46" y="728">OpenCV 5</text>
+  <rect class="ag" x="118" y="716" width="14" height="14" rx="3"/>
+  <text class="t l" x="140" y="728">AI</text>
+  <rect class="aws" x="170" y="716" width="14" height="14" rx="3"/>
+  <text class="t l" x="192" y="728">AWS</text>
+  <rect class="box" x="240" y="716" width="14" height="14" rx="3"/>
+  <text class="t l" x="262" y="728">other parts</text>
 </svg>
