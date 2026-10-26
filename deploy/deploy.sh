@@ -7,6 +7,7 @@
 #   deploy/deploy.sh --params FILE    read another params file
 # The stack, AWS profile and domain default to names from brand.json. A real deploy ends by writing
 # eval/results/aws.json (AWS_RESULTS to change it) from the stack's outputs and the instance's checks.
+# A blank COOL_AMI_ID is the stock mode: Amazon Linux 2023 arm64 with stock OpenCV from PyPI, not COOL.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,7 +19,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1 ;;
     --params) PARAMS="$2"; shift ;;
     --run) RUN="$2"; shift ;;
-    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -154,8 +155,17 @@ DOMAIN="$(param DOMAIN "$(brand domain)")"
 AMI="$(param COOL_AMI_ID)"
 EMAIL="$(param ALERT_EMAIL)"
 [ -n "$DOMAIN" ] || die "set DOMAIN in $PARAMS"
-[ -n "$AMI" ] || die "set COOL_AMI_ID in $PARAMS (subscribe to COOL on AWS Marketplace, then copy the AMI id for $REGION)"
 [ -n "$EMAIL" ] || die "set ALERT_EMAIL in $PARAMS"
+
+say "image"
+if [ -n "$AMI" ]; then
+  BUILD=cool
+  echo "COOL: the instance launches from $AMI"
+else
+  BUILD=stock
+  echo "stock OpenCV, not COOL: COOL_AMI_ID is blank, so the instance launches from Amazon Linux 2023 arm64"
+  echo "(/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64) with opencv-python-headless from PyPI"
+fi
 
 say "network"
 VPC="$(param VPC_ID)"
@@ -260,11 +270,11 @@ echo "a shell on the instance: aws ssm start-session --target $INSTANCE --profil
 say "results"
 RESULTS="${AWS_RESULTS:-$ROOT/eval/results/aws.json}"
 if [ "$DRY" = 1 ]; then
-  echo "a real run writes $RESULTS from the stack outputs and the checks above"
+  echo "a real run writes $RESULTS from the stack outputs and the checks above (build $BUILD)"
 else
   printf '%s\n' "$OUTPUTS" > "$WORK/outputs.tsv"
   python3 "$ROOT/deploy/aws_results.py" --out "$RESULTS" --region "$REGION" --stack "$STACK" \
     --instance-type "$INSTANCE_TYPE" --domain "$DOMAIN" --release "$RELEASE" \
-    --outputs "$WORK/outputs.tsv" --setup "$WORK/setup.out"
+    --outputs "$WORK/outputs.tsv" --setup "$WORK/setup.out" --build "$BUILD"
   echo "wrote $RESULTS"
 fi

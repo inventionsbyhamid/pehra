@@ -6,6 +6,7 @@ built with), its video backends, and a decode of each clip in deploy/clips.
     python deploy/cv2_info.py --require-kleidicv   exits 3 when KleidiCV is not in the build
     python deploy/cv2_info.py --require-video      exits 5 unless FFMPEG is a video backend and every clip decodes
     python deploy/cv2_info.py --require-cool       exits 3, then 4 when cv2 is not loaded from under COOL_ROOT, then 5
+    python deploy/cv2_info.py --require-stock      exits 6 unless OpenCV 5, 7 unless arm64, then 5 (stock, no COOL)
 
 KleidiCV alone does not prove COOL: stock OpenCV builds for Arm can carry it too. The file the module was loaded
 from does: on the COOL image it lies under /opt/cool (COOL_ROOT to change it).
@@ -16,6 +17,7 @@ through cv2.VideoCapture's FFmpeg backend. The clips are two seconds of 160x120 
            -movflags +faststart h264.mp4
     ffmpeg -f lavfi -i testsrc2=size=160x120:rate=15 -t 2 -c:v libx265 -crf 36 -pix_fmt yuv420p -tag:v hvc1 hevc.mp4"""
 import os
+import platform
 import re
 import sys
 from pathlib import Path
@@ -64,7 +66,16 @@ def main(argv: list[str], module=cv2) -> int:
     cool = os.path.commonpath([root, path]) == root
     print(f"KleidiCV {'loaded' if kleidicv else 'not in this build'}")
     print(f"COOL {'yes' if cool else 'no'}: cv2 {'is' if cool else 'is not'} loaded from under {root}")
+    print(f"opencv build: {'COOL' if cool else 'stock OpenCV, not COOL'}")
+    machine = platform.machine()
+    print(f"machine: {machine}")
     decodes = video(module)
+    if "--require-stock" in argv:
+        if not str(module.__version__).startswith("5."):
+            return 6
+        if machine not in ("aarch64", "arm64"):
+            return 7
+        return 0 if decodes else 5
     if ("--require-kleidicv" in argv or "--require-cool" in argv) and not kleidicv:
         return 3
     if "--require-cool" in argv and not cool:

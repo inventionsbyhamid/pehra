@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: AI CCTV control room on AWS Graviton with COOL (OpenCV 5 built for Graviton); deploy/deploy.sh fills the names in from brand.json
+Description: AI CCTV control room on AWS Graviton with COOL (OpenCV 5 built for Graviton), or stock OpenCV on Amazon Linux 2023 when CoolAmiId is blank; deploy/deploy.sh fills the names in from brand.json
 
 Parameters:
   Prefix:
@@ -15,8 +15,14 @@ Parameters:
     AllowedPattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
     Description: The site's host name; its A record points at the Elastic IP
   CoolAmiId:
-    Type: AWS::EC2::Image::Id
-    Description: The COOL Graviton4 AMI for this region (AWS Marketplace prodview-fdvbfiewzuehs; subscribe first)
+    Type: String
+    Default: ""
+    AllowedPattern: "^(ami-[0-9a-f]{8,17})?$"
+    Description: The COOL Graviton4 AMI for this region (AWS Marketplace prodview-fdvbfiewzuehs; subscribe first); blank launches BaseAmiParameter with stock OpenCV, not COOL
+  BaseAmiParameter:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+    Description: The public SSM parameter for the stock arm64 image used when CoolAmiId is blank (Amazon Linux 2023)
   InstanceType:
     Type: String
     Default: c8g.xlarge
@@ -25,7 +31,7 @@ Parameters:
   RootDeviceName:
     Type: String
     Default: /dev/sda1
-    Description: The AMI's root device (Ubuntu AMIs use /dev/sda1)
+    Description: The COOL AMI's root device (Ubuntu AMIs use /dev/sda1); Amazon Linux 2023 always uses /dev/xvda
   VolumeGb:
     Type: Number
     Default: 40
@@ -67,6 +73,7 @@ Parameters:
 
 Conditions:
   HasSubnet: !Not [!Equals [!Ref SubnetId, ""]]
+  Stock: !Equals [!Ref CoolAmiId, ""]
 
 Resources:
   # Incident clips, stills, keyframes and the database replica. Object Lock is on with no default retention: the app
@@ -295,7 +302,7 @@ Resources:
   Instance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: !Ref CoolAmiId
+      ImageId: !If [Stock, !Ref BaseAmiParameter, !Ref CoolAmiId]
       InstanceType: !Ref InstanceType
       IamInstanceProfile: !Ref Profile
       SubnetId: !If [HasSubnet, !Ref SubnetId, !Ref AWS::NoValue]
@@ -305,7 +312,7 @@ Resources:
         HttpPutResponseHopLimit: 1
         HttpEndpoint: enabled
       BlockDeviceMappings:
-        - DeviceName: !Ref RootDeviceName
+        - DeviceName: !If [Stock, /dev/xvda, !Ref RootDeviceName]
           Ebs:
             VolumeSize: !Ref VolumeGb
             VolumeType: gp3
@@ -313,10 +320,16 @@ Resources:
             DeleteOnTermination: true
       PropagateTagsToVolumeOnCreation: true
       # the rest of the setup arrives through SSM Run Command (deploy/deploy.sh), so only make sure the agent runs
-      UserData: !Base64 |
-        #!/bin/bash
-        snap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic
-        systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
+      # (Amazon Linux 2023 ships it as a package, the COOL Ubuntu image as a snap)
+      UserData: !If
+        - Stock
+        - !Base64 |
+          #!/bin/bash
+          systemctl enable --now amazon-ssm-agent
+        - !Base64 |
+          #!/bin/bash
+          snap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic
+          systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
       Tags:
         - {Key: Name, Value: !Ref Prefix}
 
@@ -533,5 +546,7 @@ Outputs:
     Value: !Sub "/${Prefix}/"
   BedrockModel:
     Value: !Sub "global.${BedrockModelId}"
+  OpenCvBuild:
+    Value: !If [Stock, "stock OpenCV on Amazon Linux 2023, not COOL", "COOL"]
   DashboardUrl:
     Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${Prefix}"

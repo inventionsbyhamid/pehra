@@ -412,7 +412,8 @@ def test_instance_is_graviton_from_the_cool_ami_without_ssh():
     instance = props(rendered, "Instance")
     assert instance["InstanceType"] == "c8g.xlarge" and instance["ImageId"] == "ami-0c00100000000000a"
     assert "c8g.large" in raw_template()["Parameters"]["InstanceType"]["AllowedValues"]
-    assert raw_template()["Parameters"]["CoolAmiId"]["Type"] == "AWS::EC2::Image::Id"
+    assert instance["BlockDeviceMappings"][0]["DeviceName"] == "/dev/sda1"
+    assert "snap install amazon-ssm-agent" in instance["UserData"]
     assert instance["MetadataOptions"]["HttpTokens"] == "required"
     ebs = instance["BlockDeviceMappings"][0]["Ebs"]
     assert ebs["VolumeType"] == "gp3" and ebs["Encrypted"] is True
@@ -424,6 +425,33 @@ def test_instance_is_graviton_from_the_cool_ami_without_ssh():
     assert sorted(r["FromPort"] for r in group["SecurityGroupEgress"]) == [80, 443, 554]
     assert {r["IpProtocol"] for r in group["SecurityGroupEgress"]} == {"tcp"}
     assert props(rendered, "Ip")["InstanceId"] == "i-0abc"
+
+
+AL2023_ARM64 = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+
+
+def test_blank_cool_ami_launches_stock_amazon_linux_from_the_public_ssm_parameter():
+    """No COOL subscription: a blank CoolAmiId launches the latest Amazon Linux 2023 arm64 image, resolved by
+    CloudFormation from AWS's public parameter, on the same Graviton types; the stack says it is not COOL."""
+    raw = raw_template()["Parameters"]
+    assert raw["CoolAmiId"]["Default"] == "" and raw["CoolAmiId"]["Type"] == "String"
+    pattern = re.compile(raw["CoolAmiId"]["AllowedPattern"])
+    assert pattern.fullmatch("") and pattern.fullmatch("ami-0c00100000000000a") and not pattern.fullmatch("x")
+    assert raw["BaseAmiParameter"] == {"Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+                                       "Default": AL2023_ARM64, "Description": raw["BaseAmiParameter"]["Description"]}
+    stock = render({"CoolAmiId": ""})
+    instance = props(stock, "Instance")
+    assert instance["ImageId"] == AL2023_ARM64 and instance["InstanceType"] == "c8g.xlarge"
+    assert instance["BlockDeviceMappings"][0]["DeviceName"] == "/dev/xvda"  # Amazon Linux's root device
+    assert "systemctl enable --now amazon-ssm-agent" in instance["UserData"] and "snap" not in instance["UserData"]
+    assert instance["MetadataOptions"]["HttpTokens"] == "required" and "KeyName" not in instance
+    assert stock["Outputs"]["OpenCvBuild"]["Value"] == "stock OpenCV on Amazon Linux 2023, not COOL"
+    assert render()["Outputs"]["OpenCvBuild"]["Value"] == "COOL"
+    # everything but the instance's image, disk name and user data is the same stack
+    cool = render()
+    for name, resource in cool["Resources"].items():
+        if name != "Instance":
+            assert stock["Resources"][name] == resource, name
 
 
 def dashboard_metrics(body: str) -> set[str]:
@@ -526,6 +554,18 @@ def test_cfn_lint_is_clean():
     if shutil.which("cfn-lint") is None:
         pytest.skip("cfn-lint is not installed")
     result = subprocess.run(["cfn-lint", str(DEPLOY / "cloudformation.yaml")], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cfn_lint_is_clean_with_a_blank_cool_ami(tmp_path):
+    if shutil.which("cfn-lint") is None:
+        pytest.skip("cfn-lint is not installed")
+    text = (DEPLOY / "cloudformation.yaml").read_text()
+    stock = text.replace('  CoolAmiId:\n    Type: String\n    Default: ""\n',
+                         '  CoolAmiId:\n    Type: String\n    Default: ""\n    AllowedValues: [""]\n', 1)
+    assert stock != text
+    (tmp_path / "stock.yaml").write_text(stock)
+    result = subprocess.run(["cfn-lint", str(tmp_path / "stock.yaml")], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
@@ -688,6 +728,35 @@ def test_deploy_runs_in_order_and_secrets_never_reach_the_command_line(fake_aws,
     assert "healthz ok from the instance" in result.stdout
 
 
+def stock_params(tmp_path) -> None:
+    params = tmp_path / "params.env"
+    text, count = re.subn(r"^COOL_AMI_ID=.*$", "COOL_AMI_ID=", params.read_text(), flags=re.M)
+    assert count == 1
+    params.write_text(text)
+
+
+def test_deploy_dry_run_shows_the_stock_path_when_cool_ami_is_blank(fake_aws, tmp_path):
+    stock_params(tmp_path)
+    result, calls = fake_aws("--dry-run", FAKE_AWS_FAIL="1")
+    assert result.returncode == 0, result.stderr
+    assert calls == []
+    out = result.stdout
+    assert "stock OpenCV, not COOL" in out and "al2023-ami-kernel-default-arm64" in out
+    assert re.search(r"--parameter-overrides .* CoolAmiId= ", out) and "(build stock)" in out
+    assert "COOL: the instance launches" not in out
+
+
+def test_deploy_in_stock_mode_records_no_cool(fake_aws, tmp_path):
+    stock_params(tmp_path)
+    result, calls = fake_aws(AWS_RESULTS=str(tmp_path / "results" / "aws.json"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    deploy = next(c["args"] for c in calls if c["args"][:2] == ["cloudformation", "deploy"])
+    assert "CoolAmiId=" in deploy
+    written = json.loads((tmp_path / "results" / "aws.json").read_text())
+    assert written["cool"] is False and written["build"] == "stock"
+    assert written["opencv_build"] == "stock OpenCV, not COOL"
+
+
 def test_aws_results_reads_what_the_instance_checked():
     setup = "\n".join([
         'healthz {"ok": true, "opencv": "5.0.0", "kleidicv": true}',
@@ -705,6 +774,24 @@ def test_aws_results_reads_what_the_instance_checked():
     assert (data["memory_mb"], data["memory_processes"], data["memory_ok"]) == (2630, 7, True)
     assert data["outputs"] == {"InstanceId": "i-1", "PublicIp": "198.51.100.7"}
     assert data["url"] == f"https://{DOMAIN}" and "upload_check" not in data
+    assert "opencv_build" not in data and "build" not in data  # no build line, no mode: nothing claimed
+
+
+def test_aws_results_on_stock_opencv_never_claim_cool():
+    setup = "\n".join([
+        "cv2 5.0.0 from /opt/watchful/venv/lib/python3.12/site-packages/cv2/__init__.py",
+        "KleidiCV loaded", "COOL no: cv2 is not loaded from under /opt/cool",
+        "opencv build: stock OpenCV, not COOL", "machine: aarch64",
+        "video h264.mp4 (H.264 MP4): 30 of 30 frames decoded, ok",
+        "video hevc.mp4 (H.265 MP4): 30 of 30 frames decoded, ok"])
+    results = load_deploy_module("aws_results").results
+    data = results(MUMBAI, STACK, "c8g.xlarge", DOMAIN, "abc123", "", setup, build="stock")
+    assert data["cool"] is False and data["build"] == "stock" and data["machine"] == "aarch64"
+    assert data["opencv"] == "5.0.0" and data["opencv_build"] == "stock OpenCV, not COOL"
+    assert data["video"] == {"h264.mp4": True, "hevc.mp4": True}
+    # even a setup output that claims COOL is overruled by the deploy's own mode
+    claims = results(MUMBAI, STACK, "c8g.xlarge", DOMAIN, "abc123", "", "COOL yes: cv2 is", build="stock")
+    assert claims["cool"] is False and claims["opencv_build"] == "stock OpenCV, not COOL"
 
 
 # ---- checks run on the instance ----
@@ -771,6 +858,83 @@ def test_cv2_info_decodes_camera_video_on_stock_opencv(capsys):
 
     assert info.main(["--require-video"], Undecodable()) == 5
     assert re.search(r'cv2_info\.py" --require-cool', (DEPLOY / "remote_setup.sh").read_text())
+
+
+def test_cv2_info_stock_mode_requires_opencv_5_on_arm64_and_decoding(tmp_path, monkeypatch, capsys):
+    info = load_deploy_module("cv2_info")
+
+    class Stock:
+        def __init__(self, version="5.0.0"):
+            self.__version__, self.__file__ = version, str(tmp_path / "venv" / "cv2" / "__init__.py")
+
+        def getBuildInformation(self):
+            return "  HAL: KleidiCV (ver 0.3.0)"
+
+        def __getattr__(self, name):
+            return getattr(cv2, name)
+
+    monkeypatch.setenv("COOL_ROOT", str(tmp_path / "cool"))
+    monkeypatch.setattr(info.platform, "machine", lambda: "aarch64")
+    assert info.main(["--require-stock"], Stock()) == 0
+    out = capsys.readouterr().out
+    assert "opencv build: stock OpenCV, not COOL" in out and "machine: aarch64" in out and "COOL no" in out
+    assert info.main(["--require-stock"], Stock("4.12.0")) == 6
+    assert info.main(["--require-cool"], Stock()) == 4  # the stock check is never the COOL proof
+
+    class NoFfmpeg(Stock):
+        videoio_registry = SimpleNamespace(
+            getBackends=lambda: [b for b in cv2.videoio_registry.getBackends() if b != cv2.CAP_FFMPEG],
+            getBackendName=cv2.videoio_registry.getBackendName)
+
+    assert info.main(["--require-stock"], NoFfmpeg()) == 5
+    monkeypatch.setattr(info.platform, "machine", lambda: "x86_64")
+    assert info.main(["--require-stock"], Stock()) == 7
+
+
+def stock_branch(setup: str) -> str:
+    """remote_setup.sh's lines that run only without /opt/cool."""
+    blocks = re.findall(r'^if \[ "\$MODE" = stock \]; then\n(.*?)\nelse$', setup, re.M | re.S)
+    assert len(blocks) == 3  # packages, Python, the final OpenCV check
+    return "\n".join(blocks)
+
+
+def test_remote_setup_stock_mode_without_cool(tmp_path):
+    """Without /opt/cool: Python 3.12 from Amazon Linux's repositories in a venv, requirements.lock's
+    opencv-python-headless installed, no COOL library path, Caddy and FFmpeg pinned by checksum, and the stock check
+    in place of the COOL proof."""
+    setup = (DEPLOY / "remote_setup.sh").read_text()
+    assert '[ -d /opt/cool ] || { MODE=stock; PY="$APP/venv/bin/python"; COOL_LIB=""; }' in setup
+    stock = stock_branch(setup)
+    assert "apt-get" not in stock and re.search(r"^dnf install -y -q python3\.12 ", stock, re.M)
+    assert 'python3.12 -m venv "$APP/venv"' in stock
+    assert re.search(r'cv2_info\.py" --require-stock', stock) and "--require-cool" not in stock
+    assert re.search(r'cv2_info\.py" --require-cool', setup)  # the COOL path keeps its proof
+
+    # the stock requirements keep the lock's OpenCV and drop only the test tools
+    keep = re.search(r"^(grep -vE '.*' \"\$SRC/requirements\.in\") > /tmp/watchful-requirements\.txt$", stock, re.M)
+    kept = subprocess.run(["bash", "-c", keep.group(1), "-"], capture_output=True, text=True, check=True,
+                          env={**os.environ, "SRC": str(ROOT)}).stdout.splitlines()
+    assert "opencv-python-headless==5.0.0.93" in kept
+    assert "opencv-python-headless==5.0.0.93" in (ROOT / "requirements.lock").read_text().splitlines()
+    assert not [line for line in kept if re.match(r"(pytest|moto|cfn-lint)\b", line)]
+    assert "cp \"$SRC/requirements.lock\" /tmp/watchful-constraints.txt" in stock
+
+    # no COOL library path in the instance's settings
+    env_file, _ = instance_env_file(tmp_path)
+    assert "LD_LIBRARY_PATH=/opt/cool/lib" in env_file.read_text()
+    drop = re.search(r"^\[ -n \"\$COOL_LIB\" \] \|\| (sed -i '/\^LD_LIBRARY_PATH=/d') /etc/watchful/watchful\.env", setup,
+                     re.M)
+    subprocess.run(["bash", "-c", f'{drop.group(1)} "$1"', "-", env_file], check=True)
+    assert "LD_LIBRARY_PATH" not in env_file.read_text() and "OPENCV_FFMPEG_CAPTURE_OPTIONS" in env_file.read_text()
+    assert 'env ${COOL_LIB:+LD_LIBRARY_PATH="$COOL_LIB"} "$PY"' in setup
+
+    # pinned downloads, and Caddy's unit runs the binary where the setup puts it
+    assert re.search(r"^CADDY_SHA512=[0-9a-f]{128}$", setup, re.M)
+    assert re.search(r"^FFMPEG_SHA256=[0-9a-f]{64}$", setup, re.M)
+    assert 'sha512sum -c -' in stock and 'sha256sum -c -' in stock and "tar -xzf /tmp/caddy.tgz -C /usr/bin caddy" in stock
+    unit = (DEPLOY / "caddy.service").read_text()
+    assert "ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile" in unit and "User=caddy" in unit
+    assert 'install -m 644 "$SRC/deploy/caddy.service" /etc/systemd/system/caddy.service' in stock
 
 
 def fake_proc(root: Path, rows: dict[int, tuple[int, str, int]], mem_total_kb: int = 8 * 1024 * 1024) -> Path:
