@@ -1,0 +1,661 @@
+{
+ "clip": "data/samples/vtest.avi",
+ "about": "OpenCV's sample clip vtest.avi (opencv/samples/data): a busy plaza seen from above, 768x576 at 10 frames a second, 79.5 s. Not a society camera; the same scene the Plaza demo camera plays.",
+ "labelled_by": "us (the Pehra team), by eye from frames of the clip, on 26 Oct 2026. One labeller, no second check. Times are to about half a second.",
+ "rules": "enter: a person's feet come into the left walkway zone from outside it (across its right edge, or walking in from the left edge of the picture; nobody crossed its top edge, the taped kerb). cross_in and cross_out: a person's feet cross the walkway edge line (x = 0.5, from y = 0.3 down to the bottom of the picture) going left, onto the walkway side (in), or right (out), and stay across it for at least a second. Someone standing on the edge with their feet across it does not count. People already on the walkway when the clip starts are not entries.",
+ "labels": "eval/labels/plaza.csv",
+ "code": "89f1f4b with eval/ from 906b487",
+ "engine": "89f1f4b",
+ "date": "2026-10-26T03:19:58+00:00",
+ "machine": {
+  "host": "e141bd4fa725",
+  "arch": "x86_64",
+  "cpu": "Intel(R) Xeon(R) CPU E5-2680 v2 @ 2.80GHz",
+  "avx2": false,
+  "cpus_available": 6,
+  "host_cores": 40,
+  "python": "3.12.15",
+  "opencv": "5.0.0",
+  "kleidicv": false,
+  "cool": false
+ },
+ "duration_s": 79.5,
+ "skip_start_s": 3.0,
+ "skip_end_s": 1.0,
+ "scored_s": 75.5,
+ "tolerance_s": 2.0,
+ "truth": {
+  "enter": 19,
+  "cross_in": 18,
+  "cross_out": 12
+ },
+ "runs": {
+  "fps_10": {
+   "analysis_fps": 10.0,
+   "frames": 795,
+   "wall_s": 112.2,
+   "person_ids": 38,
+   "watches": {
+    "enter": {
+     "truth": 19,
+     "fired": 20,
+     "tp": 16,
+     "fp": 4,
+     "fn": 3,
+     "precision": {
+      "k": 16,
+      "n": 20,
+      "value": 0.8,
+      "wilson95": [
+       0.584,
+       0.9193
+      ],
+      "failures_at_most": null
+     },
+     "recall": {
+      "k": 16,
+      "n": 19,
+      "value": 0.8421,
+      "wilson95": [
+       0.6243,
+       0.9448
+      ],
+      "failures_at_most": null
+     },
+     "delay_s": {
+      "n": 16,
+      "median": -0.0,
+      "p90": 0.3
+     },
+     "false_alarms_per_camera_hour": 190.7,
+     "false_alarms_at": [
+      18.9,
+      56.8,
+      72.9,
+      75.3
+     ],
+     "missed_at": [
+      15.8,
+      36.2,
+      63.9
+     ],
+     "watch": "Enters left walkway",
+     "first_false_alarm": {
+      "t_s": 18.9,
+      "image": "failures/plaza_before_fix-10fps-enter-first-false-alarm.jpg"
+     },
+     "first_miss": {
+      "t_s": 15.8,
+      "image": "failures/plaza_before_fix-10fps-enter-first-miss.jpg"
+     }
+    },
+    "cross_in": {
+     "truth": 18,
+     "fired": 14,
+     "tp": 14,
+     "fp": 0,
+     "fn": 4,
+     "precision": {
+      "k": 14,
+      "n": 14,
+      "value": 1.0,
+      "wilson95": [
+       0.7847,
+       1.0
+      ],
+      "failures_at_most": 0.2143
+     },
+     "recall": {
+      "k": 14,
+      "n": 18,
+      "value": 0.7778,
+      "wilson95": [
+       0.5479,
+       0.91
+      ],
+      "failures_at_most": null
+     },
+     "delay_s": {
+      "n": 14,
+      "median": 0.2,
+      "p90": 0.34
+     },
+     "false_alarms_per_camera_hour": 0.0,
+     "false_alarms_at": [],
+     "missed_at": [
+      5.9,
+      36.2,
+      53.2,
+      63.9
+     ],
+     "watch": "Crosses the walkway edge going in",
+     "first_false_alarm": null,
+     "first_miss": {
+      "t_s": 5.9,
+      "image": "failures/plaza_before_fix-10fps-cross_in-first-miss.jpg"
+     }
+    },
+    "cross_out": {
+     "truth": 12,
+     "fired": 11,
+     "tp": 11,
+     "fp": 0,
+     "fn": 1,
+     "precision": {
+      "k": 11,
+      "n": 11,
+      "value": 1.0,
+      "wilson95": [
+       0.7412,
+       1.0
+      ],
+      "failures_at_most": 0.2727
+     },
+     "recall": {
+      "k": 11,
+      "n": 12,
+      "value": 0.9167,
+      "wilson95": [
+       0.6461,
+       0.9851
+      ],
+      "failures_at_most": null
+     },
+     "delay_s": {
+      "n": 11,
+      "median": 0.2,
+      "p90": 0.4
+     },
+     "false_alarms_per_camera_hour": 0.0,
+     "false_alarms_at": [],
+     "missed_at": [
+      46.2
+     ],
+     "watch": "Crosses the walkway edge going out",
+     "first_false_alarm": null,
+     "first_miss": {
+      "t_s": 46.2,
+      "image": "failures/plaza_before_fix-10fps-cross_out-first-miss.jpg"
+     }
+    }
+   },
+   "all": {
+    "tp": 41,
+    "fp": 4,
+    "fn": 8,
+    "precision": {
+     "k": 41,
+     "n": 45,
+     "value": 0.9111,
+     "wilson95": [
+      0.7927,
+      0.9649
+     ],
+     "failures_at_most": null
+    },
+    "recall": {
+     "k": 41,
+     "n": 49,
+     "value": 0.8367,
+     "wilson95": [
+      0.7096,
+      0.9149
+     ],
+     "failures_at_most": null
+    },
+    "false_alarms_per_camera_hour": 190.7
+   },
+   "ai": {
+    "candidates": 49,
+    "checks": 3,
+    "incidents": 3,
+    "checks_per_camera_hour": 135.8,
+    "note": "one clip of 80 s, shorter than an incident's grouping window (Tuning alerts.group_s), so later repeats join the first incident without a check"
+   },
+   "motion_alarm_alerts": 1
+  },
+  "fps_2": {
+   "analysis_fps": 2.0,
+   "frames": 159,
+   "wall_s": 52.1,
+   "person_ids": 126,
+   "watches": {
+    "enter": {
+     "truth": 19,
+     "fired": 48,
+     "tp": 16,
+     "fp": 32,
+     "fn": 3,
+     "precision": {
+      "k": 16,
+      "n": 48,
+      "value": 0.3333,
+      "wilson95": [
+       0.2168,
+       0.4746
+      ],
+      "failures_at_most": null
+     },
+     "recall": {
+      "k": 16,
+      "n": 19,
+      "value": 0.8421,
+      "wilson95": [
+       0.6243,
+       0.9448
+      ],
+      "failures_at_most": null
+     },
+     "delay_s": {
+      "n": 16,
+      "median": -1.15,
+      "p90": 0.95
+     },
+     "false_alarms_per_camera_hour": 1525.8,
+     "false_alarms_at": [
+      6.0,
+      8.0,
+      9.0,
+      28.5,
+      29.0,
+      30.0,
+      30.5,
+      31.0,
+      31.0,
+      32.0,
+      32.0,
+      33.0,
+      33.0,
+      33.0,
+      34.0,
+      39.0,
+      41.0,
+      55.0,
+      55.5,
+      56.5,
+      57.5,
+      60.5,
+      63.0,
+      64.0,
+      71.0,
+      71.5,
+      71.5,
+      72.0,
+      73.0,
+      75.0,
+      78.0,
+      78.5
+     ],
+     "missed_at": [
+      15.8,
+      36.2,
+      48.8
+     ],
+     "watch": "Enters left walkway",
+     "first_false_alarm": {
+      "t_s": 6.0,
+      "image": "failures/plaza_before_fix-2fps-enter-first-false-alarm.jpg"
+     },
+     "first_miss": {
+      "t_s": 15.8,
+      "image": "failures/plaza_before_fix-2fps-enter-first-miss.jpg"
+     }
+    },
+    "cross_in": {
+     "truth": 18,
+     "fired": 2,
+     "tp": 2,
+     "fp": 0,
+     "fn": 16,
+     "precision": {
+      "k": 2,
+      "n": 2,
+      "value": 1.0,
+      "wilson95": [
+       0.3424,
+       1.0
+      ],
+      "failures_at_most": 1.5
+     },
+     "recall": {
+      "k": 2,
+      "n": 18,
+      "value": 0.1111,
+      "wilson95": [
+       0.031,
+       0.328
+      ],
+      "failures_at_most": null
+     },
+     "delay_s": {
+      "n": 2,
+      "median": -0.4,
+      "p90": 0.0
+     },
+     "false_alarms_per_camera_hour": 0.0,
+     "false_alarms_at": [],
+     "missed_at": [
+      15.8,
+      17.9,
+      22.0,
+      25.3,
+      27.8,
+      28.9,
+      36.2,
+      48.8,
+      52.9,
+      53.2,
+      62.7,
+      63.9,
+      68.8,
+      70.6,
+      75.1,
+      77.3
+     ],
+     "watch": "Crosses the walkway edge going in",
+     "first_false_alarm": null,
+     "first_miss": {
+      "t_s": 15.8,
+      "image": "failures/plaza_before_fix-2fps-cross_in-first-miss.jpg"
+     }
+    },
+    "cross_out": {
+     "truth": 12,
+     "fired": 5,
+     "tp": 5,
+     "fp": 0,
+     "fn": 7,
+     "precision": {
+      "k": 5,
+      "n": 5,
+      "value": 1.0,
+      "wilson95": [
+       0.5655,
+       1.0
+      ],
+      "failures_at_most": 0.6
+     },
+     "recall": {
+      "k": 5,
+      "n": 12,
+      "value": 0.4167,
+      "wilson95": [
+       0.1933,
+       0.6805
+      ],
+      "failures_at_most": null
+     },
+     "delay_s": {
+      "n": 5,
+      "median": 0.5,
+      "p90": 0.76
+     },
+     "false_alarms_per_camera_hour": 0.0,
+     "false_alarms_at": [],
+     "missed_at": [
+      10.3,
+      31.1,
+      33.2,
+      34.6,
+      34.9,
+      46.2,
+      78.2
+     ],
+     "watch": "Crosses the walkway edge going out",
+     "first_false_alarm": null,
+     "first_miss": {
+      "t_s": 10.3,
+      "image": "failures/plaza_before_fix-2fps-cross_out-first-miss.jpg"
+     }
+    }
+   },
+   "all": {
+    "tp": 23,
+    "fp": 32,
+    "fn": 26,
+    "precision": {
+     "k": 23,
+     "n": 55,
+     "value": 0.4182,
+     "wilson95": [
+      0.2974,
+      0.5497
+     ],
+     "failures_at_most": null
+    },
+    "recall": {
+     "k": 23,
+     "n": 49,
+     "value": 0.4694,
+     "wilson95": [
+      0.337,
+      0.6062
+     ],
+     "failures_at_most": null
+    },
+    "false_alarms_per_camera_hour": 1525.8
+   },
+   "ai": {
+    "candidates": 56,
+    "checks": 3,
+    "incidents": 3,
+    "checks_per_camera_hour": 135.8,
+    "note": "one clip of 80 s, shorter than an incident's grouping window (Tuning alerts.group_s), so later repeats join the first incident without a check"
+   },
+   "motion_alarm_alerts": 1
+  },
+  "fps_1": {
+   "analysis_fps": 1.0,
+   "frames": 80,
+   "wall_s": 34.0,
+   "person_ids": 80,
+   "watches": {
+    "enter": {
+     "truth": 19,
+     "fired": 28,
+     "tp": 15,
+     "fp": 13,
+     "fn": 4,
+     "precision": {
+      "k": 15,
+      "n": 28,
+      "value": 0.5357,
+      "wilson95": [
+       0.3581,
+       0.7047
+      ],
+      "failures_at_most": null
+     },
+     "recall": {
+      "k": 15,
+      "n": 19,
+      "value": 0.7895,
+      "wilson95": [
+       0.5667,
+       0.9149
+      ],
+      "failures_at_most": null
+     },
+     "delay_s": {
+      "n": 15,
+      "median": 0.1,
+      "p90": 1.52
+     },
+     "false_alarms_per_camera_hour": 619.9,
+     "false_alarms_at": [
+      9.0,
+      30.0,
+      31.0,
+      31.0,
+      33.0,
+      40.0,
+      42.0,
+      66.0,
+      67.0,
+      68.0,
+      73.0,
+      73.0,
+      78.0
+     ],
+     "missed_at": [
+      15.8,
+      25.3,
+      36.2,
+      52.9
+     ],
+     "watch": "Enters left walkway",
+     "first_false_alarm": {
+      "t_s": 9.0,
+      "image": "failures/plaza_before_fix-1fps-enter-first-false-alarm.jpg"
+     },
+     "first_miss": {
+      "t_s": 15.8,
+      "image": "failures/plaza_before_fix-1fps-enter-first-miss.jpg"
+     }
+    },
+    "cross_in": {
+     "truth": 18,
+     "fired": 0,
+     "tp": 0,
+     "fp": 0,
+     "fn": 18,
+     "precision": {
+      "k": 0,
+      "n": 0,
+      "value": null,
+      "wilson95": null,
+      "failures_at_most": null
+     },
+     "recall": {
+      "k": 0,
+      "n": 18,
+      "value": 0.0,
+      "wilson95": [
+       0.0,
+       0.1759
+      ],
+      "failures_at_most": null
+     },
+     "delay_s": {
+      "n": 0,
+      "median": null,
+      "p90": null
+     },
+     "false_alarms_per_camera_hour": 0.0,
+     "false_alarms_at": [],
+     "missed_at": [
+      5.9,
+      15.8,
+      17.9,
+      22.0,
+      25.3,
+      27.8,
+      28.9,
+      36.2,
+      48.8,
+      52.9,
+      53.2,
+      56.4,
+      62.7,
+      63.9,
+      68.8,
+      70.6,
+      75.1,
+      77.3
+     ],
+     "watch": "Crosses the walkway edge going in",
+     "first_false_alarm": null,
+     "first_miss": {
+      "t_s": 5.9,
+      "image": "failures/plaza_before_fix-1fps-cross_in-first-miss.jpg"
+     }
+    },
+    "cross_out": {
+     "truth": 12,
+     "fired": 0,
+     "tp": 0,
+     "fp": 0,
+     "fn": 12,
+     "precision": {
+      "k": 0,
+      "n": 0,
+      "value": null,
+      "wilson95": null,
+      "failures_at_most": null
+     },
+     "recall": {
+      "k": 0,
+      "n": 12,
+      "value": 0.0,
+      "wilson95": [
+       0.0,
+       0.2425
+      ],
+      "failures_at_most": null
+     },
+     "delay_s": {
+      "n": 0,
+      "median": null,
+      "p90": null
+     },
+     "false_alarms_per_camera_hour": 0.0,
+     "false_alarms_at": [],
+     "missed_at": [
+      10.3,
+      31.1,
+      33.2,
+      34.6,
+      34.9,
+      46.2,
+      59.3,
+      61.2,
+      67.8,
+      70.1,
+      74.5,
+      78.2
+     ],
+     "watch": "Crosses the walkway edge going out",
+     "first_false_alarm": null,
+     "first_miss": {
+      "t_s": 10.3,
+      "image": "failures/plaza_before_fix-1fps-cross_out-first-miss.jpg"
+     }
+    }
+   },
+   "all": {
+    "tp": 15,
+    "fp": 13,
+    "fn": 34,
+    "precision": {
+     "k": 15,
+     "n": 28,
+     "value": 0.5357,
+     "wilson95": [
+      0.3581,
+      0.7047
+     ],
+     "failures_at_most": null
+    },
+    "recall": {
+     "k": 15,
+     "n": 49,
+     "value": 0.3061,
+     "wilson95": [
+      0.1952,
+      0.4453
+     ],
+     "failures_at_most": null
+    },
+    "false_alarms_per_camera_hour": 619.9
+   },
+   "ai": {
+    "candidates": 28,
+    "checks": 1,
+    "incidents": 1,
+    "checks_per_camera_hour": 45.3,
+    "note": "one clip of 80 s, shorter than an incident's grouping window (Tuning alerts.group_s), so later repeats join the first incident without a check"
+   },
+   "motion_alarm_alerts": 1
+  }
+ }
+}

@@ -59,6 +59,7 @@ def _trim(text: str) -> str:
 
 def _plain(v: float) -> str:
     """Enough digits to read, no more: 1,653 and 88 and 5.6 and 0.25."""
+    v = v + 0.0  # no "-0"
     if abs(v) >= 10:
         return f"{round(v):,}"
     return _trim(f"{v:.1f}") if abs(v) >= 1 else _trim(f"{v:.2f}")

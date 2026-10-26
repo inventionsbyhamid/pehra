@@ -88,7 +88,7 @@ def score(fired: list[float], truth: list[float], tolerance_s: float, lo: float 
 
 
 def _round(v, digits: int = 2):
-    return None if v is None else round(v, digits)
+    return None if v is None else round(v, digits) + 0.0  # no -0.0
 
 
 def replay(setup: dict, fps: float, work: Path) -> dict:
