@@ -131,8 +131,12 @@ chown -R watchful:watchful "$DATA/samples"
 ln -sfn "$DATA" "$SRC/data"
 
 say "web build"
-(cd "$SRC/web" && PATH="/opt/node/bin:$PATH" npm ci --no-audit --no-fund --loglevel=error \
-  && PATH="/opt/node/bin:$PATH" SITE_URL="https://$DOMAIN" VITE_HOSTING=aws npm run build)
+# the lockfile is made on x86, so on Graviton the bundlers' arm64 builds are added at the versions it pins
+(cd "$SRC/web" && export PATH="/opt/node/bin:$PATH" && npm ci --no-audit --no-fund --loglevel=error \
+  && if [ "$(uname -m)" = aarch64 ]; then npm install --no-save --no-audit --no-fund --loglevel=error \
+       "@rollup/rollup-linux-arm64-gnu@$(node -p "require('rollup/package.json').version")" \
+       "@esbuild/linux-arm64@$(node -p "require('esbuild/package.json').version")"; fi \
+  && SITE_URL="https://$DOMAIN" VITE_HOSTING=aws npm run build)
 [ -f "$SRC/web/dist/index.html" ] || { say "the web build made no index.html"; exit 1; }
 
 say "settings"

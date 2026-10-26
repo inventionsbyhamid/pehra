@@ -1188,3 +1188,14 @@ def test_deploy_files_agree():
         if path.is_file() and path.suffix not in (".mp4", ".pyc"):
             text = path.read_text().lower()
             assert BRAND["name"].lower() not in text and "packsure" not in text, path
+
+
+def test_the_web_build_gets_the_arm_bundlers_the_lockfile_leaves_out():
+    """web/package-lock.json is made on x86, so npm ci on a Graviton instance has no rollup or esbuild binary for
+    arm64 and vite build stops ("Cannot find module @rollup/rollup-linux-arm64-gnu"). The setup adds both at the
+    versions the lockfile pins."""
+    setup = (DEPLOY / "remote_setup.sh").read_text()
+    build = setup[setup.index('say "web build"'):setup.index('say "settings"')]
+    assert "@rollup/rollup-linux-arm64-gnu@" in build and "@esbuild/linux-arm64@" in build
+    assert build.index("npm ci") < build.index("@rollup/rollup-linux-arm64-gnu@") < build.index("npm run build")
+    assert "require('rollup/package.json').version" in build and "require('esbuild/package.json').version" in build
