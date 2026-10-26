@@ -619,3 +619,17 @@ def test_aws_copies_the_samples_with_their_folders():
     from pathlib import Path
     setup = (Path(__file__).resolve().parents[2] / "deploy" / "remote_setup.sh").read_text()
     assert 'cp -rn "$APP"/data/samples/* "$DATA/samples/"' in setup
+
+
+# Also: the report claims only the verifier tools there are
+
+def test_the_report_names_only_the_verifiers_real_tools():
+    import re
+    from pathlib import Path
+    from watchful.agent.tools import TERMINAL, TOOLS
+    report = (Path(__file__).resolve().parents[2] / "docs" / "src" / "report.md").read_text()
+    table = report[report.index("| Tool | What it runs |"):]
+    table = table[:table.index("\n\n")]
+    named = set(re.findall(r"`(\w+)\(", table))
+    assert named and named <= set(TOOLS) | set(TERMINAL), named - set(TOOLS) - set(TERMINAL)
+    assert not re.search(r"zone.state|plate|re.?read", table, re.I)

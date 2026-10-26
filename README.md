@@ -55,6 +55,10 @@ record. A society picks which of its cameras Pehra watches. Prices exclude GST. 
 | Society | [₹699](backend/watchful/data/plans.json "plans.society.price_month_inr") a camera (about [$7](backend/watchful/data/plans.json "plans.society.price_month_inr in plans.json over usd_inr.rate in plans.json")) | [₹6,990](backend/watchful/data/plans.json "plans.society.price_year_inr") a camera (about [$74](backend/watchful/data/plans.json "plans.society.price_year_inr in plans.json over usd_inr.rate in plans.json")) | up to [49](backend/watchful/data/plans.json "plans.society.limits.watched_cameras") | [30](backend/watchful/data/plans.json "plans.society.limits.retention_days") days |
 | Large sites | By agreement | | [50](backend/watchful/data/plans.json "plans.large.limits.min_cameras") or more | by agreement |
 
+Every plan has the control room, any watch in plain words (with the watch log) and graded Telegram alerts. The gate
+log, the staff register and the daily summary come with the Society plan and above, as the pricing page lists them;
+a free society is told so where they would be, with the way to change its plan.
+
 What one camera costs us on AWS is not measured yet (report section 6); running the instance is estimated at about
 [$105.00](eval/results/build_measurements.json "estimates.aws_month_usd") (about [₹10,000](eval/results/build_measurements.json "estimates.aws_month_usd in build_measurements.json times usd_inr.rate in plans.json")) a month (report section 5).
 <!-- pricing end -->

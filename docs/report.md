@@ -107,7 +107,7 @@ Pehra watches the cameras a society already has, live, with OpenCV, and speaks u
   once, before any AI check, as one message per incident that is edited as things change, with Acknowledge and False
   alarm buttons, and is posted again if nobody acknowledges. The still crop has the face of anyone not enrolled
   blurred; the clip stays behind sign in. Warnings go to the app (and Telegram if the society turns them on); info
-  goes to the logs and the 9 AM daily summary.
+  is kept as a note in the watch log and on the camera's history, and counted in the 9 AM daily summary.
 * **An agent that checks before it bothers anyone.** The AI never watches the stream. OpenCV flags a moment; a
   verifier agent looks at it with OpenCV tools (zoom, brighten, optical flow, pose history, the path walked), then
   raises the alert with a grade, dismisses it, or asks a person (section 7).
@@ -279,7 +279,10 @@ from `data/purposes.json`.
 | `camera_health` | Live, offline, covered, turned or blurred (section 4.1, step 3) | A |
 
 **The compiler** (`agent/compiler.py`) asks the AI for a watch, then checks it in code: unknown signals go back to the
-AI and then become a "cannot"; contradictions go back; zone and line names are fixed to the drawn ones; a tier can
+AI and then become a "cannot"; contradictions go back; so does any condition that could never be true, by a contract
+each signal's spec carries (its comparisons, a zone, the params it needs, the only words it gives), so a watch that
+compiles always can fire, and a stored one that breaks it does not run and says why (`zone_looks_like` with no zone
+looks at the whole picture); zone and line names are fixed to the drawn ones; a tier can
 never claim better than its signal's own tier; setup tasks (draw this line, save two pictures of the gate open at
 night) are written by code, not the AI. The card shows what will be watched and how reliably (A reliable, B
 approximate, C the AI checks every time, X not watched), what cannot be watched with the nearest alternative, and the
@@ -565,7 +568,8 @@ camera health, on every analysed frame, on the server. The AI never sees the str
 * A watch's conditions hold, so a candidate is raised with its evidence: the reasons in words ("came into pool area",
   "still for 20 s"), the signal values, frames around the moment with the zones and the box drawn, the best crop, the
   track's path and poses.
-* A candidate whose subject was named by an enrolled face is an alert at once, with no AI step.
+* A candidate whose subject was named by an enrolled face is filed at once as measured by OpenCV, with no AI step;
+  so is a change in a camera's own health.
 * A camera health candidate is filed at once, with no AI step and no clip.
 * A critical candidate opens its incident and posts to Telegram before the check, saying "Possible:" and "Checking
   now"; the verdict edits the message.
@@ -583,7 +587,7 @@ depends on it. At most 6 steps and 45 s; at most 6 pictures in view.
 | `crop_zoom(at_s)` | The flagged object, enlarged twice with `INTER_CUBIC` and sharpened with an unsharp mask (`GaussianBlur`, `addWeighted`) |
 | `enhance(image, kind)` | Brighten (CLAHE on the lightness of Lab), denoise (`fastNlMeansDenoisingColored`) or sharpen any picture it has |
 | `motion_trail()` | The path the object walked, drawn on the latest frame (`polylines`, `circle`) |
-| `flow(from_s, to_s)` | DIS optical flow inside the object's box: body heights a second downward and sideways |
+| `flow(from_s, to_s)` | DIS optical flow inside the object's box of that moment, between neighbouring frames at most 0.6 s apart: body heights a second downward and sideways; frames further apart are said to be too far apart |
 | `pose_history(seconds)` | The person's torso angle over time from MediaPipe pose (0 upright, 90 lying) |
 | `raise_alert(summary, severity, reason)`, `dismiss(reason)`, `ask_human(question)`, `cannot_judge(reason)` | Finish: real, with a grade and why; not real; a person should decide; or the question needs an age |
 
@@ -592,8 +596,8 @@ depends on it. At most 6 steps and 45 s; at most 6 pictures in view.
 | OpenCV result | What happens next | Shown by |
 | --- | --- | --- |
 | A watch's signals hold on a track or the scene | A candidate is raised; otherwise nothing is sent anywhere | `rules/engine.py`; `test_signals_v2.py`, `test_watch_review.py` |
-| YuNet and SFace name an enrolled person | An alert with no AI step | `test_agent.py::test_face_match_skips_ai` |
-| ORB, MAGSAC, the Laplacian or `meanStdDev` say covered, turned or blurred; no frames say offline | A warning incident at once, no AI; resolved when the camera is live again | `test_health.py` |
+| YuNet and SFace name an enrolled person | An incident at once, marked measured by OpenCV, with no AI step | `test_agent.py::test_face_match_skips_ai` |
+| ORB, MAGSAC, the Laplacian or `meanStdDev` say covered, turned or blurred; no frames say offline | A warning incident at once, marked measured, no AI; resolved when the camera is live again | `test_health.py` |
 | The pictures the model sees are dark, small or blurry | The prompt tells the model to look closer before deciding: `enhance` or `crop_zoom`, then it decides on the result | `verify.md`; `test_agent.py::test_zoom_then_alert`, `::test_enhance_then_dismiss` |
 | `flow` or `pose_history` report fast downward motion or a lying torso | The model reads those numbers in its next step before its verdict | `agent/tools.py`; `test_agent.py::test_step_limit_falls_back` runs `pose_history` |
 | The AI cleared this camera and watch a moment ago | A new critical trigger is held and checked before anything is posted | `test_incidents.py::test_an_ai_dismissal_holds_later_triggers_until_checked` |
@@ -630,10 +634,13 @@ Run 4, step by step (`eval/results/agent-trace-plaza_dark.json`):
 
 On the dimmed pictures the model reached for a closer look (`crop_zoom`, or CLAHE through `enhance`) before deciding,
 which it did not do in the runs on the pictures as filmed. Two honest notes from these runs. In the as filmed runs the model
-checked motion with `flow`, which returned "[median motion inside the box: -0.00 body heights per second downward, -0.00 sideways](../eval/results/agent-trace-plaza.json "runs.0.steps.1.result")" for a person who was walking: the tool
-measures the flow inside the track's last box between two frames that can be seconds apart, so it missed the motion,
-and the model decided from the frames. That is a defect in `agent/tools.py`, open for the fix pass. And these are four
-checks of one moment, a demonstration, not an evaluation of the agent's accuracy (section 11).
+checked motion with `flow`, which returned "[median motion inside the box: -0.00 body heights per second downward, -0.00 sideways](../eval/results/agent-trace-plaza.json "runs.0.steps.1.result")" for a person who was walking: the tool then
+measured the flow inside the track's last box between two frames that could be seconds apart, so it missed the motion,
+and the model decided from the frames. Fixed since these runs: `flow` now compares neighbouring frames at most
+0.6 s apart, in the box of that moment, and says when frames are too far apart; a test with a person walking
+at 0.3 body heights a second reads that speed (`test_final_fix_b.py::test_the_flow_tool_sees_a_walking_person_move`).
+These traces were recorded before the fix and were not run again. And these are four checks of one moment, a
+demonstration, not an evaluation of the agent's accuracy (section 11).
 
 **Task success.** On the Plaza clip the rules raised [43](../eval/results/eval-plaza.json "runs.fps_2.ai.candidates") candidates at
 2 frames a second, which became [3](../eval/results/eval-plaza.json "runs.fps_2.ai.incidents") incidents and
@@ -641,8 +648,9 @@ checks of one moment, a demonstration, not an evaluation of the agent's accuracy
 that calls every moment real, so it counts checks, not the agent's accuracy.
 
 **Failure handling.** A reply that is not valid JSON for the schema gets one more try, then the check ends. When steps
-or time run out, or on an AI error, timeout or daily cap, a critical candidate becomes an unverified alert with
-OpenCV's reasons ("Not checked by the AI"), and anything less is dismissed as not verified. An incident held for its
+or time run out, or on an AI error, timeout or daily cap, the candidate, whatever its level, becomes an unverified
+incident with OpenCV's reasons and why ("Not checked by the AI: daily limit reached", or "the AI could not be
+reached"), grouped like any other, and the control room says when the day's checks are used up. An incident held for its
 check is posted unverified after 15 s. A guard's False alarm quiets only that very trigger for
 5 minutes; an AI alert verdict is never silenced by an earlier tap.
 
@@ -656,8 +664,9 @@ another society cannot reach a check). Daily caps: [50](../backend/watchful/data
 cap for writing watches and questions; demo sandboxes have smaller caps of their own and a total for the whole demo.
 
 **Human control.** `ask_human` leaves the incident waiting for a person. Anyone in the society's linked Telegram group
-can acknowledge or mark a false alarm (guards are often not app members), and supervisors can in the app. Alerts
-always say "Possible"; a person decides what to do.
+can acknowledge or mark a false alarm (guards are often not app members), and supervisors can in the app. Alerts the
+AI checked always say "Possible"; a person decides what to do. Camera health and enrolled faces, measured by OpenCV
+with no AI check, say so instead ("Measured by OpenCV, no AI check needed").
 
 **The age rule.** The verifier never estimates or states anyone's age. A question that needs an age ends with
 `cannot_judge`, which posts the moment unchecked for a person to see; any age words the model writes in a summary are
@@ -909,9 +918,8 @@ when.
   planned (`eval/record_checklist.md`).
 * **The agent's accuracy is not measured.** The evaluation's AI check was a stand in that calls every moment real.
   The loop is tested with a scripted model, and the real model ran [2](../eval/results/agent-trace-plaza.json "runs") checks as filmed and
-  [2](../eval/results/agent-trace-plaza_dark.json "runs") dimmed on one moment (section 7); no scored set of real verdicts exists. Those runs showed
-  that the agent's `flow` tool measures no motion for a walking person (it looks inside the track's last box), which
-  is open for the fix pass.
+  [2](../eval/results/agent-trace-plaza_dark.json "runs") dimmed on one moment (section 7); no scored set of real verdicts exists. Those runs used
+  the `flow` tool before its fix (section 7), and were not run again after it.
 * **Polar unverified end to end.** No sandbox product exists and Polar's API was never called; the webhook fixture is
   built from the SDK's types, not a captured delivery.
 * **Telegram unverified with a real bot.** Every Telegram path is tested against a mocked Bot API.
@@ -934,8 +942,8 @@ when.
   plate is seen again, so a yellow plate can get a false overstay; two overstays at one gate within ten minutes fold
   into one incident naming the first; Telegram stills refresh the enrolled faces every minute, so a deleted person's
   face may stay sharp in a still for up to a minute; a deployment wide AI cap is not built (the caps per society and
-  for the demo are); uploaded recordings get no plate reading; the saved zone state pictures are deleted with footage
-  after the plan's days, though they are settings; the camera pool does not rebalance after cameras are removed; on
+  for the demo are); uploaded recordings get no plate reading; the camera pool does not rebalance after cameras are
+  removed; on
   the test server, which has no egress rule, a pulled camera's RTSP redirect can still send blind requests inside its
   own network; the Caddy file is validated only on the instance at deploy; the plan limits for AI checks and staff
   are our call, not measured against cost; the demo's Cloudflare Turnstile check is a hook, off without keys.

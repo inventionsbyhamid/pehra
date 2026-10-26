@@ -10,5 +10,9 @@ record. A society picks which of its cameras Pehra watches. Prices exclude GST. 
 | Society | {{plans.society.month}} a camera (about {{plans.society.month_usd}}) | {{plans.society.year}} a camera (about {{plans.society.year_usd}}) | up to {{plans.society.cameras}} | {{plans.society.days}} days |
 | Large sites | By agreement | | {{plans.large.min_cameras}} or more | by agreement |
 
+Every plan has the control room, any watch in plain words (with the watch log) and graded Telegram alerts. The gate
+log, the staff register and the daily summary come with the Society plan and above, as the pricing page lists them;
+a free society is told so where they would be, with the way to change its plan.
+
 What one camera costs us on AWS is not measured yet (report section 6); running the instance is estimated at about
 {{build.estimates.aws_month_usd}} (about {{cost.aws_month_inr}}) a month (report section 5).
