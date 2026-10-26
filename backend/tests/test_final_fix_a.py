@@ -645,10 +645,14 @@ def test_m6_a_clip_still_is_decoded_once(tmp_path, monkeypatch):
 def test_m7_the_api_pages_are_off_unless_asked_for(tmp_path):
     app = app_for(tmp_path)
     anon = TestClient(app, base_url=BASE)
-    assert "swagger" not in anon.get("/docs").text.lower()
-    assert '"openapi"' not in anon.get("/openapi.json").text
+    for path in ("/docs", "/api/docs"):
+        assert "swagger" not in anon.get(path).text.lower()
+    for path in ("/openapi.json", "/api/openapi.json"):
+        assert '"openapi"' not in anon.get(path).text
     dev = TestClient(app_for(tmp_path / "dev", api_docs=True), base_url=BASE)
-    assert dev.get("/openapi.json").json()["info"]["title"]
+    assert dev.get("/api/openapi.json").json()["info"]["title"]
+    assert "swagger" in dev.get("/api/docs").text.lower()
+    assert "swagger" not in dev.get("/docs").text.lower()  # the site's documentation, not the API's
 
 
 def test_appearance_lookouts_are_off_unless_set(tmp_path):

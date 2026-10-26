@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     sns_topic_arn: str | None = None
 
     public_base_url: str = "http://localhost:8000"
-    api_docs: bool = False  # /docs and /openapi.json, for development only
+    api_docs: bool = False  # /api/docs and /api/openapi.json, for development only
     # Cloudflare's CF-Connecting-IP names the visitor only where every request comes through Cloudflare (the ioflood
     # tunnel); elsewhere a visitor could send it themselves (ratelimit.client_ip)
     trust_cloudflare: bool = False

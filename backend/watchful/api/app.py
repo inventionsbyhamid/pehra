@@ -179,9 +179,9 @@ def create_app(settings: Settings | None = None, llm=None, manager=None, provide
         if app.state.jobs is not None:
             app.state.jobs.join(30)
 
-    docs = settings.api_docs  # the API's own pages, for development only
-    app = FastAPI(title=BRAND.name, lifespan=lifespan, docs_url="/docs" if docs else None, redoc_url=None,
-                  openapi_url="/openapi.json" if docs else None)
+    docs = settings.api_docs  # the API's own pages, for development only; /docs is the site's documentation
+    app = FastAPI(title=BRAND.name, lifespan=lifespan, docs_url="/api/docs" if docs else None, redoc_url=None,
+                  openapi_url="/api/openapi.json" if docs else None)
     app.state.ctx = ctx
     app.state.jobs = None
     app.add_middleware(BodyLimit, settings=settings, tuning=ctx.tuning, sessions=ctx.sessions)
