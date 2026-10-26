@@ -154,8 +154,9 @@ test("add your camera: this device joins, a typed watch is saved and fires; a ph
   await card.getByRole("button", { name: "Save watch" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Watch saved" })).toBeVisible();
 
-  // it fires on the person in front of the camera: a critical incident on this camera
-  await page.getByRole("button", { name: "Use this device" }).click();
+  // this device kept sending while the watch was added (no second press); it fires on the person in front of the
+  // camera: a critical incident on this camera
+  await expect(page.getByRole("button", { name: "Stop this device" })).toBeVisible();
   await expect(page.getByText(/\d+ sent\./)).toBeVisible({ timeout: 30_000 });
   const mine = async () => {
     const cams = await (await page.request.get("/api/cameras")).json();
