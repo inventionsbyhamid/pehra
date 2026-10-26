@@ -182,7 +182,7 @@ drawn, in [eval/results/failures](../eval/results/failures/). What we know goes 
 * At very low frame rates two people of the same size in similar clothes can swap ids.
 * At the start of a clip, people already near a line are picked up as they first appear.
 * A plate box that cuts characters can give a wrong but valid read.
-* The age guard also refuses some harmless phrases, such as "a person pushing a stroller".
+* The age guard also refuses some harmless phrases, such as "a kids bicycle left on the ramp".
 
 ### 6.5 Plates, speed and memory
 

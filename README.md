@@ -186,7 +186,7 @@ its file in [eval/results](eval/results). The Graviton and COOL numbers come wit
 
 What goes wrong, so far: people walking close together, seen from above, merge into one box and one of them is
 missed; at very low frame rates two similar people can swap ids; a plate box that cuts characters can give a wrong but
-valid read; the age guard also refuses some harmless phrases, such as "a person pushing a stroller"; and a watch
+valid read; the age guard also refuses some harmless phrases, such as "a kids bicycle left on the ramp"; and a watch
 described by looks costs the most on old CPUs, so on our dev box, which has no AVX2, it stays under one analysed frame
 a second per camera. The first
 false alarm and first miss of each watch are saved as pictures in
