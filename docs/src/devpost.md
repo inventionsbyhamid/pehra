@@ -33,7 +33,9 @@ top of the feed (3:2, JPG or PNG under {{say:5 MB}}). Only the demo's sample cli
 
 * **Agentic Vision:** yes. OpenCV flags a moment; a verifier agent calls OpenCV tools (zoom, CLAHE, denoise, DIS
   optical flow, pose history, the path walked) and its next step depends on what they return; it grades the alert,
-  dismisses it, or asks a person; guards close the loop on Telegram. Report section 7 and `docs/agent-workflow.svg`.
+  dismisses it, or asks a person; guards close the loop on Telegram. In a real trace on a dimmed frame the model
+  brightened it with CLAHE before deciding, which it did not do on the frame as filmed. Report section 7 and
+  `docs/agent-workflow.svg`.
 * **Best Use of COOL:** the AWS deployment runs the whole pipeline in COOL's Python on Graviton, and the deploy fails
   unless `cv2` is loaded from under `/opt/cool`. The benchmark against stock OpenCV and x86 is built; it has run only
   on our x86 dev box so far. Report section 6 says "not measured yet" until it runs on AWS.

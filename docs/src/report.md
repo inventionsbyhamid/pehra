@@ -528,10 +528,10 @@ COOL over stock OpenCV on the same Graviton instance, all cameras' frames a seco
 and {{bench.speedup.graviton_over_x86}}; c8g.large with COOL then gives {{bench.c8g_cool.fps_per_camera}} per camera
 in {{bench.c8g_cool.memory_total}}.
 
-The dev box column is there to show the method, not as a target: a 2013 Xeon without AVX2 sharing a 40 core host
-whose load stayed near {{bench.devbox_no_text.host_load}} during the run, where the container's CPU quota held the run
-back for {{bench.devbox_no_text.throttled_s}} of {{bench.devbox_no_text.seconds}}. Its cost row applies the dev box's
-rate to a c8g.large's price; it is not a Graviton measurement.
+The dev box column is there to show the method, not as a target: a 2013 Xeon without AVX2, sharing a host of
+{{bench.devbox_no_text.host_cores}} cores whose load over a minute stayed near {{bench.devbox_no_text.host_load}}
+during the run, with other work on it. Its cost row applies the dev box's rate to a c8g.large's price; it is not a
+Graviton measurement.
 
 **What to expect, honestly.** The Marketplace listing says COOL was benchmarked on imgproc, core and I/O functions
 against default OpenCV 5.0.0, with KleidiCV and tuned parallel code; that is the vendor's claim, not checked by us.
@@ -596,9 +596,36 @@ depends on it. At most {{say:6}} steps and {{say:45 s}}; at most {{say:6}} pictu
 
 **Traces.** Every check stores its trace (step, tool, arguments, the model's reason, the tool's result, milliseconds)
 with the alert, and the incident page shows it. The tests above drive the loop with a scripted model and assert the
-trace: in `test_zoom_then_alert` the model's first step is `crop_zoom`, whose result goes back to it, and its second
-step raises the alert; in `test_enhance_then_dismiss` it brightens the frame with CLAHE first and then dismisses. A
-scripted model shows the wiring, not the model's judgement: we have no scored set of real verdicts yet (section 11).
+trace: in `test_zoom_then_alert` the model's first step is `crop_zoom`, whose result goes back to it, and its second step
+raises the alert; in `test_enhance_then_dismiss` it brightens the frame with CLAHE first and then dismisses.
+
+**A real trace.** `eval/agent_trace.py` sends one flagged moment of the Plaza clip (a person walking into the left
+walkway at {{agent.plaza.moment_s}}, found by YOLOX and the tracker) to the app's own verifier with the real model
+({{agent.plaza.model}}, {{agent.plaza.date}}): twice as filmed, and twice with the frames dimmed to
+{{agent.plaza_dark.dark}} of their brightness, as a camera sees at dusk. Every run raised the critical alert; what the
+model looked at first changed with the pictures:
+
+| Run | Pictures | Steps, in order |
+| --- | --- | --- |
+| 1 | as filmed | {{agent.plaza.r0.tools}} |
+| 2 | as filmed | {{agent.plaza.r1.tools}} |
+| 3 | dimmed | {{agent.plaza_dark.r0.tools}} |
+| 4 | dimmed | {{agent.plaza_dark.r1.tools}} |
+
+Run 4, step by step (`eval/results/agent-trace-plaza_dark.json`):
+
+| Step | Tool | The model's reason | What OpenCV returned | Time |
+| --- | --- | --- | --- | --- |
+| 1 | {{agent.plaza_dark.r1.s0.tool}} | {{agent.plaza_dark.r1.s0.why}} | {{agent.plaza_dark.r1.s0.result}} | {{agent.plaza_dark.r1.s0.ms}} |
+| 2 | {{agent.plaza_dark.r1.s1.tool}} | {{agent.plaza_dark.r1.s1.why}} | {{agent.plaza_dark.r1.s1.result}} | {{agent.plaza_dark.r1.s1.ms}} |
+| 3 | {{agent.plaza_dark.r1.s2.tool}} | {{agent.plaza_dark.r1.reason}} | the alert, graded {{agent.plaza_dark.r1.severity}}: "{{agent.plaza_dark.r1.summary}}" | {{agent.plaza_dark.r1.s2.ms}} |
+
+On the dimmed pictures the model reached for a closer look (`crop_zoom`, or CLAHE through `enhance`) before deciding,
+which it did not do in the runs on the pictures as filmed. Two honest notes from these runs. In the as filmed runs the model
+checked motion with `flow`, which returned "{{agent.plaza.r0.s1.result}}" for a person who was walking: the tool
+measures the flow inside the track's last box between two frames that can be seconds apart, so it missed the motion,
+and the model decided from the frames. That is a defect in `agent/tools.py`, open for the fix pass. And these are four
+checks of one moment, a demonstration, not an evaluation of the agent's accuracy (section 11).
 
 **Task success.** On the Plaza clip the rules raised {{eval.plaza.fps_2.ai.candidates}} candidates at
 {{say:2 frames a second}}, which became {{eval.plaza.fps_2.ai.incidents}} incidents and
@@ -830,8 +857,8 @@ when.
   and its Rules of 2025, most duties of which apply from 13 May 2027
   ([KSK on the Act for RWAs](https://ksandk.com/data-protection-and-data-privacy/dpdp-act-rwa-compliance-guide/)).
 * **Security.** Google sign in or single use operator links; HttpOnly, Secure, SameSite cookies and origin checks;
-  roles per society; device tokens, invites and sign in links stored only as hashes; camera addresses sealed with
-  Fernet; tokens filtered out of server logs; rate limits; RTSP only, with private addresses refused and, on AWS, an
+  roles per society; device tokens, sign in links and Telegram connect codes stored only as hashes, and invites as
+  signed single use links; camera addresses sealed with Fernet; tokens filtered out of server logs; rate limits; RTSP only, with private addresses refused and, on AWS, an
   egress rule behind it; secrets only in SSM or a local `.env`.
 * **Honesty in the product.** Alerts say "Possible". Pehra does not claim drowning detection; the site calls it an
   aid, not a guarantee. The watch card says what cannot be watched. Demo incidents made before a visitor arrived are
@@ -859,7 +886,10 @@ when.
   tested on rendered scenes and OpenCV's sample pictures, not on recordings. The owner's consented recordings are
   planned (`eval/record_checklist.md`).
 * **The agent's accuracy is not measured.** The evaluation's AI check was a stand in that calls every moment real.
-  The real model's tool use is tested with a scripted model; no scored set of real verdicts exists.
+  The loop is tested with a scripted model, and the real model ran {{agent.plaza.runs}} checks as filmed and
+  {{agent.plaza_dark.runs}} dimmed on one moment (section 7); no scored set of real verdicts exists. Those runs showed
+  that the agent's `flow` tool measures no motion for a walking person (it looks inside the track's last box), which
+  is open for the fix pass.
 * **Polar unverified end to end.** No sandbox product exists and Polar's API was never called; the webhook fixture is
   built from the SDK's types, not a captured delivery.
 * **Telegram unverified with a real bot.** Every Telegram path is tested against a mocked Bot API.
