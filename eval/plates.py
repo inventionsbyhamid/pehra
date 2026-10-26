@@ -73,9 +73,10 @@ def score(rows: list[dict]) -> dict:
                        "wrong": len(coloured) - right - unknown, "accuracy": proportion(right, len(coloured))}}
 
 
-def evaluate(rows: list[dict], source: str, about: str | None) -> dict:
+def evaluate(rows: list[dict], source: str, about: str | None, read_by: str | None = None) -> dict:
+    """read_by: the engine that made reads given as rows; reads made now are this tree's."""
     lights = sorted({r["light"] for r in rows})
-    return {"source": source, "about": about, "code": git_sha(), "engine": engine_sha(),
+    return {"source": source, "about": about, "code": git_sha(), "engine": read_by or engine_sha(),
             "date": datetime.now(timezone.utc).isoformat(timespec="seconds"), "all": score(rows),
             "by_light": {light: score([r for r in rows if r["light"] == light]) for light in lights},
             "rows": rows}
@@ -88,6 +89,7 @@ def main(argv: list[str] | None = None) -> None:
     given.add_argument("--photos", help="a folder of photos with truth.csv")
     ap.add_argument("--name", required=True)
     ap.add_argument("--about", default=None)
+    ap.add_argument("--read-by", default=None, help="with --rows: the commit whose reader made those reads")
     ap.add_argument("--out", default=str(ROOT / "eval" / "results"))
     a = ap.parse_args(argv)
     if a.rows:
@@ -97,7 +99,7 @@ def main(argv: list[str] | None = None) -> None:
                                    if line.startswith("#")).strip() or None
     else:
         rows, source, about = read_photos(Path(a.photos)), f"{a.photos} (read by vision/plates.py now)", a.about
-    result = evaluate(rows, source, about)
+    result = evaluate(rows, source, about, a.read_by if a.rows else None)
     dest = Path(a.out) / f"plates-{a.name}.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(result, indent=1) + "\n")

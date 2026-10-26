@@ -1,5 +1,6 @@
 # The plate reader on 8 Wikimedia Commons photos (CC BY, CC BY-SA or public domain), run once at default settings by
 # Task 6a on 25 Oct 2026 (task-6a-report.md, "Real photos"); its fix round (13e6bf6) left text and colour unchanged.
+# Later reader changes (4dd238a, turned plates and repeated crops) were not run on these photos.
 # Handheld daylight photos, not gate CCTV: two whole cars cropped to the car as a detector would, six plate close ups.
 # The photos were not kept, so these rows are the reads that run printed, copied here; eval/plates.py --photos reads
 # new photos itself.
