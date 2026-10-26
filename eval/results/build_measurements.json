@@ -1,0 +1,384 @@
+{
+ "about": "Numbers measured while building Pehra, before the owner's recordings and the AWS run. Each names what it measured, on what machine, where it was reported, and the date. The dev box is watchful-dev on our ioflood server: a 2013 Intel Xeon E5-2680 v2 without AVX2, 6 CPUs of a shared 40 core host, stock OpenCV 5.0.0 on x86. None of these numbers is from AWS or COOL. docs/fill.py reads this file; never copy its numbers by hand.",
+ "pool": {
+  "c8g_shape": {
+   "pool_steady_mb_run1": {
+    "value": 1192,
+    "unit": "mb",
+    "what": "total memory, steady median, of the shared camera pool: 8 Plaza demo cameras on 2 camera processes for 75 s, in a container shaped like c8g.large (2 pinned CPUs, 4 GB); indexing off, no watch described in words, a stand in AI, so not the app's defaults",
+    "source": "task-3-report.md, Measurements (commit 89f1f4b)",
+    "date": "2026-10-25"
+   },
+   "pool_steady_mb_run2": {
+    "value": 1255,
+    "unit": "mb",
+    "what": "the same, second run",
+    "source": "task-3-report.md, Measurements (commit 89f1f4b)",
+    "date": "2026-10-25"
+   },
+   "old_steady_mb_run1": {
+    "value": 2020,
+    "unit": "mb",
+    "what": "the same scenario on the earlier design, one process per camera (pehra 9bf0ad0), steady median",
+    "source": "task-3-report.md, Measurements",
+    "date": "2026-10-25"
+   },
+   "old_steady_mb_run2": {
+    "value": 2034,
+    "unit": "mb",
+    "what": "the same, second run",
+    "source": "task-3-report.md, Measurements",
+    "date": "2026-10-25"
+   },
+   "pool_peak_mb": {
+    "value": 1440,
+    "unit": "mb",
+    "what": "the shared pool's higher peak of its two runs",
+    "source": "task-3-report.md, Measurements",
+    "date": "2026-10-25"
+   },
+   "old_peak_mb": {
+    "value": 2905,
+    "unit": "mb",
+    "what": "one process per camera, the higher peak of its two runs",
+    "source": "task-3-report.md, Measurements",
+    "date": "2026-10-25"
+   }
+  },
+  "batching": {
+   "single_ms": {
+    "value": 131,
+    "unit": "ms",
+    "what": "YOLOX nano, one frame at a time on one thread, per frame, dev box",
+    "source": "task-3-report.md, batching across cameras",
+    "date": "2026-10-25"
+   },
+   "batch4_ms": {
+    "value": 127,
+    "unit": "ms",
+    "what": "the same network fed a batch of 4 frames, per frame; dropped because the stock YOLOX export returned different boxes for a batch (no row of a batch of 2 matched a single run)",
+    "source": "task-3-report.md, batching across cameras",
+    "date": "2026-10-25"
+   }
+  },
+  "text_watch": {
+   "two_cameras_mb": {
+    "value": 5242,
+    "unit": "mb",
+    "what": "total memory with a watch described in words on 2 cameras, app defaults, first start while the text tower is held (over the 3,072 MB budget of a c8g.large)",
+    "source": "task-3-report.md, fix round 1, I4",
+    "date": "2026-10-26"
+   },
+   "eight_cameras_no_text_mb": {
+    "value": 2265,
+    "unit": "mb",
+    "what": "total memory, 8 Plaza cameras on 2 processes with the app defaults (indexing on, scan pool started) and no watch described in words",
+    "source": "task-3-report.md, fix round 1, I4",
+    "date": "2026-10-26"
+   }
+  }
+ },
+ "device": {
+  "yunet_js_320_ms": {
+   "value": 69,
+   "unit": "ms",
+   "what": "YuNet face detection in OpenCV.js 5.0 (single thread WebAssembly, Node on the ioflood CPU) on a 320x200 picture, the size the device page uses",
+   "source": "task-4-report.md, Tests",
+   "date": "2026-10-25"
+  },
+  "yunet_js_480_ms": {
+   "value": 132,
+   "unit": "ms",
+   "what": "the same at 480 px wide",
+   "source": "task-4-report.md, Tests",
+   "date": "2026-10-25"
+  },
+  "yunet_js_640_ms": {
+   "value": 231,
+   "unit": "ms",
+   "what": "the same at 640 px wide",
+   "source": "task-4-report.md, Tests",
+   "date": "2026-10-25"
+  },
+  "qr_classic_missed": {
+   "value": 9,
+   "unit": "int",
+   "what": "valid random device link QR codes (of 300) that cv2.QRCodeDetector failed to read",
+   "source": "task-4-report.md, fix round 1",
+   "date": "2026-10-25"
+  },
+  "qr_aruco_read": {
+   "value": 300,
+   "unit": "int",
+   "what": "the same 300 codes read by cv2.QRCodeDetectorAruco",
+   "source": "task-4-report.md, fix round 1",
+   "date": "2026-10-25"
+  }
+ },
+ "plates": {
+  "crop_ms": {
+   "value": 150,
+   "unit": "ms",
+   "what": "one vehicle crop through the plate box path (LPD-YuNet, warp, PP-OCRv5), dev box while quiet",
+   "source": "task-6a-report.md, Real photos",
+   "date": "2026-10-25"
+  },
+  "lpd_ms": {
+   "value": 88,
+   "unit": "ms",
+   "what": "LPD-YuNet plate detection at 640 px, dev box",
+   "source": "task-6a-report.md, Real photos",
+   "date": "2026-10-25"
+  },
+  "ocr_line_ms": {
+   "value": 45,
+   "unit": "ms",
+   "what": "PP-OCRv5 recognition of one plate line, dev box",
+   "source": "task-6a-report.md, Real photos",
+   "date": "2026-10-25"
+  },
+  "fuzzed": {
+   "value": 20000,
+   "unit": "int",
+   "what": "fuzzed plates with the last character cut off, scored by the real confidence functions",
+   "source": "task-6a-report.md, fix round 1, calibration",
+   "date": "2026-10-25"
+  },
+  "fuzzed_max_conf": {
+   "value": 0.505,
+   "unit": "text",
+   "what": "the highest confidence any wrong read of those cut plates reached (a plate text is kept only from 0.52, Tuning plates.min_conf)",
+   "source": "task-6a-report.md, fix round 1, calibration",
+   "date": "2026-10-25"
+  },
+  "gate_runs": {
+   "value": 4,
+   "unit": "int",
+   "what": "synthetic gate runs with real YOLOX, tracker, line, plate reader and gate log (a real car photo moved over a drawn gate, a person standing on the line) at 1 and 2 analysed frames a second, detector every frame and every second frame",
+   "source": "task-6b-report.md, Real check, after c75b3f9",
+   "date": "2026-10-26"
+  },
+  "gate_runs_paired": {
+   "value": 4,
+   "unit": "int",
+   "what": "of those runs, the ones that logged one in and one out, paired by plate",
+   "source": "task-6b-report.md, Real check",
+   "date": "2026-10-26"
+  },
+  "gate_conf_min": {
+   "value": 0.79,
+   "unit": "num",
+   "what": "the lowest plate confidence in those runs",
+   "source": "task-6b-report.md, Real check",
+   "date": "2026-10-26"
+  },
+  "gate_conf_max": {
+   "value": 0.91,
+   "unit": "num",
+   "what": "the highest plate confidence in those runs",
+   "source": "task-6b-report.md, Real check",
+   "date": "2026-10-26"
+  }
+ },
+ "signals": {
+  "still_body_max": {
+   "value": 0.031,
+   "unit": "text",
+   "what": "own movement of a still body in moving water, body heights a second, after comparing the flow in the box with the ring around it (DIS optical flow, rendered water at 2 to 10 px a second)",
+   "source": "task-5-report.md, fix round 1, still_s",
+   "date": "2026-10-25"
+  },
+  "swimmer_min": {
+   "value": 0.095,
+   "unit": "text",
+   "what": "the same measure for swimmers, lowest",
+   "source": "task-5-report.md, fix round 1, still_s",
+   "date": "2026-10-25"
+  },
+  "swimmer_max": {
+   "value": 0.102,
+   "unit": "text",
+   "what": "the same measure for swimmers, highest",
+   "source": "task-5-report.md, fix round 1, still_s",
+   "date": "2026-10-25"
+  },
+  "dis_look_ms": {
+   "value": 8,
+   "unit": "ms",
+   "what": "one DIS optical flow look (MEDIUM preset, 160 px crops), dev box",
+   "source": "task-5-report.md, fix round 1, still_s",
+   "date": "2026-10-25"
+  },
+  "gate_same_day": {
+   "value": 0.63,
+   "unit": "num",
+   "what": "zone state by example: score of a closed gate against its own saved example by day (blur, CLAHE, Sobel edge picture)",
+   "source": "task-5-report.md, Decisions to know",
+   "date": "2026-10-25"
+  },
+  "gate_other_day": {
+   "value": -0.02,
+   "unit": "num",
+   "what": "the same against the open gate's example by day",
+   "source": "task-5-report.md, Decisions to know",
+   "date": "2026-10-25"
+  },
+  "gate_same_night": {
+   "value": 0.71,
+   "unit": "num",
+   "what": "closed gate against its own example at night",
+   "source": "task-5-report.md, Decisions to know",
+   "date": "2026-10-25"
+  },
+  "gate_other_night": {
+   "value": 0.2,
+   "unit": "num",
+   "what": "closed gate against the open example at night",
+   "source": "task-5-report.md, Decisions to know",
+   "date": "2026-10-25"
+  },
+  "gate_same_no_blur": {
+   "value": 0.16,
+   "unit": "num",
+   "what": "closed gate against its own example without the blur before CLAHE (CLAHE lifted sensor noise into the edges)",
+   "source": "task-5-report.md, Decisions to know",
+   "date": "2026-10-25"
+  }
+ },
+ "compile": {
+  "requests": {
+   "value": 14,
+   "unit": "int",
+   "what": "plain words requests compiled with the real AI (DeepSeek V4.1 Flash on OpenRouter), from the pool, gates, lobby, generator smoke, a ladder and a covered camera",
+   "source": "task-5-report.md, Real LLM run after the fixes",
+   "date": "2026-10-25"
+  },
+  "generic": {
+   "value": 14,
+   "unit": "int",
+   "what": "of those, compiled into the generic building blocks with no new code (the request about a child became a watch on someone alone plus a plain refusal of the age part)",
+   "source": "task-5-report.md, Real LLM run after the fixes",
+   "date": "2026-10-25"
+  },
+  "fastest_s": {
+   "value": 0.7,
+   "unit": "s",
+   "what": "the fastest of those compiles",
+   "source": "task-5-report.md, Real LLM run after the fixes",
+   "date": "2026-10-25"
+  },
+  "slowest_s": {
+   "value": 4.0,
+   "unit": "s",
+   "what": "the slowest of those compiles",
+   "source": "task-5-report.md, Real LLM run after the fixes",
+   "date": "2026-10-25"
+  }
+ },
+ "age_guard": {
+  "must_refuse": {
+   "value": 22,
+   "unit": "int",
+   "what": "look texts about children, in many spellings and scripts, that must be refused",
+   "source": "privacy-fix-report.md, A, calibration",
+   "date": "2026-10-26"
+  },
+  "meaning_refused": {
+   "value": 17,
+   "unit": "int",
+   "what": "of those, refused by the SigLIP 2 meaning check alone (the words and age patterns refuse the rest)",
+   "source": "privacy-fix-report.md, A, calibration (siglip2_b32)",
+   "date": "2026-10-26"
+  },
+  "must_pass": {
+   "value": 9,
+   "unit": "int",
+   "what": "ordinary look texts that must pass",
+   "source": "privacy-fix-report.md, A, calibration",
+   "date": "2026-10-26"
+  },
+  "must_pass_refused": {
+   "value": 0,
+   "unit": "int",
+   "what": "of those, refused by the meaning check",
+   "source": "privacy-fix-report.md, A, calibration",
+   "date": "2026-10-26"
+  },
+  "held_out": {
+   "value": 40,
+   "unit": "int",
+   "what": "held out child texts not used to pick the anchors or the margin",
+   "source": "privacy-fix-report.md, A, held out",
+   "date": "2026-10-26"
+  },
+  "held_out_refused": {
+   "value": 34,
+   "unit": "int",
+   "what": "of those, refused by the meaning check alone; the 6 it missed are numbers, heights or 'a juvenile', and the word patterns catch 5 of them",
+   "source": "privacy-fix-report.md, A, held out",
+   "date": "2026-10-26"
+  }
+ },
+ "demo": {
+  "walk_s": {
+   "value": 13.8,
+   "unit": "s",
+   "what": "the browser test from the landing page's Try the demo to an acknowledged incident with its Telegram message, real AI, against the server on the dev box (after the demo's fix round)",
+   "source": "task-11-report.md, fix round 1 tests",
+   "date": "2026-10-26"
+  },
+  "idle_10_mb": {
+   "value": 462,
+   "unit": "mb",
+   "what": "app and camera processes with 10 demo sandboxes open and nobody watching, 2 camera processes, dev box",
+   "source": "task-11-report.md, Measured on watchful-dev",
+   "date": "2026-10-26"
+  },
+  "watched_10_mb": {
+   "value": 1313,
+   "unit": "mb",
+   "what": "the same with all 10 sandboxes' Plaza cameras watched at once",
+   "source": "task-11-report.md, Measured on watchful-dev",
+   "date": "2026-10-26"
+  },
+  "watched_10_fps_min": {
+   "value": 0.3,
+   "unit": "fps",
+   "what": "analysed frames a second per camera while all 10 were watched, lowest",
+   "source": "task-11-report.md, Measured on watchful-dev",
+   "date": "2026-10-26"
+  },
+  "watched_10_fps_max": {
+   "value": 0.4,
+   "unit": "fps",
+   "what": "the same, highest",
+   "source": "task-11-report.md, Measured on watchful-dev",
+   "date": "2026-10-26"
+  }
+ },
+ "estimates": {
+  "aws_month_usd": {
+   "value": 105,
+   "unit": "usd",
+   "what": "an estimate, not a bill: one c8g.xlarge in Mumbai all month at on demand list price, COOL's fee, a 40 GB gp3 volume, a public IPv4 address, CloudWatch metrics, alarms, dashboard and logs; before Bedrock, S3 and data transfer",
+   "source": "task-12-report.md, fix round 1, budget table (AWS price data published 2026-10-23)",
+   "date": "2026-10-25"
+  }
+ },
+ "web": {
+  "lighthouse_mobile_performance": {
+   "value": 97,
+   "unit": "int",
+   "what": "Lighthouse 12.8.2 mobile performance score of the landing page (vite preview of the built site, dev box)",
+   "source": "task-9-report.md, Tests and measurements",
+   "date": "2026-10-25"
+  },
+  "lighthouse_mobile_accessibility": {
+   "value": 100,
+   "unit": "int",
+   "what": "Lighthouse mobile accessibility score of the landing page",
+   "source": "task-9-report.md, Tests and measurements",
+   "date": "2026-10-25"
+  }
+ }
+}

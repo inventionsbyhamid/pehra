@@ -1,33 +1,42 @@
+%% Pehra architecture. architecture.svg is drawn from this by hand, in the same layout.
 flowchart LR
-  subgraph Inputs
-    RTSP[RTSP or HTTP camera]
-    WEBCAM[Browser webcam]
-    UPLOAD[Uploaded video]
+  subgraph society["At the society"]
+    NVR["Recorders and IP cameras<br/>Hikvision, CP Plus, Dahua"]
+    BRIDGE["Pehra bridge (OpenCV)<br/>reads RTSP on the LAN, pushes JPEG"]
+    PHONE["Laptop or phone as a camera<br/>OpenCV.js YuNet blurs faces first"]
+    PEOPLE["Committee and supervisor<br/>web app"]
   end
-  subgraph Graviton["AWS EC2 Graviton4 (COOL, OpenCV 5)"]
-    direction TB
-    subgraph Worker["Camera worker process (one per camera)"]
-      direction LR
-      MOTION[MOG2 motion gate] --> DETECT[YOLOX on the OpenCV 5 DNN engine]
-      DETECT --> TRACK[Kalman and IoU tracker]
-      TRACK --> POSE[MediaPipe pose, only when needed]
-      TRACK --> FACES[YuNet and SFace, enrolled people only]
-      TRACK --> EMBED[SigLIP 2 on OpenCV DNN, only when needed]
-      TRACK --> REASON[Zones, fall states, events]
-      REASON --> RULES[Generic watches: signals and presets]
+  subgraph aws["AWS ap-south-1 (Mumbai)"]
+    subgraph ec2["EC2 c8g.xlarge, Graviton4, COOL image"]
+      CADDY["Caddy: TLS"]
+      APP["FastAPI app: society API, sign in,<br/>sockets, camera manager, billing, demo"]
+      AGENT["Verifier agent in the app's check pool<br/>OpenCV tools: frames, zoom, CLAHE,<br/>denoise, DIS flow, pose history, path"]
+      POOL["Camera processes, one per vCPU (COOL OpenCV 5)<br/>FFmpeg decode, resize, CLAHE, tamper by ORB and MAGSAC,<br/>MOG2, YOLOX on cv2.dnn, Kalman tracker, zones and lines,<br/>DIS flow, pose, YuNet and SFace, LPD-YuNet and PP-OCRv5,<br/>SigLIP 2, watch engine"]
+      SCAN["Scan workers: uploads in time chunks"]
+      JOBS["Job worker: Telegram posts and edits,<br/>stills with faces blurred, summary,<br/>attendance, stays, retention, demo reset"]
+      DB[("SQLite WAL<br/>every row under its society")]
     end
-    SCAN[Parallel scan: time chunks on every core, tracks stitched, reasoned once]
-    AGENT[Verifier agent with OpenCV tools]
-    ASK[Ask the footage, find a person]
-    API[FastAPI, WebSockets, web app]
+    BEDROCK["Amazon Bedrock<br/>Claude Haiku 5.5"]
+    S3[("Amazon S3: pictures, clips,<br/>database copy")]
+    CW["CloudWatch: logs, metrics,<br/>dashboard, alarms by SNS"]
+    SSM["SSM Parameter Store"]
+    CFN["CloudFormation, Budgets"]
   end
-  RTSP --> Worker
-  WEBCAM --> API --> Worker
-  UPLOAD --> API --> SCAN --> RULES
-  RULES -- candidate with evidence --> AGENT
-  AGENT --> LLM[(AI model: OpenRouter or Amazon Bedrock)]
-  ASK --> LLM
-  AGENT --> DDB[(DynamoDB: events, alerts, watches)]
-  Worker --> S3[(S3: clips, keyframes, 7 day lifecycle)]
-  Worker --> CW[(CloudWatch metrics)]
-  AGENT -- approved by a person --> SNS[(SNS email)]
+  TG["Society's Telegram group<br/>Acknowledge, False alarm"]
+  OUT["Polar billing, Google sign in,<br/>OpenRouter on the test server"]
+
+  NVR -- "RTSP pull, rtsp and rtsps only" --> POOL
+  PEOPLE -- HTTPS --> CADDY
+  BRIDGE -- "WebSocket, JPEG, device token" --> CADDY
+  PHONE -- "WebSocket, blurred JPEG" --> CADDY
+  CADDY --> APP
+  APP <-- "frames in; events, candidates, health out" --> POOL
+  APP -- candidates --> AGENT
+  AGENT -- "flagged moments only" --> BEDROCK
+  POOL -- "keyframes, clips" --> S3
+  JOBS <--> DB
+  DB -- "Litestream copy" --> S3
+  JOBS -- "Bot API" --> TG
+  TG -- "taps by webhook" --> CADDY
+  SSM -. "settings, secrets" .-> APP
+  APP -. "metrics, logs" .-> CW

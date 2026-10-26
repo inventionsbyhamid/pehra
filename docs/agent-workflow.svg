@@ -1,0 +1,185 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1020" viewBox="0 0 1240 1020" role="img" aria-labelledby="title desc">
+  <title id="title">Pehra agent workflow</title>
+  <desc id="desc">OpenCV 5 perceives every analysed frame. The watch engine decides whether a moment is worth a look. Face matches and camera health go straight to an incident; everything else goes to a verifier agent that calls OpenCV tools until it can raise an alert with a grade, dismiss, ask a person, or say it cannot judge. Incidents go to the society's Telegram group, whose taps change what is posted next. Lettered dots mark where an OpenCV result changes the next action.</desc>
+  <style>
+    .bg { fill: #ffffff; }
+    .t { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
+    .h1 { font-size: 22px; font-weight: 700; }
+    .h2 { font-size: 14.5px; font-weight: 700; }
+    .b { font-size: 12.5px; }
+    .s { font-size: 11.5px; }
+    .m { fill: #57606a; }
+    .cvt { fill: #4a2fa0; }
+    .box { fill: #f6f8fa; stroke: #8c959f; stroke-width: 1.2; }
+    .cv { fill: #f3f0ff; stroke: #5b3cc4; stroke-width: 1.6; }
+    .act { fill: #eef7f0; stroke: #1b6e35; stroke-width: 1.6; }
+    .actt { fill: #1b6e35; }
+    .ln { fill: none; stroke: #57606a; stroke-width: 1.5; }
+    .hd { fill: #57606a; }
+    .dot { fill: #5b3cc4; }
+    .dott { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 700; fill: #ffffff; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .t { fill: #e6edf3; }
+      .m { fill: #9198a1; }
+      .cvt { fill: #c4b5ff; }
+      .box { fill: #161b22; stroke: #3d444d; }
+      .cv { fill: #1d1638; stroke: #a991ff; }
+      .act { fill: #0f2417; stroke: #4fb36b; }
+      .actt { fill: #7ad391; }
+      .ln { stroke: #9198a1; }
+      .hd { fill: #9198a1; }
+      .dot { fill: #a991ff; }
+      .dott { fill: #0d1117; }
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="hd"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1240" height="1020" rx="12"/>
+  <text class="t h1" x="24" y="40">Pehra agent: perceive, decide, act</text>
+  <text class="t s m" x="24" y="62">For every watched camera, all the time. A lettered dot marks an OpenCV result that changes the next action; the list on the right says how.</text>
+
+  <!-- perceive -->
+  <rect class="box" x="40" y="84" width="420" height="52" rx="8"/>
+  <text class="t h2" x="56" y="106">A camera frame</text>
+  <text class="t s m" x="56" y="124">pulled over RTSP, pushed by the bridge or a phone, or uploaded</text>
+  <path class="ln" d="M190,136 V158" marker-end="url(#a)"/>
+
+  <rect class="cv" x="40" y="160" width="720" height="132" rx="8"/>
+  <text class="t h2 cvt" x="56" y="184">OpenCV 5 perceives, on every analysed frame</text>
+  <text class="t b" x="56" y="206">motion: MOG2; objects: YOLOX on cv2.dnn; tracks: Kalman filter, three passes; zones and directed lines</text>
+  <text class="t b" x="56" y="225">bodies: DIS optical flow, MediaPipe pose; faces: YuNet and SFace, for enrolled adult staff only</text>
+  <text class="t b" x="56" y="244">plates: LPD-YuNet, warpPerspective, PP-OCRv5, HSV colour; fixed things: edge pictures and SigLIP 2</text>
+  <text class="t b" x="56" y="263">camera health: ORB and a MAGSAC homography, the Laplacian, meanStdDev</text>
+  <text class="t s m" x="56" y="282">The AI never sees the stream.</text>
+  <circle class="dot" cx="738" cy="244" r="9"/><text class="dott" x="734" y="248">F</text>
+  <path class="ln" d="M190,292 V314" marker-end="url(#a)"/>
+
+  <!-- decide in code -->
+  <rect class="box" x="40" y="316" width="420" height="56" rx="8"/>
+  <text class="t h2" x="56" y="339">Watch engine</text>
+  <text class="t b m" x="56" y="360">do a watch's signals and conditions hold?</text>
+  <circle class="dot" cx="438" cy="334" r="9"/><text class="dott" x="434" y="338">A</text>
+  <path class="ln" d="M460,344 H498" marker-end="url(#a)"/>
+  <text class="t s m" x="470" y="337">no</text>
+  <rect class="box" x="500" y="316" width="260" height="56" rx="8"/>
+  <text class="t h2" x="516" y="339">Nothing is sent anywhere</text>
+  <text class="t b m" x="516" y="360">no AI call, no message</text>
+
+  <path class="ln" d="M190,372 V390 H570 V404" marker-end="url(#a)"/>
+  <path class="ln" d="M190,390 V404" marker-end="url(#a)"/>
+  <text class="t s m" x="198" y="386">yes</text>
+
+  <!-- left lane: no AI step -->
+  <rect class="box" x="40" y="406" width="320" height="154" rx="8"/>
+  <text class="t h2" x="56" y="430">No AI step</text>
+  <circle class="dot" cx="65" cy="454" r="9"/><text class="dott" x="61" y="458">B</text>
+  <text class="t b" x="82" y="458">Named by an enrolled face:</text>
+  <text class="t b" x="82" y="476">an alert at once</text>
+  <circle class="dot" cx="65" cy="504" r="9"/><text class="dott" x="61" y="508">C</text>
+  <text class="t b" x="82" y="508">Camera covered, turned, blurred</text>
+  <text class="t b" x="82" y="526">or offline: a warning incident at</text>
+  <text class="t b" x="82" y="544">once, resolved when it is live again</text>
+  <path class="ln" d="M190,560 V844" marker-end="url(#a)"/>
+
+  <!-- right lane: checked by the agent -->
+  <rect class="box" x="380" y="406" width="380" height="80" rx="8"/>
+  <text class="t h2" x="396" y="430">Before the check</text>
+  <text class="t b" x="396" y="451">critical: posted to Telegram first, saying Possible</text>
+  <text class="t b" x="396" y="470">cleared a moment ago: held until the check says real</text>
+  <path class="ln" d="M476,486 V508" marker-end="url(#a)"/>
+
+  <rect class="box" x="380" y="510" width="192" height="152" rx="8"/>
+  <text class="t h2" x="396" y="534">Verifier (the AI)</text>
+  <text class="t b" x="396" y="556">sees the watch, its</text>
+  <text class="t b" x="396" y="574">question, what OpenCV</text>
+  <text class="t b" x="396" y="592">saw, frames, best crop</text>
+  <text class="t b" x="396" y="614">one JSON tool call</text>
+  <text class="t b" x="396" y="632">a step; at most 6 in 45 s</text>
+
+  <path class="ln" d="M572,556 H602" marker-end="url(#a)"/>
+  <path class="ln" d="M604,604 H574" marker-end="url(#a)"/>
+
+  <rect class="cv" x="604" y="510" width="156" height="152" rx="8"/>
+  <text class="t h2 cvt" x="620" y="534">OpenCV tools</text>
+  <text class="t b" x="620" y="556">get_frames</text>
+  <text class="t b" x="620" y="574">crop_zoom</text>
+  <text class="t b" x="620" y="592">enhance: CLAHE</text>
+  <text class="t b" x="620" y="610">motion_trail</text>
+  <text class="t b" x="620" y="628">flow: DIS</text>
+  <text class="t b" x="620" y="646">pose_history</text>
+  <circle class="dot" cx="744" cy="587" r="9"/><text class="dott" x="740" y="591">D</text>
+  <circle class="dot" cx="744" cy="623" r="9"/><text class="dott" x="740" y="627">E</text>
+  <text class="t s m" x="586" y="678">each result goes back to the AI</text>
+  <path class="ln" d="M476,662 V688" marker-end="url(#a)"/>
+
+  <!-- act -->
+  <rect class="act" x="380" y="690" width="380" height="132" rx="8"/>
+  <text class="t h2 actt" x="396" y="714">Finish</text>
+  <text class="t b" x="396" y="736">raise_alert: real, with a grade and a reason</text>
+  <text class="t b" x="396" y="754">dismiss: not real, with a reason</text>
+  <text class="t b" x="396" y="772">ask_human: a person decides</text>
+  <text class="t b" x="396" y="790">cannot_judge: it needs an age; posted unchecked</text>
+  <text class="t s m" x="396" y="812">AI down, slow or capped: a critical one goes out unverified</text>
+  <path class="ln" d="M570,822 V844" marker-end="url(#a)"/>
+
+  <rect class="act" x="40" y="846" width="720" height="60" rx="8"/>
+  <text class="t h2 actt" x="56" y="869">Incident</text>
+  <text class="t b" x="56" y="890">one Telegram message with a still, faces blurred; edited with the verdict; reminders until someone acknowledges</text>
+  <path class="ln" d="M400,906 V926" marker-end="url(#a)"/>
+
+  <rect class="box" x="40" y="928" width="720" height="60" rx="8"/>
+  <text class="t h2" x="56" y="951">Guards in the society's Telegram group</text>
+  <text class="t b" x="56" y="972">Acknowledge or False alarm; anyone in the group may tap, supervisors can in the app</text>
+  <path class="ln" d="M760,958 H782 V876 H762" marker-end="url(#a)"/>
+  <text class="t s m" x="790" y="908">a label for precision; a false alarm quiets only</text>
+  <text class="t s m" x="790" y="924">that trigger, and never an AI alert</text>
+
+  <!-- where OpenCV changes the next action -->
+  <text class="t h2" x="810" y="100">Where an OpenCV result changes the next action</text>
+
+  <circle class="dot" cx="821" cy="130" r="9"/><text class="dott" x="817" y="134">A</text>
+  <text class="t b" x="840" y="134">A watch's signals hold on a track or the scene: a</text>
+  <text class="t b" x="840" y="152">candidate with its evidence. Otherwise nothing is sent.</text>
+
+  <circle class="dot" cx="821" cy="186" r="9"/><text class="dott" x="817" y="190">B</text>
+  <text class="t b" x="840" y="190">YuNet and SFace name an enrolled person: an alert</text>
+  <text class="t b" x="840" y="208">with no AI step.</text>
+
+  <circle class="dot" cx="821" cy="242" r="9"/><text class="dott" x="817" y="246">C</text>
+  <text class="t b" x="840" y="246">ORB and MAGSAC say the view moved, the Laplacian</text>
+  <text class="t b" x="840" y="264">says blurred, the picture went flat, or no frames come:</text>
+  <text class="t b" x="840" y="282">a warning incident at once.</text>
+
+  <circle class="dot" cx="821" cy="316" r="9"/><text class="dott" x="817" y="320">D</text>
+  <text class="t b" x="840" y="320">The pictures are dark, small or blurry: the model looks</text>
+  <text class="t b" x="840" y="338">closer first, with enhance (CLAHE) or crop_zoom, and</text>
+  <text class="t b" x="840" y="356">decides on what that returns.</text>
+
+  <circle class="dot" cx="821" cy="390" r="9"/><text class="dott" x="817" y="394">E</text>
+  <text class="t b" x="840" y="394">flow (DIS) gives fast downward motion, or pose_history</text>
+  <text class="t b" x="840" y="412">a lying torso: the model reads those numbers before</text>
+  <text class="t b" x="840" y="430">its verdict.</text>
+
+  <circle class="dot" cx="821" cy="464" r="9"/><text class="dott" x="817" y="468">F</text>
+  <text class="t b" x="840" y="468">A plate reads yellow and the vehicle has been inside</text>
+  <text class="t b" x="840" y="486">for two hours: an overstay warning, on no camera's</text>
+  <text class="t b" x="840" y="504">frame but from the gate log.</text>
+
+  <circle class="dot" cx="821" cy="538" r="9"/><text class="dott" x="817" y="542">G</text>
+  <text class="t b" x="840" y="542">When a watch is written: SigLIP 2 says a look text</text>
+  <text class="t b" x="840" y="560">means a child, so that text is refused before the</text>
+  <text class="t b" x="840" y="578">watch ever runs.</text>
+
+  <text class="t s m" x="810" y="716">Tested in backend/tests: test_agent.py, test_health.py,</text>
+  <text class="t s m" x="810" y="733">test_incidents.py, test_ledger.py, test_age_guard.py;</text>
+  <text class="t s m" x="810" y="750">the device page's blur in web/e2e/cam.spec.ts.</text>
+  <text class="t s m" x="810" y="784">Every step (tool, arguments, why, result, time) is</text>
+  <text class="t s m" x="810" y="801">stored with the alert and shown on the incident page.</text>
+  <text class="t s m" x="810" y="835">On AWS the model is Claude Haiku 5.5 on Bedrock; on</text>
+  <text class="t s m" x="810" y="852">the test server, DeepSeek V4.1 Flash on OpenRouter.</text>
+</svg>

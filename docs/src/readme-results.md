@@ -1,0 +1,23 @@
+## Results
+
+From the evaluation on OpenCV's Plaza clip, labelled by eye by us (one labeller), at {{say:2 analysed frames a
+second}}; the plate reader on real photos; and the camera pool on our x86 dev box. The COOL benchmark on AWS Graviton
+has not run yet. Each number links to its file in [eval/results](eval/results); one not measured yet says so.
+
+| Plaza clip, {{say:2 fps}} | Labelled | Matched | False alarms | Missed | Precision | Recall |
+| --- | --- | --- | --- | --- | --- | --- |
+| Enters the left walkway | {{eval.plaza.fps_2.enter.truth}} | {{eval.plaza.fps_2.enter.tp}} | {{eval.plaza.fps_2.enter.fp}} | {{eval.plaza.fps_2.enter.fn}} | {{eval.plaza.fps_2.enter.precision}} | {{eval.plaza.fps_2.enter.recall}} |
+| Crosses the edge going in | {{eval.plaza.fps_2.cross_in.truth}} | {{eval.plaza.fps_2.cross_in.tp}} | {{eval.plaza.fps_2.cross_in.fp}} | {{eval.plaza.fps_2.cross_in.fn}} | {{eval.plaza.fps_2.cross_in.precision}} | {{eval.plaza.fps_2.cross_in.recall}} |
+| Crosses the edge going out | {{eval.plaza.fps_2.cross_out.truth}} | {{eval.plaza.fps_2.cross_out.tp}} | {{eval.plaza.fps_2.cross_out.fp}} | {{eval.plaza.fps_2.cross_out.fn}} | {{eval.plaza.fps_2.cross_out.precision}} | {{eval.plaza.fps_2.cross_out.recall}} |
+
+| Measure | Result |
+| --- | --- |
+| Every watch together at {{say:2 fps}}, precision and recall | {{eval.plaza.fps_2.all.precision}} ({{eval.plaza.fps_2.all.precision_ci}}), {{eval.plaza.fps_2.all.recall}} ({{eval.plaza.fps_2.all.recall_ci}}) |
+| Line crossings going in at {{say:1 fps}}, recall before and after the tracker fix | {{eval.plaza_before_fix.fps_1.cross_in.recall}}, {{eval.plaza.fps_1.cross_in.recall}} |
+| Plates read exactly, of real photos the grammar covers (not gate CCTV) | {{plates.commons.exact}} of {{plates.commons.plates}}; wrong {{plates.commons.wrong}}, unread {{plates.commons.unread}} |
+| Analysed frames a second per camera, 8 cameras on 2 CPUs of the dev box | {{bench.devbox_no_text.fps_per_camera|bare}} |
+| The same on c8g.large with COOL, and with stock OpenCV | {{bench.c8g_cool_no_text.fps_per_camera|bare}}, {{bench.c8g_stock_no_text.fps_per_camera|bare}} |
+| COOL over stock OpenCV on the same Graviton instance | {{bench.speedup.cool_over_stock_no_text}} |
+| Memory of the whole app on the dev box, 8 cameras, median | {{bench.devbox_no_text.memory_total}} |
+
+Failure cases and limitations are in sections 8.6, 11 and 12 of the [report](docs/report.md).
