@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from watchful.rules.signals import REGISTRY, SignalContext, SignalValue, Sighting, TrackHistory
+from watchful.rules.signals import OPS, REGISTRY, SignalContext, SignalValue, Sighting, TrackHistory
 from watchful.rules.watch import Condition, Watch
 from watchful.rules.zonestate import correlation, edge_picture
 from watchful.store.db import EventRow
@@ -108,6 +108,48 @@ def stay_problems(w: Watch) -> list[str]:
             f"can't be combined with {', '.join(mixed)}"]
 
 
+COMPARE_WITH = {"text": "is, !=, contains or in", "number": ">= or <=", "bool": "is true or is false"}
+
+
+def _number(v) -> bool:
+    try:
+        float(v)
+    except (TypeError, ValueError):
+        return False
+    return not isinstance(v, str) or bool(v.strip())
+
+
+def contract(c: Condition) -> list[str]:
+    """What a signal's spec (rules.signals.SignalSpec) says a condition needs to ever be true: a comparison and a
+    value of its kind, a zone, params, and only the words it can give. Without them a watch compiles, saves and runs
+    but never fires. Plain sentences, which the compiler also gives the AI when it asks again."""
+    spec = REGISTRY.get(c.signal)
+    if spec is None:
+        return []
+    name, v, out = c.signal, c.value, []
+    if c.op not in OPS[spec.value]:
+        kind = {"text": "words", "number": "a number", "bool": "yes or no"}[spec.value]
+        out.append(f"{name} gives {kind}, so compare it with {COMPARE_WITH[spec.value]}, not {c.op}")
+    if spec.value == "text":
+        given = v if isinstance(v, list) else str(v).split(",") if c.op == "in" else [v]
+        given = [str(g).strip().lower() for g in given if not isinstance(g, bool) and str(g).strip()]
+        if isinstance(v, list) and c.op != "in":
+            out.append(f"{name} compared with a list needs op in")
+        if isinstance(v, bool) or not given:
+            out.append(f"{name} needs words to compare with" + (f", such as {spec.words[-1]}" if spec.words else ""))
+        elif spec.words and c.op != "contains" and (bad := [g for g in given if g not in spec.words]):
+            out.append(f"{name} is only ever {', '.join(spec.words[:-1])} or {spec.words[-1]}, never {bad[0]}")
+    elif spec.value == "number" and (isinstance(v, list) or not _number(v)):
+        out.append(f"{name} needs a number to compare with, not {v}")
+    elif spec.value == "bool" and (isinstance(v, list) or isinstance(v, str)
+                                   and v.strip().lower() not in ("true", "false")):
+        out.append(f"{name} is yes or no, so compare it with true or false, not {v}")
+    if spec.zone and not c.zones:
+        out.append(f"{name} needs a zone: name the zone it reads")
+    out += [f"{name} needs params.{p}" for p in spec.params if not str(c.params.get(p) or "").strip()]
+    return out
+
+
 def validate(w: Watch, zones: set[str] | dict[str, str | None]) -> list[str]:
     """zones are the drawn names, or names to kinds; with kinds, a line used as an area (or the other way) is a
     problem too. Lines are zones of kind line."""
@@ -123,6 +165,7 @@ def validate(w: Watch, zones: set[str] | dict[str, str | None]) -> list[str]:
     for c in w.conditions:
         if c.signal not in REGISTRY:
             problems.append(f"unknown signal: {c.signal}")
+        problems += contract(c)
         crossing = c.signal == "crossed"
         for z in c.zones:
             check(z, crossing, "unknown line" if crossing else "unknown zone")

@@ -14,8 +14,11 @@ may be empty), conditions (list of {signal, zones, op, value, weight, params}), 
 scope ("camera" or "site"), output ("alert" or "log").
 
 Building blocks, with their tier (A reliable, B approximate) and caveat: {{catalog}}
-* op is one of ">=", "<=", "==", "is", "!=", "contains", "in" (value a list). params.hold_s on any condition
-  means "true for that many seconds".
+* op is one of the block's ops in the catalog: a block whose value is text takes "is", "!=", "contains" or
+  "in" (a list value needs "in") with words as value, and only its listed values when it has them; a number
+  block takes ">=" or "<=" with a number. A block with needs_zone needs one zone, and needs_params must be given
+  (looks_like and zone_looks_like need params.text; attribute needs params.name). zone_looks_like with no zone
+  looks at the whole picture. params.hold_s on any condition means "true for that many seconds".
 * Subject classes are things the detector knows: {{classes}}. Everyday words are fine too: {{vocabulary}}.
   Anything else (a ladder, a delivery bag, a pram, a cylinder) is a person or thing that looks like it:
   classes ["person"] and a looks_like condition such as text "a person carrying a ladder".

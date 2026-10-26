@@ -83,6 +83,9 @@ class SignalSpec:
     own_hold: bool = False  # reads params.hold_s itself; otherwise the engine holds the condition
     replay: bool = False  # can be replayed from the event index by a backtest
     label: str = ""  # plain words for it, when a backtest has to assume it
+    zone: bool = False  # reads one zone: a condition without one is never true
+    params: tuple[str, ...] = ()  # params a condition must give, or it is never true
+    words: tuple[str, ...] = ()  # every value a words signal can give, besides unknown
 
 
 REGISTRY: dict[str, SignalSpec] = {}
@@ -90,16 +93,25 @@ REGISTRY: dict[str, SignalSpec] = {}
 
 def signal(name: str, level: Literal["track", "scene"], value: Literal["bool", "number", "text"],
            description: str, needs: tuple[str, ...] = (), tier: Tier = "A", caveat: str = "",
-           own_hold: bool = False, replay: bool = False, label: str = ""):
+           own_hold: bool = False, replay: bool = False, label: str = "", zone: bool = False,
+           params: tuple[str, ...] = (), words: tuple[str, ...] = ()):
     def register(fn: Fn) -> Fn:
         REGISTRY[name] = SignalSpec(name, level, value, description, frozenset(needs), fn, tier, caveat, own_hold,
-                                    replay, label or name.replace("_s", "").replace("_", " "))
+                                    replay, label or name.replace("_s", "").replace("_", " "), zone, tuple(params),
+                                    tuple(words))
         return fn
     return register
 
 
+OPS = {"text": ("is", "==", "!=", "contains", "in"), "number": (">=", "<=", "==", "is", "!="),
+       "bool": (">=", "==", "is", "!=")}  # the comparisons that can be true for each kind of value
+
+
 def catalog() -> list[dict]:
     return [{"signal": s.name, "level": s.level, "value": s.value, "description": s.description, "tier": s.tier,
+             "ops": list(OPS[s.value]), **({"needs_zone": True} if s.zone else {}),
+             **({"needs_params": list(s.params)} if s.params else {}),
+             **({"values": list(s.words)} if s.words else {}),
              **({"caveat": s.caveat} if s.caveat else {})}
             for s in REGISTRY.values() if not s.name.startswith("_")]
 
@@ -169,7 +181,8 @@ def speed(ctx, cond, track):
 
 
 @signal("posture", "track", "text", "A person's posture: upright, falling or fallen.", needs=("posture",),
-        tier="B", caveat="From body pose; bending down or lying on purpose can look like a fall.", replay=True)
+        tier="B", caveat="From body pose; bending down or lying on purpose can look like a fall.", replay=True,
+        words=("upright", "falling", "fallen"))
 def posture(ctx, cond, track):
     return SignalValue(track.posture, None if track.posture == "upright" else f"posture {track.posture}")
 
@@ -264,26 +277,29 @@ def returns(ctx, cond, track):
 
 
 @signal("zone_looks_like", "scene", "bool",
-        "The view inside a zone matches params.text better than params.not_text for params.hold_s seconds "
-        "(open vocabulary, for example 'an open gate' against 'a closed gate', 'smoke' against 'clear air').",
-        needs=("embed",), tier="B", own_hold=True, label="the zone's look",
+        "The view inside a zone (the whole picture when the condition names no zone) matches params.text better "
+        "than params.not_text for params.hold_s seconds (open vocabulary, for example 'an open gate' against 'a "
+        "closed gate', 'smoke' against 'clear air').",
+        needs=("embed",), tier="B", own_hold=True, label="the zone's look", params=("text",),
         caveat="An image and text model judges the look of the zone; the AI double checks each alert.")
 def zone_looks_like(ctx, cond, track):
     import numpy as np
     text, not_text = cond.params.get("text"), cond.params.get("not_text")
-    if ctx.embedder is None or ctx.image is None or not text or not cond.zones:
+    where = cond.zones[0] if cond.zones else None
+    if ctx.embedder is None or ctx.image is None or not text or (where and where not in ctx.zones):
         return SignalValue(False)
-    st = ctx.state.setdefault(f"zone_looks_like:{cond.zones[0]}:{text}", {})
+    st = ctx.state.setdefault(f"zone_looks_like:{where or '*'}:{text}", {})
     now = ctx.tick.ts
     if "text" not in st:
         st["text"], st["not"] = ctx.embedder.text(text), ctx.embedder.text(not_text) if not_text else None
     if now - st.get("checked", float("-inf")) >= ctx.tuning.zone_embed_every_s:
         st["checked"] = now
-        zone = ctx.zones[cond.zones[0]]
-        pts = zone.contour(ctx.tick.size).astype(np.int32)
-        x0, y0 = pts.min(0)
-        x1, y1 = pts.max(0)
-        crop = ctx.image[max(0, y0):y1, max(0, x0):x1]
+        crop = ctx.image
+        if where:
+            pts = ctx.zones[where].contour(ctx.tick.size).astype(np.int32)
+            x0, y0 = pts.min(0)
+            x1, y1 = pts.max(0)
+            crop = ctx.image[max(0, y0):y1, max(0, x0):x1]
         if crop.size:
             v = ctx.embedder.image(crop)
             score = float(np.dot(v, st["text"])) - (float(np.dot(v, st["not"])) if st["not"] is not None else 0.0)
@@ -292,7 +308,7 @@ def zone_looks_like(ctx, cond, track):
     since = st.get("since")
     hold = float(cond.params.get("hold_s", 0))
     ok = since is not None and now - since >= hold
-    return SignalValue(ok, f"{cond.zones[0]} looks like {text} for {now - since:.0f} s" if ok else None)
+    return SignalValue(ok, f"{where or 'the picture'} looks like {text} for {now - since:.0f} s" if ok else None)
 
 
 def _text_vec(ctx, text: str):
@@ -306,7 +322,7 @@ def _text_vec(ctx, text: str):
         "Open vocabulary look or action of the subject, checked locally by an image and text model with no AI cost: "
         "closer to params.text than to params.not_text for params.hold_s seconds (for example 'a person eating' "
         "against 'a person not eating', or glasses, helmets, vests, masks, phones, carried things, clothes).",
-        needs=("embed",), tier="B", own_hold=True, label="the look",
+        needs=("embed",), tier="B", own_hold=True, label="the look", params=("text",),
         caveat="An image and text model judges looks; the AI double checks each alert.")
 def looks_like(ctx, cond, track):
     import numpy as np
@@ -515,7 +531,7 @@ def alone(ctx, cond, track):
         "The state of a zone, learned from example pictures the owner saved for it (any state names, for example "
         "'open' and 'closed', 'covered' and 'uncovered', 'empty' and 'occupied'), checked every few seconds even "
         "when nothing moves; 'unknown' until there are examples. Use op 'is' with the state name as value.",
-        needs=("embedder",), tier="B", label="the zone's state",
+        needs=("embedder",), tier="B", label="the zone's state", zone=True,
         caveat="Needs a few example pictures of each state, by day and by night.")
 def zone_state(ctx, cond, track):
     if not cond.zones or ctx.states is None or not ctx.states.has(cond.zones[0]) or cond.zones[0] not in ctx.zones:
@@ -542,7 +558,7 @@ def zone_state(ctx, cond, track):
 @signal("attribute", "track", "text",
         "A value a reader attached to the subject, named by params.name (for example plate_text or plate_colour from "
         "the number plate reader); 'unknown' until read. Compare with op 'is', '!=', 'contains', or 'in' with a list.",
-        tier="B", label="what the reader read",
+        tier="B", label="what the reader read", params=("name",),
         caveat="Only as good as the reader; colours can't be told apart at night on black and white cameras.")
 def attribute(ctx, cond, track):
     name = str(cond.params.get("name") or "")
@@ -566,7 +582,8 @@ def inside_s(ctx, cond, track):
 
 
 @signal("camera_health", "scene", "text",
-        "The camera's own state: live, covered, blurred, moved or offline. Not an event in the picture.", replay=True)
+        "The camera's own state: live, covered, blurred, moved or offline. Not an event in the picture.", replay=True,
+        words=("live", "covered", "blurred", "moved", "offline"))
 def camera_health(ctx, cond, track):
     return SignalValue(ctx.health, None if ctx.health == "live" else f"camera {ctx.health}")
 
