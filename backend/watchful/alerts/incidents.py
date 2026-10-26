@@ -133,6 +133,13 @@ def _quiet(s, workspace_id, camera_id, watch_id, fingerprint: str, now: datetime
                  if fingerprint in (inc.agent_json or {}).get("fingerprints", [])), None)
 
 
+def _tapped_quiet(inc: m.Incident, now: datetime, t: AlertTuning) -> bool:
+    """A person closed this incident as a false alarm within Tuning alerts.false_alarm_quiet_s: only the AI check
+    finding the moment real (an alert verdict) reopens it; unverified or awaiting a person stays quiet."""
+    return inc.status == FALSE_ALARM and inc.closed_at is not None and \
+        now - when(inc.closed_at) <= timedelta(seconds=t.false_alarm_quiet_s)
+
+
 def _queue_sync(s, workspace_id: str, incident_id: str, now: datetime, urgent: bool) -> None:
     """One queued Telegram sync per incident: a burst of triggers folds into one edit. A status change pulls a
     sync that is waiting out the edit interval forward to now."""
@@ -267,8 +274,9 @@ def record_verdict(repo, incident_id: str, status: str, severity: str | None, su
     """The AI check's verdict on an incident: its summary becomes the reason and its grade the severity (a critical
     one stays critical). A dismissal clears an incident nobody has acted on yet; the verify prompt lets the agent
     dismiss a critical moment only with visual proof that everyone is safe. A real moment is never silenced: when
-    the incident was closed meanwhile (a false alarm tap, say), the verdict opens a new one and it is posted. Returns
-    the incident the verdict is on."""
+    the incident was closed meanwhile (a false alarm tap, say), an alert verdict opens a new one and it is posted. An
+    unverified or awaiting_human verdict does that too, except within alerts.false_alarm_quiet_s of a person's false
+    alarm on it. Returns the incident the verdict is on."""
     t, now = tuning or AlertTuning(), when(now)
     verdict = {"verdict": status, "why": why, "alert_id": alert_id}
     with _lock, repo.tx() as s:
@@ -277,7 +285,7 @@ def record_verdict(repo, incident_id: str, status: str, severity: str | None, su
             return None
         prior = (inc.agent_json or {}).get("verdict")
         if inc.status not in ACTIVE:
-            if status == "dismissed":
+            if status == "dismissed" or (status != "alert" and _tapped_quiet(inc, now, t)):
                 return inc
             fresh = _open_or_touch(s, inc.workspace_id, inc.camera_id, inc.watch_id,
                                    graded_severity(inc.severity, severity), summary or inc.reason, inc.keyframe_key,
@@ -319,7 +327,8 @@ def after_check(repo, candidate, verdict, alert_id: str | None = None, incident_
                 picture_box: list | None = None, extra: dict | None = None) -> m.Incident | None:
     """Files a checked candidate (rules.engine.Candidate and agent.verifier.Verdict): gives the verdict to the
     incident a critical candidate opened before its check, or opens or touches one for a real moment; a dismissed one
-    opens nothing."""
+    opens nothing, and neither does one the AI could not settle (unverified, awaiting_human) on the very trigger a
+    person closed as a false alarm within alerts.false_alarm_quiet_s."""
     if incident_id is not None:
         return record_verdict(repo, incident_id, verdict.status, getattr(verdict, "severity", None), verdict.summary,
                               getattr(verdict, "reason", ""), alert_id, now, tuning=tuning, notify=notify)
@@ -327,12 +336,17 @@ def after_check(repo, candidate, verdict, alert_id: str | None = None, incident_
         return None
     t = tuning or AlertTuning()
     severity = graded_severity(candidate.severity, getattr(verdict, "severity", None))
+    at, fingerprint = when(now if now is not None else candidate.ts), getattr(candidate, "fingerprint", None)
     with _lock, repo.tx() as s:
+        if verdict.status != "alert" and fingerprint and (quiet := _quiet(
+                s, repo.workspace_id, candidate.camera_id, candidate.watch_id, fingerprint, at, t)) is not None:
+            return quiet
         inc = _open_or_touch(s, repo.workspace_id, candidate.camera_id, candidate.watch_id, severity,
                              verdict.summary or candidate.watch_name,
                              candidate.keyframe_keys[0] if candidate.keyframe_keys else None,
-                             when(now if now is not None else candidate.ts), t, notify, picture_key, picture_box,
+                             at, t, notify, picture_key, picture_box,
                              {"cls": getattr(candidate, "cls", None), **(extra or {})}, real=True)
+        _remember(inc, fingerprint, t)  # so a false alarm on it keeps this very trigger quiet
         if "verdict" not in (inc.agent_json or {}):  # new, or one still checking (a held one went out above)
             inc.agent_json = {**(inc.agent_json or {}), "verdict": verdict.status,
                               "why": getattr(verdict, "reason", ""), "alert_id": alert_id}

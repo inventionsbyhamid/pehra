@@ -1,7 +1,7 @@
 """Stills for alerts that leave the app (Telegram): the moment around the flagged box, with the face of everyone who
 is not an enrolled, consenting staff member blurred. YuNet finds the faces and SFace says whether a face is enrolled
-(the society's FaceIndex); in doubt a face is blurred. A person whose face cannot be found has the head blurred where
-MediaPipe pose puts it, or the whole person when pose cannot tell."""
+(the society's FaceIndex); in doubt a face is blurred. Every person has the head blurred where MediaPipe pose puts
+it, or the whole person when pose cannot tell, unless an enrolled face is found right there."""
 import threading
 
 import cv2
@@ -105,9 +105,10 @@ def blurred_crop(frame: np.ndarray, box: Box | None, enrolled_faces, persons: li
                  cfg: CropTuning = CropTuning(), pose=None, detector=None) -> bytes:
     """A JPEG of the frame around `box` (the whole frame when None), every face blurred unless `enrolled_faces` (a
     FaceIndex loaded with the society's enrolled staff) recognises it. Each person, from `persons` (boxes in the
-    frame's pixels) and from the person `detector` run on the still, whose face is not found at all has the head
-    blurred where `pose` places it, or the whole box when it cannot: a face from above, in profile, small, lying or
-    under infrared light is often not found, and in doubt nothing is left sharp."""
+    frame's pixels) and from the person `detector` run on the still, has the head blurred where `pose` places it, or
+    the whole box when it cannot, unless an enrolled face is found in that very head: a face from above, in profile,
+    small, lying or under infrared light is often not found, a face found in the box may be someone else's, and in
+    doubt nothing is left sharp."""
     x0, y0, x1, y1 = _region(frame.shape, box, cfg.margin)
     image = frame[y0:y1, x0:x1].copy()
     k = min(1.0, cfg.max_side / max(image.shape[:2]))
@@ -125,10 +126,12 @@ def blurred_crop(frame: np.ndarray, box: Box | None, enrolled_faces, persons: li
             gx, gy = cfg.face_grow * fw, cfg.face_grow * fh
             _blur(image, int(fx - gx), int(fy - gy), int(fx + fw + gx), int(fy + fh + gy), cfg.blur_cells)
     for px, py, pw, ph in people:
-        if any(px <= fx + fw / 2 <= px + pw and py <= fy + fh / 2 <= py + ph for (fx, fy, fw, fh), _ in faces):
-            continue  # its face was found: blurred above, or an enrolled one kept
-        head = _pose_head(original, (px, py, pw, ph), pose, cfg) or (px, py, px + pw, py + ph)
-        _blur(image, *(int(v) for v in head), cfg.blur_cells)
+        head = _pose_head(original, (px, py, pw, ph), pose, cfg)
+        if head is not None and any(known and head[0] <= fx + fw / 2 <= head[2] and head[1] <= fy + fh / 2 <= head[3]
+                                    for (fx, fy, fw, fh), known in faces):
+            continue  # an enrolled staff member's own face, where pose puts this person's head: kept
+        # anyone else's face found inside the box says nothing about this person's own, so the head always goes
+        _blur(image, *(int(v) for v in head or (px, py, px + pw, py + ph)), cfg.blur_cells)
     ok, jpg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, cfg.jpeg_quality])
     if not ok:
         raise ValueError("the still could not be encoded")

@@ -181,20 +181,25 @@ def push_parts(ctx) -> tuple[PushHub, DeviceTokens]:
     return ctx.push_hub, ctx.device_tokens
 
 
-TOKEN_PATH = re.compile(r"(?<=\s)(/(?:ws/)?cam/)[^/?\s\"]+")
+TOKEN_PATH = re.compile(r"((?:^|[\s\"'=]|//[^/\s\"']+)/(?:ws/)?cam/)[^/?\s\"']+")  # a path, or a link's path
+
+
+def _hidden(value):
+    return TOKEN_PATH.sub(r"\1-", value) if isinstance(value, str) else value
 
 
 class TokenPaths(logging.Filter):
-    """Rewrites /cam/{token} and /ws/cam/{token} in a log line to /cam/- and /ws/cam/-."""
+    """Rewrites /cam/{token} and /ws/cam/{token} in a log record to /cam/- and /ws/cam/-: in its message and in each
+    of its arguments, which keep their number and order (uvicorn's AccessFormatter unpacks exactly five)."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            message = record.getMessage()
-        except (TypeError, ValueError):
-            return True
-        hidden = TOKEN_PATH.sub(r"\1-", message)
-        if hidden != message:
-            record.msg, record.args = hidden, ()
+        record.msg = _hidden(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(_hidden(a) for a in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {k: _hidden(v) for k, v in record.args.items()}
+        if "color_message" in record.__dict__:
+            record.__dict__["color_message"] = _hidden(record.__dict__["color_message"])
         return True
 
 
