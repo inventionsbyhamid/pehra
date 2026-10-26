@@ -63,6 +63,7 @@ getent group caddy > /dev/null || groupadd --system caddy
 id caddy > /dev/null 2>&1 || useradd --system --gid caddy --home-dir /var/lib/caddy --create-home \
   --shell /usr/sbin/nologin caddy
 install -d -m 755 /etc/caddy
+install -d -m 755 -o caddy -g caddy /var/log/caddy
 install -m 644 "$SRC/deploy/caddy.service" /etc/systemd/system/caddy.service
 else
 say "packages"

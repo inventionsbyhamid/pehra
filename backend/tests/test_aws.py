@@ -1199,3 +1199,12 @@ def test_the_web_build_gets_the_arm_bundlers_the_lockfile_leaves_out():
     assert "@rollup/rollup-linux-arm64-gnu@" in build and "@esbuild/linux-arm64@" in build
     assert build.index("npm ci") < build.index("@rollup/rollup-linux-arm64-gnu@") < build.index("npm run build")
     assert "require('rollup/package.json').version" in build and "require('esbuild/package.json').version" in build
+
+
+def test_stock_caddy_gets_the_log_folder_its_package_would_make():
+    """Caddy writes /var/log/caddy/access.log (Caddyfile); without the Debian package nothing makes that folder, so
+    Caddy exits on start ("opening log writer") and the site never comes up. The stock branch makes it, owned by
+    caddy."""
+    assert "output file /var/log/caddy/access.log" in (DEPLOY / "Caddyfile").read_text()
+    stock = stock_branch((DEPLOY / "remote_setup.sh").read_text())
+    assert re.search(r"^install -d -m 755 -o caddy -g caddy /var/log/caddy$", stock, re.M)
