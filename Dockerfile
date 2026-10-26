@@ -26,6 +26,7 @@ WORKDIR /app
 COPY backend/watchful/__init__.py backend/watchful/config.py backend/watchful/
 COPY backend/watchful/vision/__init__.py backend/watchful/vision/models.py backend/watchful/vision/
 COPY scripts/fetch_assets.py scripts/
+COPY assets/yolox/ assets/yolox/
 COPY models/ models/
 RUN python scripts/fetch_assets.py
 
@@ -47,4 +48,4 @@ EXPOSE 8000
 VOLUME /app/data
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"
-CMD ["uvicorn", "watchful.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "watchful.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "2097152"]

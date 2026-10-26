@@ -1,3 +1,6 @@
+import hashlib
+from pathlib import Path
+
 import cv2
 import pytest
 
@@ -14,6 +17,15 @@ def test_all_models_load(name):
 
 def test_every_model_has_a_license():
     assert all(m.license for m in MODEL_FILES.values())
+
+
+@pytest.mark.parametrize("name", ["yolox_nano_320", "yolox_nano_384"])
+def test_our_exports_ship_in_the_repo(name):
+    """A fresh clone builds without any release of ours: the exported detectors are in the repo, checked by sha256."""
+    m = MODEL_FILES[name]
+    assert m.url.startswith("repo:")
+    path = Path(__file__).resolve().parents[2] / m.url.removeprefix("repo:")
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == m.sha256
 
 
 def test_face_models_create():

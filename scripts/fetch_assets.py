@@ -1,10 +1,12 @@
 """Download models and sample clips, verifying sha256 when known."""
 import hashlib
+import shutil
 import sys
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "backend"))
 
 from watchful.vision.models import (EMBEDDERS, MODEL_EXTRAS, MODEL_FILES, SAMPLES, embedder_path,  # noqa: E402
                                     extra_path, model_path, sample_path)
@@ -23,7 +25,10 @@ def fetch(url: str, dest: Path) -> None:
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
-    urllib.request.urlretrieve(url, tmp)
+    if url.startswith("repo:"):  # a file kept in this repo
+        shutil.copyfile(ROOT / url.removeprefix("repo:"), tmp)
+    else:
+        urllib.request.urlretrieve(url, tmp)
     tmp.rename(dest)
 
 

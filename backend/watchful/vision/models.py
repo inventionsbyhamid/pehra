@@ -9,7 +9,7 @@ from watchful.config import Settings
 log = logging.getLogger(__name__)
 
 HF = "https://huggingface.co/opencv"
-OUR_RELEASE = "https://github.com/inventionsbyhamid/watchful/releases/download/models-v1"
+OUR_EXPORTS = "repo:assets/yolox"  # small exports of ours, kept in the repo; fetch_assets copies them
 PADDLE = "https://huggingface.co/PaddlePaddle"
 
 
@@ -26,12 +26,12 @@ MODEL_FILES: dict[str, ModelFile] = {
         "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.onnx",
         "yolox_nano.onnx", "Apache-2.0 (Megvii YOLOX)",
         "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d"),
-    # exported from the same nano weights at smaller inputs (scripts/export_yolox), served from our release
+    # exported from the same nano weights at smaller inputs (scripts/export_yolox), kept in the repo
     "yolox_nano_320": ModelFile(
-        f"{OUR_RELEASE}/yolox_nano_320.onnx", "yolox_nano_320.onnx", "Apache-2.0 (Megvii YOLOX, exported)",
+        f"{OUR_EXPORTS}/yolox_nano_320.onnx", "yolox_nano_320.onnx", "Apache-2.0 (Megvii YOLOX, exported)",
         "feb9d0f814e1ad06117711fc0b563ff708f5a893c58b7c3c14a7ed102b7d546d"),
     "yolox_nano_384": ModelFile(
-        f"{OUR_RELEASE}/yolox_nano_384.onnx", "yolox_nano_384.onnx", "Apache-2.0 (Megvii YOLOX, exported)",
+        f"{OUR_EXPORTS}/yolox_nano_384.onnx", "yolox_nano_384.onnx", "Apache-2.0 (Megvii YOLOX, exported)",
         "d98dba6aaf544d9a75d1da912ad64552410c550cc85a81332cf10e84b91290d4"),
     "yolox_tiny": ModelFile(
         "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx",
