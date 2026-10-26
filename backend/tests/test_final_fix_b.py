@@ -572,3 +572,13 @@ def test_the_approval_subject_carries_the_brand():
     ApprovalNotifier(Box()).approve(AlertRow("a1", "cam", "w1", 1.0, "critical", "alert", "Smoke at the gate", None,
                                              None, [], None, "fp", None))
     assert sent == [f"{BRAND.name}: Smoke at the gate"] and "Watchful" not in sent[0]
+
+
+# Also: setup tasks the AI wrote survive the save
+
+def test_setup_tasks_from_the_card_survive_the_save():
+    spec = W(Condition(signal="entered", zones=["gate"])).model_dump()
+    setup = ["Ask the guard to keep the gate light on at night.", "Draw a zone called gate on this camera.",
+             "Tell the kids not to play here."]
+    r = check_watch(spec, "someone enters the gate", CompileContext(zones={"gate": "area"}), setup=setup)
+    assert r.setup == ["Ask the guard to keep the gate light on at night."]

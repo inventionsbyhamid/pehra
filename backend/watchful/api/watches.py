@@ -124,7 +124,8 @@ def make_router(ctx) -> APIRouter:
         r = repo(member)
         try:
             result = check_watch(body.watch, body.text or str(body.watch.get("name") or ""),
-                                 context_for(r, cam, attributes=readers.attributes_of(cam)), body.coverage, body.cannot)
+                                 context_for(r, cam, attributes=readers.attributes_of(cam)), body.coverage, body.cannot,
+                                 body.setup)
         except Invalid as e:
             raise HTTPException(400, f"That watch can't be saved: {e}.")
         same = result.watch.subject.same_as

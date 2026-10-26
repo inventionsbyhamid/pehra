@@ -484,13 +484,15 @@ def check_age(spec: dict, ctx: CompileContext) -> None:
         raise Invalid(["no watch may be about anyone's age"])
 
 
-def check_watch(spec: dict, text: str, ctx: CompileContext, coverage=(), cannot=()) -> CompileResult:
+def check_watch(spec: dict, text: str, ctx: CompileContext, coverage=(), cannot=(), setup=()) -> CompileResult:
     """A watch a client sends to be saved (usually the one its card showed), checked again here exactly like the
     AI's: privacy, catalog, names and kinds, contradictions, output rules; coverage tiers and setup are worked out
-    again rather than trusted. Raises Invalid with plain problems."""
+    again rather than trusted (the card's own setup tasks pass the same filter as the AI's). Raises Invalid with
+    plain problems."""
     check_age(spec, ctx)
     try:
-        return _build({"watch": spec, "coverage": list(coverage), "cannot": list(cannot)}, text, ctx, from_ai=False)
+        return _build({"watch": spec, "coverage": list(coverage), "cannot": list(cannot), "setup": list(setup)}, text,
+                      ctx, from_ai=False)
     except Invalid:
         raise
     except (ValueError, KeyError, TypeError, ValidationError) as e:
