@@ -74,6 +74,7 @@ for (const page of pages) {
     await writeFile(path.join(dist, "index.html"), html);
   } else {
     const name = page.path.slice(1);
+    await mkdir(path.dirname(path.join(dist, name)), { recursive: true }); // /docs/aws sits in dist/docs
     await writeFile(path.join(dist, `${name}.html`), html);
     await mkdir(path.join(dist, name), { recursive: true });
     await writeFile(path.join(dist, name, "index.html"), html);

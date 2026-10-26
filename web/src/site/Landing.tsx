@@ -79,7 +79,7 @@ const FEATURES = [
   ],
   [
     "A staff register from consented faces",
-    "Maids, drivers and cooks who agree are enrolled from a few photos, and their first in and last out are noted each day.",
+    "Maids, drivers and cooks who agree are enrolled from a few photos, and when they were first and last seen is noted each day.",
   ],
   [
     "Camera health",

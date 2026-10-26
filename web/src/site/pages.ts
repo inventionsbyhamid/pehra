@@ -37,6 +37,36 @@ export const PAGES: PageMeta[] = [
     description: `Monthly plans can be cancelled any time. Yearly plans can be refunded within ${refundDays} days of payment. How watched cameras, cancelling and refunds work at ${name}.`,
   },
   {
+    path: "/docs",
+    title: `Documentation | ${name}`,
+    description: `How ${name} works and how to use it: getting started, what OpenCV and the AI do, privacy and safety, self hosting with Docker, and the AWS deployment.`,
+  },
+  {
+    path: "/docs/getting-started",
+    title: `Getting started | ${name} docs`,
+    description: `Sign in or try the demo, add your society's cameras, draw zones and lines, write a watch in plain words and connect your Telegram group.`,
+  },
+  {
+    path: "/docs/how-it-works",
+    title: `How it works | ${name} docs`,
+    description: `How ${name} turns camera pictures into graded alerts: the OpenCV pipeline on every frame, watches compiled into signals, and the AI check with OpenCV tools.`,
+  },
+  {
+    path: "/docs/privacy-and-safety",
+    title: `Privacy and safety | ${name} docs`,
+    description: `Children are never enrolled, identified or aged. Faces only for consenting adult staff at entries, blurred pictures on Telegram, and footage deleted on schedule.`,
+  },
+  {
+    path: "/docs/self-hosting",
+    title: `Self hosting | ${name} docs`,
+    description: `Run ${name} on your own Linux machine with Docker Compose: what it needs, the settings to write, the first sign in, Telegram, backups and upgrades.`,
+  },
+  {
+    path: "/docs/aws",
+    title: `AWS deployment | ${name} docs`,
+    description: `The AWS services ${name} uses in Mumbai, from EC2 Graviton with COOL to S3, Bedrock, SSM, CloudWatch, SNS and CloudFormation, and how to deploy the stack.`,
+  },
+  {
     path: "/login",
     title: `Sign in | ${name}`,
     description: `Sign in to your society's control room on ${name}, or try the demo without signing in.`,

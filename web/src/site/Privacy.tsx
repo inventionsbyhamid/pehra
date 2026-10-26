@@ -44,7 +44,7 @@ export default function Privacy() {
         </li>
         <li>
           Logs: vehicles at the gates (time, direction, kind of vehicle, plate text and colour when read, a picture) and
-          staff attendance (first in and last out each day).
+          staff attendance (first seen and last seen each day).
         </li>
         <li>
           Staff enrolment: for each enrolled adult staff member, their name, their work, a record of their consent, and

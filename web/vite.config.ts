@@ -8,6 +8,10 @@ const api = process.env.WATCHFUL_API ?? "http://127.0.0.1:8000";
 const brandFile = fileURLToPath(new URL("../brand.json", import.meta.url));
 const plansFile = fileURLToPath(new URL("../backend/watchful/data/plans.json", import.meta.url));
 const readersFile = fileURLToPath(new URL("../backend/watchful/data/readers.json", import.meta.url));
+// the docs pages show the overview diagram and measured numbers from the same files the README uses
+const overviewFile = fileURLToPath(new URL("../docs/overview.svg", import.meta.url));
+const benchFile = fileURLToPath(new URL("../eval/results/bench-devbox_no_text.json", import.meta.url));
+const buildFile = fileURLToPath(new URL("../eval/results/build_measurements.json", import.meta.url));
 const brand = JSON.parse(readFileSync(brandFile, "utf8")) as Record<string, string>;
 
 const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -21,11 +25,20 @@ const brandHtml: Plugin = {
 
 export default defineConfig({
   plugins: [react(), brandHtml],
-  resolve: { alias: { "@data/brand": brandFile, "@data/plans": plansFile, "@data/readers": readersFile } },
+  resolve: {
+    alias: {
+      "@data/brand": brandFile,
+      "@data/plans": plansFile,
+      "@data/readers": readersFile,
+      "@docs/overview.svg": overviewFile,
+      "@results/bench": benchFile,
+      "@results/build": buildFile,
+    },
+  },
   server: {
     host: "127.0.0.1",
     port: 5173,
-    fs: { allow: [searchForWorkspaceRoot(process.cwd()), brandFile, plansFile, readersFile] },
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), brandFile, plansFile, readersFile, overviewFile, benchFile, buildFile] },
     proxy: {
       "/api": api,
       "/auth": api,

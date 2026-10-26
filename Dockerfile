@@ -7,6 +7,8 @@ FROM node:22-bookworm-slim AS web
 WORKDIR /src
 COPY brand.json ./
 COPY backend/watchful/data/plans.json backend/watchful/data/readers.json backend/watchful/data/
+COPY docs/overview.svg docs/
+COPY eval/results/bench-devbox_no_text.json eval/results/build_measurements.json eval/results/
 COPY web/package.json web/package-lock.json web/
 RUN cd web && npm ci --no-audit --no-fund
 COPY web/ web/

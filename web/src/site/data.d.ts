@@ -55,3 +55,24 @@ declare module "@data/plans" {
   const plans: PlansFile;
   export default plans;
 }
+
+// measured numbers the docs pages show, from eval/results (aliased in vite.config.ts); docs/fill.py reads the same files
+declare module "@results/bench" {
+  const bench: {
+    label: string;
+    scenario: { cameras: number; vcpus: number };
+    fps: { per_camera: { median: number } };
+    memory_mb: { total_median: number };
+  };
+  export default bench;
+}
+
+declare module "@results/build" {
+  export interface Measured {
+    value: number | string | null;
+    unit: string;
+    what: string;
+  }
+  const build: Record<string, Record<string, Measured | Record<string, Measured>>>;
+  export default build;
+}

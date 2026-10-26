@@ -199,8 +199,8 @@ export function StaffRegister() {
           <tr>
             <th scope="col">Name</th>
             <th scope="col">Work</th>
-            <th scope="col">First in</th>
-            <th scope="col">Last out</th>
+            <th scope="col">First seen</th>
+            <th scope="col">Last seen</th>
           </tr>
         </thead>
         <tbody>

@@ -6,7 +6,6 @@ node_modules/
 web/dist/
 __pycache__/
 .pytest_cache/
-.superpowers/
 deploy/params.env
 !.env.example
 /eval/clips/

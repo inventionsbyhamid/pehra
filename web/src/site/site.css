@@ -1320,6 +1320,226 @@ html:not([data-currency]) .site .cur-switch {
   font-size: 0.95rem;
 }
 
+/* Docs: a short list of pages beside the text on wide screens, a plain list above it on phones */
+
+.site .docs {
+  display: grid;
+  gap: 1.5rem;
+  padding-block: clamp(2rem, 5vw, 3.5rem) 4.5rem;
+}
+
+.site .docs-nav-title {
+  margin-bottom: 0.4rem;
+  color: var(--ink-3);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.site .docs-nav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site .docs-nav a {
+  display: inline-block;
+  padding-block: 0.2rem;
+  color: var(--ink-2);
+  font-size: 0.97rem;
+  text-decoration: none;
+}
+
+.site .docs-nav a:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.site .docs-nav a[aria-current="page"] {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.site .docs-body {
+  min-width: 0;
+  max-width: 44rem;
+}
+
+.site .docs-body h1 {
+  font-size: clamp(2rem, 1.5rem + 2vw, 2.75rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.site .docs-lead {
+  margin-top: 1rem;
+  color: var(--ink-2);
+  font-size: 1.12rem;
+}
+
+.site .docs-body h2 {
+  margin: 2.25rem 0 0.6rem;
+  font-size: 1.3rem;
+  letter-spacing: -0.005em;
+}
+
+.site .docs-body :is(p, ul, ol, dl, pre, figure, .docs-table) + :is(p, ul, ol, dl, pre, figure, .docs-table) {
+  margin-top: 0.8rem;
+}
+
+.site .docs-body :is(ul, ol) {
+  padding-left: 1.25rem;
+}
+
+.site .docs-body li + li {
+  margin-top: 0.4rem;
+}
+
+.site .docs-body code {
+  padding: 0.05em 0.3em;
+  border-radius: 4px;
+  background: var(--tint);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.site .docs-code {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--stage);
+  color: var(--stage-ink);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.site .docs-code code {
+  padding: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  overflow-wrap: normal;
+}
+
+.site .docs-code:focus-visible {
+  outline-offset: 2px;
+}
+
+.site .docs-terms dt {
+  margin-top: 0.9rem;
+  font-weight: 700;
+}
+
+.site .docs-terms dd {
+  margin: 0.15rem 0 0;
+  color: var(--ink-2);
+}
+
+.site .docs-cards {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+  padding: 0 !important;
+  list-style: none;
+}
+
+.site .docs-cards li {
+  margin: 0 !important;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.site .docs-cards a {
+  font-weight: 700;
+}
+
+.site .docs-cards p {
+  margin-top: 0.25rem;
+  color: var(--ink-2);
+  font-size: 0.97rem;
+}
+
+.site .docs-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.site .docs-figure figcaption {
+  margin-top: 0.4rem;
+  color: var(--ink-3);
+  font-size: 0.9rem;
+}
+
+.site .docs-table {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.site .docs-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.93rem;
+}
+
+.site .docs-table :is(th, td) {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--line-2);
+  text-align: left;
+  vertical-align: top;
+}
+
+.site .docs-table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.site .docs-table thead th {
+  color: var(--ink-3);
+  font-size: 0.85rem;
+}
+
+.site .docs-table tbody th {
+  font-weight: 700;
+}
+
+.site .docs-next {
+  margin-top: 2.5rem !important;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+
+@media (min-width: 560px) {
+  .site .docs-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 900px) {
+  .site .docs {
+    grid-template-columns: 12rem minmax(0, 44rem);
+    gap: 3.5rem;
+  }
+  .site .docs-nav ul {
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .site .docs-nav {
+    align-self: start;
+    position: sticky;
+    top: 1.5rem;
+  }
+}
+
 /* Narrow screens */
 
 @media (max-width: 899px) {

@@ -73,8 +73,8 @@ export default function SiteLayout({ children }: { children: ReactNode }) {
             <NavLink to="/pricing" className="nav-wide">
               Pricing
             </NavLink>
-            <NavLink to="/privacy" className="nav-more">
-              Privacy
+            <NavLink to="/docs" className="nav-more">
+              Docs
             </NavLink>
             <HeaderActions />
           </nav>
@@ -95,6 +95,9 @@ export default function SiteLayout({ children }: { children: ReactNode }) {
             <ul className="footer-links">
               <li>
                 <Link to="/pricing">Pricing</Link>
+              </li>
+              <li>
+                <Link to="/docs">Docs</Link>
               </li>
               <li>
                 <Link to="/privacy">Privacy</Link>

@@ -3,6 +3,7 @@ import { StrictMode, type ComponentType } from "react";
 import { renderToString } from "react-dom/server";
 import { StaticRouter } from "react-router-dom/server";
 import brand, { site } from "./brand";
+import { AwsDocs, DocsHome, GettingStarted, HowItWorks, PrivacySafety, SelfHosting } from "./DocsPages";
 import Landing from "./Landing";
 import Login from "./Login";
 import { PAGES } from "./pages";
@@ -18,6 +19,12 @@ const VIEWS: Record<string, ComponentType> = {
   "/privacy": Privacy,
   "/refunds": Refunds,
   "/login": Login,
+  "/docs": DocsHome,
+  "/docs/getting-started": GettingStarted,
+  "/docs/how-it-works": HowItWorks,
+  "/docs/privacy-and-safety": PrivacySafety,
+  "/docs/self-hosting": SelfHosting,
+  "/docs/aws": AwsDocs,
 };
 
 export const pages = PAGES;
