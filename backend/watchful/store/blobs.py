@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import shutil
 import time
 from pathlib import Path
 from typing import Protocol
@@ -133,6 +134,16 @@ class LocalBlobStore:
 
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
+
+    def delete_prefix(self, prefix: str) -> int:
+        """Every blob under `prefix` (a society's `{workspace_id}/`, when the demo reset deletes a sandbox)."""
+        if not prefix.endswith("/"):
+            raise ValueError("a prefix ends with /")
+        folder = self._path(prefix.rstrip("/"))
+        removed = sum(1 for p in folder.rglob("*") if p.is_file()) if folder.is_dir() else 0
+        if folder.is_dir():
+            shutil.rmtree(folder)
+        return removed
 
     def delete_older_than(self, days: int, keep: tuple[str, ...] = ("people/",)) -> int:
         """Retention; enrolment photos stay until the person is deleted."""

@@ -36,7 +36,7 @@ from watchful.tuning import Tuning
 log = logging.getLogger("watchful.jobs")
 
 HANDLER_MODULES = ("watchful.alerts.incidents", "watchful.alerts.telegram", "watchful.alerts.summary",
-                   "watchful.billing.jobs")
+                   "watchful.billing.jobs", "watchful.demo")
 
 _HANDLERS: dict[str, Callable] = {}
 _DAILY: list[str] = []

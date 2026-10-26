@@ -237,10 +237,12 @@ class SwitchedOff:
 def over_allowance(db, workspace_id: str, now: datetime | None = None) -> SwitchedOff:
     """Switches off the newest watched cameras beyond what the plan watches (after it lapsed or was lowered), marked
     as switched off by the plan, with an Audit row; the app stops them and tells the society. Counted first, so a
-    society within its plan takes no lock."""
+    society within its plan takes no lock. A demo sandbox is left alone: it is comped while it lasts, its own cameras
+    are capped when added (demo_rules.py), and its cameras stop when it ends (api/demo.py)."""
     with db.tx() as s:
-        ent = entitlement(_workspace(s, workspace_id), now)
-        if ent.cameras is None or not ent.exact or _watched(s, workspace_id) <= ent.cameras:
+        ws = _workspace(s, workspace_id)
+        ent = entitlement(ws, now)
+        if ws.demo or ent.cameras is None or not ent.exact or _watched(s, workspace_id) <= ent.cameras:
             return SwitchedOff()
     with db.tx() as s:
         ws = _lock(s, workspace_id)

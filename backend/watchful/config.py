@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     night_mode: Literal["auto", "on", "off"] = "auto"
 
     demo_realtime: bool = True
+    demo_enabled: bool = True  # "Try the demo" starts a sandbox society for a day (demo.py)
     live_fps_during_scan: float = 2.0
     alert_dedupe_days: float = 14
     scan_workers: int = 0

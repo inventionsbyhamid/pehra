@@ -31,6 +31,18 @@ class S3BlobStore:
     def delete(self, key: str) -> None:
         self.s3.delete_object(Bucket=self.bucket, Key=key)
 
+    def delete_prefix(self, prefix: str) -> int:
+        """Every object under `prefix` (a society's `{workspace_id}/`, when the demo reset deletes a sandbox)."""
+        if not prefix.endswith("/"):
+            raise ValueError("a prefix ends with /")
+        removed = 0
+        for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix):
+            keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            for i in range(0, len(keys), 1000):
+                self.s3.delete_objects(Bucket=self.bucket, Delete={"Objects": keys[i:i + 1000]})
+                removed += len(keys[i:i + 1000])
+        return removed
+
     def delete_older_than(self, days: int, keep: tuple[str, ...] = ("people/",)) -> int:
         cutoff, removed = time.time() - days * 86400, 0
         for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket):

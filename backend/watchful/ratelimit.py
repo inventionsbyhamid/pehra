@@ -91,13 +91,15 @@ class RateLimiter:
 
 
 class Limiters:
-    """The per app limits on HTTP requests (api/account.py, auth/deps.py)."""
+    """The per app limits on HTTP requests (api/account.py, auth/deps.py, api/demo.py)."""
 
     def __init__(self, limits):
         self.sign_in = RateLimiter(limits.login_per_min_ip, 60.0)  # Google and operator links, per address
         self.api = RateLimiter(limits.api_per_min_workspace, 60.0)  # signed in API requests, per society
         self.public = RateLimiter(limits.public_per_min_ip, 60.0)  # pages behind a link that exists, per address
         self.misses = RateLimiter(limits.misses_per_min_ip, 60.0)  # unknown link tokens: guessing
+        self.demo = RateLimiter(limits.demo_logins_per_ip, limits.demo_login_window_s)  # new sandboxes, per address
+        self.demo_48 = RateLimiter(limits.demo_logins_per_48, limits.demo_login_window_s)  # and per IPv6 /48
 
 
 def address_key(ip: str) -> str:

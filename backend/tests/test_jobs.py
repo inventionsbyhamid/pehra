@@ -125,7 +125,7 @@ def test_keyed_jobs_and_deferral(queue, settings):
     assert worker.run_once(now=t0 + timedelta(seconds=30)).id == first.id and len(ran) == 1
     assert get(queue, first.id).status == "done"
 
-    assert worker.schedule_daily(t0) == ["jobs.cleanup", "incidents.retention", "plan_sweep"] and \
+    assert sorted(worker.schedule_daily(t0)) == ["demo_reset", "incidents.retention", "jobs.cleanup", "plan_sweep"] and \
         worker.schedule_daily(t0) == []
     worker.run_due(t0)
     old = queue.enqueue("test.record", {}, t0 - timedelta(days=10))
@@ -254,4 +254,4 @@ def test_worker_command_runs_due_jobs(queue, settings, tmp_path):
     assert out.returncode == 0, out.stderr[-2000:]
     assert get(queue, job.id).status == "done"
     assert jobs_module.HANDLER_MODULES == ("watchful.alerts.incidents", "watchful.alerts.telegram",
-                                           "watchful.alerts.summary", "watchful.billing.jobs")
+                                           "watchful.alerts.summary", "watchful.billing.jobs", "watchful.demo")

@@ -11,7 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from watchful.api import account, alerts, billing, blobs, cameras, incidents, live, people, search, telegram, watches
+from watchful.api import (account, alerts, billing, blobs, cameras, demo, incidents, live, people, search, telegram,
+                          watches)
 from watchful.api.common import LIVE_KINDS
 from watchful.api.headers import SecurityHeaders
 from watchful.auth.deps import AuthContext
@@ -104,6 +105,7 @@ def create_app(settings: Settings | None = None, llm=None, manager=None, provide
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.plans.start()  # cameras beyond a society's plan are switched off before any starts
+        app.state.sandboxes.start()  # and the cameras of demo sandboxes that ended
         for ws in ctx.workspace_ids():
             for cam in ctx.repo_for(ws).list_cameras():
                 if cam.enabled and cam.kind in LIVE_KINDS:  # a camera that sends its own pictures too, so it can
@@ -114,6 +116,7 @@ def create_app(settings: Settings | None = None, llm=None, manager=None, provide
             app.state.jobs.start()
         yield
         app.state.plans.stop()
+        app.state.sandboxes.stop()
         if app.state.jobs is not None:
             app.state.jobs.stopping()
         ctx.manager.shutdown()
@@ -131,7 +134,7 @@ def create_app(settings: Settings | None = None, llm=None, manager=None, provide
         return {"ok": True, "opencv": cv2.__version__, "kleidicv": "KleidiCV" in info or "kleidicv" in info.lower(),
                 "worker_beat_fresh": worker_alive(settings.data_dir, ctx.tuning.jobs.worker_alive_s)}
 
-    for router in (account, cameras, watches, alerts, incidents, telegram, search, people, blobs, live, billing):
+    for router in (account, cameras, watches, alerts, incidents, telegram, search, people, blobs, live, billing, demo):
         router.mount(app, ctx)
 
     dist = Path(settings.web_dist) if settings.web_dist else WEB_DIST

@@ -326,6 +326,17 @@ class LimitsTuning(_Section):
     refund_orders_margin_s: float = 300.0  # a refund takes the subscription's payments from this long before its year
     billing_poll_s: float = 2.0  # the billing panel asks again this often while a payment or change is confirmed
     billing_poll_tries: int = 15  # and at most this many times
+    # the judges' demo: each "Try the demo" starts a sandbox society of its own (demo.py)
+    demo_logins_per_ip: int = 5  # new sandboxes one address (an IPv6 /64) may start in demo_login_window_s
+    demo_logins_per_48: int = 20  # and one IPv6 /48 (one home or office may hold many /64s)
+    demo_login_window_s: float = 86400.0
+    demo_sandboxes_day: int = 300  # new sandboxes in the last day from every address together
+    demo_hours: int = 24  # a sandbox stops at this age and goes at the next daily reset, with its pictures
+    demo_ai_checks: int = 30  # AI checks of flagged moments a day per sandbox
+    demo_ai_assist: int = 15  # AI help a day per sandbox: writing watches, questions, search
+    # and every sandbox together stays under AI_DAILY_CALL_LIMIT in the last day
+    demo_cameras: int = 2  # cameras a visitor may add to a sandbox (this laptop, a phone); demo clips are extra
+    demo_check_s: float = 60.0  # how often the app stops the cameras of sandboxes that ended
 
 
 class PushTuning(_Section):

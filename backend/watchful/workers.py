@@ -32,7 +32,11 @@ log = logging.getLogger("watchful.workers")
 
 
 def should_record(repo, camera: Camera) -> bool:
-    """A demo camera records its timeline once; later runs only show the live view and alerts."""
+    """A demo camera records its timeline once; later runs only show the live view and alerts. A demo sandbox's
+    cameras never record: their day is seeded (demo.py), so a new sandbox costs no analysis until someone watches."""
+    from watchful.demo_rules import in_sandbox
+    if camera.kind == "demo" and in_sandbox(repo):
+        return False
     return camera.kind != "demo" or not repo.query_events(camera_id=camera.id, limit=1)
 
 

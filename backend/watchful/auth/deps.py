@@ -4,9 +4,10 @@
     def route(member: CurrentMember = Depends(require_role("admin"))): ...
 
 `current_user` checks the session cookie and, on writes, the request's origin; `current_member` checks that the
-user still belongs to the society the cookie names, on every request, and counts the request against the society's
-limit (Tuning limits.api_per_min_workspace). Society routes read and write through `member.workspace.id` only
-(ctx.repo_for). They find the app's context at `app.state.ctx` (api/app.py)."""
+user still belongs to the society the cookie names, on every request, counts the request against the society's
+limit (Tuning limits.api_per_min_workspace) and applies the demo's rules (demo_rules.py: a sandbox that ended
+takes no requests, uploads and enrolling faces are off there). Society routes read and write through
+`member.workspace.id` only (ctx.repo_for). They find the app's context at `app.state.ctx` (api/app.py)."""
 import threading
 from dataclasses import dataclass
 
@@ -14,6 +15,7 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 from starlette.requests import HTTPConnection
 
+from watchful import demo_rules
 from watchful.auth.sessions import SessionData, Sessions
 from watchful.config import Settings
 from watchful.db import models as m
@@ -120,6 +122,9 @@ def current_member(request: Request, user: m.User = Depends(current_user),
     except TooManyTries as e:
         raise HTTPException(429, "Too many requests from this society. Wait a minute and try again.",
                             headers={"Retry-After": str(e.retry_after_s)}) from None
+    route = getattr(request.scope.get("route"), "path", None) or request.url.path
+    if refused := demo_rules.refusal(member.workspace, request.method, route, ctx.db, ctx.tuning.limits.demo_cameras):
+        raise HTTPException(403, refused)
     return member
 
 

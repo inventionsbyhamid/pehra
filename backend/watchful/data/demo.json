@@ -1,0 +1,135 @@
+{
+  "_note": [
+    "The judges' demo (demo.py): every sandbox society gets each camera below whose clip file exists, looping as if live, with its watches and a day of incidents and log rows seeded from it. A camera whose clip is missing is left out; it is never shown with another clip.",
+    "clip: a file under the samples folder (DATA_DIR/samples or data/samples). Recorded clips go in samples/demo/ under these names; dropping one in adds its camera to new sandboxes with no code change.",
+    "source: what the clip is and its licence, shown in the app. Only consented recordings or openly licensed clips the owner approved.",
+    "zones and lines: points normalized 0 to 1 across and down the picture. Check them against a recorded clip and adjust here.",
+    "watches: what a society would type (text) and the watch it compiles to (a preset with fill, or the watch itself).",
+    "incidents: hours_ago places it in the last day; clip_s is the second of the clip whose frame is its picture (the person in the watch's zone at that moment is boxed); watch is the index into watches.",
+    "log_rows: rows a log watch wrote, hours_ago each. ledger and register: gate log and staff register rows for the seeding hook Task 6b fills (demo.py seed_gate_log_and_register)."
+  ],
+  "society": "Demo society",
+  "visitor": "Demo visitor",
+  "cameras": [
+    {
+      "key": "pool",
+      "name": "Pool",
+      "purpose": "pool",
+      "clip": "demo/pool.mp4",
+      "source": "Recorded for this demo with the consent of everyone in it.",
+      "zones": [
+        {"name": "water", "kind": "water", "polygon": [[0.05, 0.4], [0.95, 0.4], [0.95, 0.95], [0.05, 0.95]]},
+        {"name": "lifeguard chair", "polygon": [[0.8, 0.1], [0.98, 0.1], [0.98, 0.38], [0.8, 0.38]]}
+      ],
+      "watches": [
+        {"text": "someone still in the water for 20 seconds",
+         "watch": {"name": "Still in the water", "subject": {"classes": ["person"]},
+                   "conditions": [{"signal": "still_s", "zones": ["water"], "op": ">=", "value": 20}],
+                   "severity": "critical", "verify": "Is someone lying still in the water?", "cooldown_s": 60}},
+        {"text": "someone in the water after pool hours",
+         "watch": {"name": "In the water after pool hours", "subject": {"classes": ["person"]},
+                   "conditions": [{"signal": "in_zone", "zones": ["water"]}],
+                   "time_window": {"start": "21:00", "end": "06:00"},
+                   "severity": "critical", "verify": "Is someone in the pool after it closed?", "cooldown_s": 300}}
+      ],
+      "incidents": [
+        {"watch": 1, "hours_ago": 9.5, "clip_s": 4, "status": "acknowledged", "by": "Suresh", "via": "telegram",
+         "count": 2, "reason": "A person in the water after the pool closed.",
+         "why": "Someone in the pool after hours could be in danger alone."}
+      ],
+      "log_rows": []
+    },
+    {
+      "key": "main_gate",
+      "name": "Main gate",
+      "purpose": "main gate",
+      "clip": "demo/main_gate.mp4",
+      "source": "Recorded for this demo with the consent of everyone in it.",
+      "zones": [
+        {"name": "gate line", "kind": "line", "polygon": [[0.1, 0.6], [0.9, 0.6]]},
+        {"name": "gate", "polygon": [[0.1, 0.3], [0.9, 0.3], [0.9, 0.9], [0.1, 0.9]]}
+      ],
+      "watches": [
+        {"text": "log every vehicle in and out",
+         "watch": {"name": "Vehicle in or out", "subject": {"classes": ["car", "motorcycle", "truck", "bus"]},
+                   "conditions": [{"signal": "crossed", "params": {"line": "gate line", "direction": "any"}}],
+                   "output": "log", "cooldown_s": 5}},
+        {"text": "a vehicle waits at the gate for more than 5 minutes",
+         "watch": {"name": "Vehicle waiting at the gate", "subject": {"classes": ["car", "truck", "bus"]},
+                   "conditions": [{"signal": "stationary_s", "zones": ["gate"], "op": ">=", "value": 300}],
+                   "severity": "warning", "verify": "Is a vehicle standing at the gate?", "cooldown_s": 600}}
+      ],
+      "incidents": [],
+      "log_rows": [],
+      "ledger": []
+    },
+    {
+      "key": "service_gate",
+      "name": "Service gate",
+      "purpose": "service gate",
+      "clip": "demo/service_gate.mp4",
+      "source": "Recorded for this demo with the consent of everyone in it.",
+      "zones": [
+        {"name": "gate line", "kind": "line", "polygon": [[0.15, 0.65], [0.85, 0.65]]}
+      ],
+      "watches": [
+        {"text": "log staff arriving and leaving",
+         "watch": {"name": "Someone through the service gate", "subject": {"classes": ["person"]},
+                   "conditions": [{"signal": "crossed", "params": {"line": "gate line", "direction": "any"}}],
+                   "output": "log", "cooldown_s": 5}},
+        {"text": "someone comes in through the service gate after 10 PM",
+         "watch": {"name": "Service gate after 10 PM", "subject": {"classes": ["person"]},
+                   "conditions": [{"signal": "crossed", "params": {"line": "gate line", "direction": "in"}}],
+                   "time_window": {"start": "22:00", "end": "06:00"},
+                   "severity": "critical", "verify": "Is someone coming in through the service gate?",
+                   "cooldown_s": 120}}
+      ],
+      "incidents": [],
+      "log_rows": [],
+      "register": []
+    },
+    {
+      "key": "plaza",
+      "name": "Plaza",
+      "purpose": "other",
+      "clip": "vtest.avi",
+      "source": "OpenCV's sample video vtest.avi, BSD licence.",
+      "zones": [
+        {"name": "left walkway", "polygon": [[0, 0.3], [0.5, 0.3], [0.5, 1], [0, 1]]}
+      ],
+      "watches": [
+        {"text": "someone walks into the left walkway", "preset": "enters", "fill": {"zone": "left walkway"},
+         "severity": "critical", "name": "Someone in the left walkway"},
+        {"text": "too many people in the left walkway", "preset": "too_many",
+         "fill": {"zone": "left walkway", "value": 4}},
+        {"text": "log people leaving the left walkway", "preset": "leaves", "fill": {"zone": "left walkway"},
+         "output": "log"}
+      ],
+      "incidents": [
+        {"watch": 0, "hours_ago": 0.3, "clip_s": 40, "status": "open", "count": 3,
+         "reason": "A person walked into the left walkway.",
+         "why": "The walkway is marked critical by the society, so anyone walking in is told at once."},
+        {"watch": 1, "hours_ago": 2.6, "clip_s": 72, "status": "acknowledged", "by": "Ravi", "via": "app", "count": 2,
+         "reason": "Four people in the left walkway at once.",
+         "why": "A crowd in the walkway is worth a look but not urgent."},
+        {"watch": 0, "hours_ago": 6.2, "clip_s": 10, "status": "false_alarm", "by": "Suresh", "via": "telegram",
+         "count": 1, "reason": "A person walked into the left walkway.",
+         "why": "The walkway is marked critical by the society, so anyone walking in is told at once."},
+        {"watch": 1, "hours_ago": 11.4, "clip_s": 30, "status": "resolved", "count": 4,
+         "reason": "Four people in the left walkway at once.", "closed_by": "Cleared on its own"},
+        {"watch": 0, "hours_ago": 17.8, "clip_s": 2, "status": "acknowledged", "by": "Anita", "via": "telegram",
+         "count": 1, "reason": "A person walked into the left walkway.",
+         "why": "The walkway is marked critical by the society, so anyone walking in is told at once."},
+        {"watch": 1, "hours_ago": 21.5, "clip_s": 64, "status": "resolved", "count": 2,
+         "reason": "Four people in the left walkway at once.", "closed_by": "Cleared on its own"}
+      ],
+      "log_rows": [
+        {"watch": 2, "hours_ago": 0.9},
+        {"watch": 2, "hours_ago": 1.7},
+        {"watch": 2, "hours_ago": 4.1},
+        {"watch": 2, "hours_ago": 8.3},
+        {"watch": 2, "hours_ago": 15.2}
+      ]
+    }
+  ]
+}

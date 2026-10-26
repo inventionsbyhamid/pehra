@@ -29,6 +29,7 @@ from watchful import netguard
 from watchful.evidence import EvidenceBuffer
 from watchful.health import NO_PICTURE, check as health_check
 from watchful.ingest.clips import ClipRecorder
+from watchful.ingest.loop import demo_source
 from watchful.ingest.sources import FileSource, PushSource, StreamSource
 from watchful.rules.engine import RuleEngine, log_row, needs_for
 from watchful.rules.watch import Watch
@@ -148,8 +149,8 @@ class EventSink:
 
 def make_source(camera: Camera, settings: Settings):
     fps, width = max(settings.display_fps, settings.analysis_fps), settings.analysis_width
-    if camera.kind == "demo":
-        return FileSource(camera.url, fps, loop=True, realtime=settings.demo_realtime, width=width)
+    if camera.kind == "demo":  # one decoder per clip in this process, shared by every demo camera on it
+        return demo_source(camera.url, fps, width, settings.demo_realtime)
     if camera.kind == "file":
         return FileSource(camera.url, fps, realtime=settings.demo_realtime, width=width)
     if camera.kind == "webcam":
