@@ -22,8 +22,8 @@ line that reads "not measured yet" is cut, never guessed.
   "On Telegram" preview, which shows exactly what the group would get.
 * **For the AWS scene:** if deployed, the deploy's last lines with "COOL yes" and the CloudWatch dashboard; if not,
   `deploy/deploy.sh --dry-run` and the passing deploy tests.
-* **The documents:** `docs/architecture.svg`, `docs/agent-workflow.svg` and the filled `docs/report.md` at sections 8
-  and 6.
+* **The documents:** `docs/architecture.svg`, `docs/agent-workflow.svg` and the filled `docs/report.md` at sections 6
+  and 7.
 
 ## Scenes
 
@@ -40,7 +40,7 @@ line that reads "not measured yet" is cut, never guessed.
 | 3:10 to 3:30 | Gate log and staff register | Logs: the gate log (rows with plates if a gate clip exists, else empty, captioned so), then the staff register | With a gate clip: "Every vehicle in and out, with its plate and colour." Without: "The gate log fills from a gate camera; this demo has none yet." Then: "Staff arrivals from consenting adult staff only." | A gate clip, if recorded |
 | 3:30 to 3:55 | Add your phone by QR | Demo bar, Add your camera, A phone: the QR code; scan it; the phone page shows its notice and Start; the owner's face is blurred on the phone; the new tile goes live; a typed watch fires | "Any phone becomes a camera. Faces are blurred on the phone before anything is sent." | A phone |
 | 3:55 to 4:15 | Architecture and the agent | `architecture.svg`, then `agent-workflow.svg` with its lettered dots | "Every pixel step runs on OpenCV 5. Each dot is an OpenCV result that changes what happens next." | The diagrams |
-| 4:15 to 4:35 | Evaluation and failure cases | The report's section 8 tables, then one failure picture from `eval/results/failures/` | Only the numbers below, each as filled; then "Our labels, made by eye, on OpenCV's sample clip: not yet a society camera." | The filled report |
+| 4:15 to 4:35 | Evaluation and failure cases | The report's section 6 tables, then one failure picture from `eval/results/failures/` | Only the numbers below, each as filled; then "Our labels, made by eye, on OpenCV's sample clip: not yet a society camera." | The filled report |
 | 4:35 to 4:50 | AWS | If deployed: the deploy output with "COOL yes" and the CloudWatch dashboard. If not: the dry run and the stack's tests passing | Deployed: "On AWS Graviton with COOL, in Mumbai." Not deployed: "The AWS deployment is built and tested; it has not run yet." | AWS, if deployed |
 | 4:50 to 4:55 | End | The demo address and the repository | "Try it: https://pehra.dijmo.com" | |
 

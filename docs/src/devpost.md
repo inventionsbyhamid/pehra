@@ -34,11 +34,11 @@ top of the feed (3:2, JPG or PNG under {{say:5 MB}}). Only the demo's sample cli
 * **Agentic Vision:** yes. OpenCV flags a moment; a verifier agent calls OpenCV tools (zoom, CLAHE, denoise, DIS
   optical flow, pose history, the path walked) and its next step depends on what they return; it grades the alert,
   dismisses it, or asks a person; guards close the loop on Telegram. In a real trace on a dimmed frame the model
-  brightened it with CLAHE before deciding, which it did not do on the frame as filmed. Report section 7 and
+  brightened it with CLAHE before deciding, which it did not do on the frame as filmed. Report section 5 and
   `docs/agent-workflow.svg`.
 * **Best Use of COOL:** the AWS deployment runs the whole pipeline in COOL's Python on Graviton, and the deploy fails
   unless `cv2` is loaded from under `/opt/cool`. The benchmark against stock OpenCV and x86 is built; it has run only
-  on our x86 dev box so far. Report section 6 says "not measured yet" until it runs on AWS.
+  on our x86 dev box so far. Report section 7 says "not measured yet" until it runs on AWS.
 
 ## Built with
 
@@ -60,8 +60,7 @@ playwright, axe-core, pytest, docker
   billing panel. It is one x86 container with stock OpenCV 5.0.0.93; files stay on its disk, and the AI runs on
   DeepSeek V4.1 Flash through OpenRouter. The only demo camera today is OpenCV's sample clip of a plaza.
 * **Built and tested, waiting on the owner:** the AWS deployment (EC2 c8g.xlarge from the COOL image, S3, Bedrock,
-  CloudWatch, SSM, one CloudFormation stack in Mumbai), a Telegram bot token, Google sign in keys, Polar products, the
-  `pehra.dijmo.com` tunnel, and consented recordings of a pool, a main gate and a service gate.
+  CloudWatch, SSM, one CloudFormation stack in Mumbai), Google sign in keys, Polar products, and consented recordings of a pool, a main gate and a service gate.
 * **Planned:** the COOL benchmark on AWS (`eval/bench_aws.sh --yes-spend`).
 
 ### Inspiration
