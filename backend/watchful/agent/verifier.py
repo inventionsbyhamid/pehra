@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Literal
 
-from watchful.agent.compiler import Names, about_age, age_left_out, age_safe_summary
+from watchful.agent.compiler import Names, about_age, age_left_out, age_safe_summary, mentions_age
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
 from watchful.agent.prompting import parse_json, plain, render
 from watchful.agent.tools import TERMINAL, TOOLS, ToolContext, describe_tools, run_tool
@@ -97,7 +97,8 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
            meaning=None) -> Verdict:
     """The AI checks one flagged moment. What it says about anyone's age never reaches a person: a summary or reason
     about age (by the words, or by the meaning check with place names taken out) becomes the plain verdict, and the
-    trace's texts about age are left out. `meaning` is the meaning check; None is the process's own."""
+    trace's texts about age are left out (by the words; its last step's words with the verdict's). `meaning` is the
+    meaning check; None is the process's own."""
     places: Names | None = None
 
     def about(words: str) -> bool:
@@ -107,7 +108,12 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
         return about_age(words, places, meaning)
 
     v = _verify(c, ctx, llm, max_steps, deadline_s, about)
-    scrub(v.trace, about)
+    # the trace by the words (the meaning check costs a text tower run each); its final words follow the verdict's
+    scrub(v.trace, lambda words: mentions_age(words, places if places is not None else _places(ctx)))
+    if v.trace and v.trace[-1].tool in TERMINAL and v.summary == age_safe_summary(v.status, c.watch_name):
+        last = v.trace[-1]
+        last.args = {k: age_left_out() if k in ("summary", "reason", "question") else a for k, a in last.args.items()}
+        last.why = age_left_out() if about(last.why) else last.why
     return v
 
 
