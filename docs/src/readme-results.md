@@ -15,12 +15,14 @@ its file in [eval/results](eval/results). The Graviton and COOL numbers come wit
 | Every watch together at {{say:2 fps}}, precision and recall | {{eval.plaza.fps_2.all.precision}} ({{eval.plaza.fps_2.all.precision_ci}}), {{eval.plaza.fps_2.all.recall}} ({{eval.plaza.fps_2.all.recall_ci}}) |
 | Line crossings going in at {{say:1 fps}}, recall before and after the tracker fix | {{eval.plaza_before_fix.fps_1.cross_in.recall}}, {{eval.plaza.fps_1.cross_in.recall}} |
 | Plates read exactly, of real photos the grammar covers (not gate CCTV) | {{plates.commons.exact}} of {{plates.commons.plates}}; wrong {{plates.commons.wrong}}, unread {{plates.commons.unread}} |
-| Analysed frames a second per camera, 8 cameras on 2 CPUs of the dev box | {{bench.devbox_no_text.fps_per_camera|bare}} |
-| Memory of the whole app on the dev box, 8 cameras, median | {{bench.devbox_no_text.memory_total}} |
+| 8 busy cameras on 6 CPUs of our 2013 dev box: analysed frames a second per camera, without and with a watch described by looks | {{bench.devbox_6cpu_no_text.fps_per_camera|bare}}, {{bench.devbox_6cpu_text.fps_per_camera|bare}} |
+| Memory of the whole app in those runs, median | {{bench.devbox_6cpu_no_text.memory_total}}, {{bench.devbox_6cpu_text.memory_total}} |
 
 What goes wrong, so far: people walking close together, seen from above, merge into one box and one of them is
 missed; at very low frame rates two similar people can swap ids; a plate box that cuts characters can give a wrong but
-valid read; and the age guard also refuses some harmless phrases, such as "a person pushing a stroller". The first
+valid read; the age guard also refuses some harmless phrases, such as "a person pushing a stroller"; and a watch
+described by looks costs the most on old CPUs, so on our dev box, which has no AVX2, it stays under one analysed frame
+a second per camera. The first
 false alarm and first miss of each watch are saved as pictures in
 [eval/results/failures](eval/results/failures). One labelled clip is a small sample of one scene, and we have no
 society footage labelled yet. The [report](docs/report.md) has the details.

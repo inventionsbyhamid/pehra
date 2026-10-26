@@ -119,9 +119,9 @@ Point your domain at the address it prints. The deploy refuses to finish unless 
 
 Pehra runs on any 64 bit Linux machine with Docker, in the society's office or in a cloud. One container holds the
 whole app and one volume holds its data. The image is [4,254 MB](eval/results/build_measurements.json "selfhost.image_mb"), most of it models. For a sense of
-memory and CPU: our old dev box (a 2013 Xeon) ran [8](eval/results/bench-devbox_no_text.json "scenario.cameras") cameras on
-[2](eval/results/bench-devbox_no_text.json "scenario.vcpus") CPUs in [2,416 MB](eval/results/bench-devbox_no_text.json "memory_mb.total_median"), analysing
-[0.51 frames a second](eval/results/bench-devbox_no_text.json "fps.per_camera.median") per camera.
+memory and CPU: our old dev box (a 2013 Xeon) ran [8](eval/results/bench-devbox_6cpu_no_text.json "scenario.cameras") busy cameras on
+[6](eval/results/bench-devbox_6cpu_no_text.json "scenario.vcpus") CPUs in [3,710 MB](eval/results/bench-devbox_6cpu_no_text.json "memory_mb.total_median"), analysing
+[2.1 frames a second](eval/results/bench-devbox_6cpu_no_text.json "fps.per_camera.median") per camera.
 
 ```
 git clone https://github.com/inventionsbyhamid/pehra.git
@@ -181,12 +181,14 @@ its file in [eval/results](eval/results). The Graviton and COOL numbers come wit
 | Every watch together at 2 fps, precision and recall | [86%](eval/results/eval-plaza.json "runs.fps_2.all.precision.value") ([72% to 93%](eval/results/eval-plaza.json "runs.fps_2.all.precision.wilson95")), [73%](eval/results/eval-plaza.json "runs.fps_2.all.recall.value") ([60% to 84%](eval/results/eval-plaza.json "runs.fps_2.all.recall.wilson95")) |
 | Line crossings going in at 1 fps, recall before and after the tracker fix | [0%](eval/results/eval-plaza_before_fix.json "runs.fps_1.watches.cross_in.recall.value"), [83%](eval/results/eval-plaza.json "runs.fps_1.watches.cross_in.recall.value") |
 | Plates read exactly, of real photos the grammar covers (not gate CCTV) | [5](eval/results/plates-commons.json "all.exact") of [7](eval/results/plates-commons.json "all.plates"); wrong [1](eval/results/plates-commons.json "all.wrong"), unread [1](eval/results/plates-commons.json "all.unread") |
-| Analysed frames a second per camera, 8 cameras on 2 CPUs of the dev box | [0.51](eval/results/bench-devbox_no_text.json "fps.per_camera.median") |
-| Memory of the whole app on the dev box, 8 cameras, median | [2,416 MB](eval/results/bench-devbox_no_text.json "memory_mb.total_median") |
+| 8 busy cameras on 6 CPUs of our 2013 dev box: analysed frames a second per camera, without and with a watch described by looks | [2.1](eval/results/bench-devbox_6cpu_no_text.json "fps.per_camera.median"), [0.47](eval/results/bench-devbox_6cpu_text.json "fps.per_camera.median") |
+| Memory of the whole app in those runs, median | [3,710 MB](eval/results/bench-devbox_6cpu_no_text.json "memory_mb.total_median"), [5,728 MB](eval/results/bench-devbox_6cpu_text.json "memory_mb.total_median") |
 
 What goes wrong, so far: people walking close together, seen from above, merge into one box and one of them is
 missed; at very low frame rates two similar people can swap ids; a plate box that cuts characters can give a wrong but
-valid read; and the age guard also refuses some harmless phrases, such as "a person pushing a stroller". The first
+valid read; the age guard also refuses some harmless phrases, such as "a person pushing a stroller"; and a watch
+described by looks costs the most on old CPUs, so on our dev box, which has no AVX2, it stays under one analysed frame
+a second per camera. The first
 false alarm and first miss of each watch are saved as pictures in
 [eval/results/failures](eval/results/failures). One labelled clip is a small sample of one scene, and we have no
 society footage labelled yet. The [report](docs/report.md) has the details.

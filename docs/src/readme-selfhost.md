@@ -2,9 +2,9 @@
 
 Pehra runs on any 64 bit Linux machine with Docker, in the society's office or in a cloud. One container holds the
 whole app and one volume holds its data. The image is {{build.selfhost.image_mb}}, most of it models. For a sense of
-memory and CPU: our old dev box (a 2013 Xeon) ran {{bench.devbox_no_text.cameras}} cameras on
-{{bench.devbox_no_text.vcpus}} CPUs in {{bench.devbox_no_text.memory_total}}, analysing
-{{bench.devbox_no_text.fps_per_camera}} per camera.
+memory and CPU: our old dev box (a 2013 Xeon) ran {{bench.devbox_6cpu_no_text.cameras}} busy cameras on
+{{bench.devbox_6cpu_no_text.vcpus}} CPUs in {{bench.devbox_6cpu_no_text.memory_total}}, analysing
+{{bench.devbox_6cpu_no_text.fps_per_camera}} per camera.
 
 ```
 git clone {{link.repo}}.git

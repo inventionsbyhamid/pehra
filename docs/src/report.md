@@ -191,11 +191,14 @@ On {{plates.commons.photos}} Wikimedia Commons photos (handheld, daylight, not g
 {{plates.commons.unread}} unread. On a synthetic gate (a real car photo moved over a drawn gate),
 {{build.plates.gate_runs_paired}} of {{build.plates.gate_runs}} runs logged one in and one out paired by plate.
 
-`python eval/bench.py` runs the live camera pool on the Plaza clip. On our dev box (a 2013 Xeon without AVX2, shared
-with other work), {{bench.devbox_no_text.cameras}} cameras on {{bench.devbox_no_text.vcpus}} CPUs analysed
-{{bench.devbox_no_text.fps_per_camera}} per camera in {{bench.devbox_no_text.memory_total}} in all. A watch described
-in words on every camera is the expensive case, about {{build.pool.text_watch_r2.fps}} per camera, because every
-tracked person is embedded every few seconds. None of these numbers is from Graviton.
+`python eval/bench.py` runs the live camera pool on a busy Plaza clip. On our dev box (a 2013 Xeon without AVX2,
+shared with other work), {{bench.devbox_6cpu_no_text.cameras}} cameras on {{bench.devbox_6cpu_no_text.vcpus}} CPUs
+analysed {{bench.devbox_6cpu_no_text.fps_per_camera}} per camera in {{bench.devbox_6cpu_no_text.memory_total}} in all.
+A watch described by looks on every camera is the expensive case, since the image model looks at crops. Embedding only
+the tracks and zones a watch uses, once per look, raised that case from {{bench.devbox_6cpu_text_before.fps_per_camera}}
+to {{bench.devbox_6cpu_text.fps_per_camera}} per camera on {{say:6 CPUs}}, and from
+{{bench.devbox_2cpu_text_before.fps_per_camera}} to {{bench.devbox_2cpu_text.fps_per_camera}} on {{say:2 CPUs}}. On this
+CPU it stays under our goal of one analysed frame a second per camera. None of these numbers is from Graviton.
 
 ## 7. AWS and COOL
 

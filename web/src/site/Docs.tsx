@@ -63,7 +63,9 @@ export function Code({ children, label }: { children: string; label: string }) {
   );
 }
 
-const plain = (v: number) => (Math.abs(v) >= 10 ? Math.round(v).toLocaleString("en-US") : String(+v.toFixed(2)));
+// as docs/fill.py writes a number: whole from 10, one decimal from 1, else two
+const plain = (v: number) =>
+  Math.abs(v) >= 10 ? Math.round(v).toLocaleString("en-US") : String(+v.toFixed(Math.abs(v) >= 1 ? 1 : 2));
 
 // a measured number with its unit, as docs/fill.py writes it, or "not measured yet"
 function words(m: Measured | undefined) {
@@ -77,7 +79,6 @@ function words(m: Measured | undefined) {
 const measured = (group: string, key: string) => (build[group] as Record<string, Measured> | undefined)?.[key];
 
 export const MEASURED = {
-  benchLabel: bench.label,
   benchCameras: bench.scenario.cameras,
   benchCpus: bench.scenario.vcpus,
   benchFps: `${plain(bench.fps.per_camera.median)} frames a second`,

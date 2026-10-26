@@ -193,11 +193,14 @@ On [8](../eval/results/plates-commons.json "all.photos") Wikimedia Commons photo
 [1](../eval/results/plates-commons.json "all.unread") unread. On a synthetic gate (a real car photo moved over a drawn gate),
 [4](../eval/results/build_measurements.json "plates.gate_runs_paired") of [4](../eval/results/build_measurements.json "plates.gate_runs") runs logged one in and one out paired by plate.
 
-`python eval/bench.py` runs the live camera pool on the Plaza clip. On our dev box (a 2013 Xeon without AVX2, shared
-with other work), [8](../eval/results/bench-devbox_no_text.json "scenario.cameras") cameras on [2](../eval/results/bench-devbox_no_text.json "scenario.vcpus") CPUs analysed
-[0.51 frames a second](../eval/results/bench-devbox_no_text.json "fps.per_camera.median") per camera in [2,416 MB](../eval/results/bench-devbox_no_text.json "memory_mb.total_median") in all. A watch described
-in words on every camera is the expensive case, about [0.1 frames a second](../eval/results/build_measurements.json "pool.text_watch_r2.fps") per camera, because every
-tracked person is embedded every few seconds. None of these numbers is from Graviton.
+`python eval/bench.py` runs the live camera pool on a busy Plaza clip. On our dev box (a 2013 Xeon without AVX2,
+shared with other work), [8](../eval/results/bench-devbox_6cpu_no_text.json "scenario.cameras") cameras on [6](../eval/results/bench-devbox_6cpu_no_text.json "scenario.vcpus") CPUs
+analysed [2.1 frames a second](../eval/results/bench-devbox_6cpu_no_text.json "fps.per_camera.median") per camera in [3,710 MB](../eval/results/bench-devbox_6cpu_no_text.json "memory_mb.total_median") in all.
+A watch described by looks on every camera is the expensive case, since the image model looks at crops. Embedding only
+the tracks and zones a watch uses, once per look, raised that case from [0.12 frames a second](../eval/results/bench-devbox_6cpu_text_before.json "fps.per_camera.median")
+to [0.47 frames a second](../eval/results/bench-devbox_6cpu_text.json "fps.per_camera.median") per camera on 6 CPUs, and from
+[0.05 frames a second](../eval/results/bench-devbox_2cpu_text_before.json "fps.per_camera.median") to [0.12 frames a second](../eval/results/bench-devbox_2cpu_text.json "fps.per_camera.median") on 2 CPUs. On this
+CPU it stays under our goal of one analysed frame a second per camera. None of these numbers is from Graviton.
 
 ## 7. AWS and COOL
 

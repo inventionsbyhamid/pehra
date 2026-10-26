@@ -10,7 +10,7 @@ const plansFile = fileURLToPath(new URL("../backend/watchful/data/plans.json", i
 const readersFile = fileURLToPath(new URL("../backend/watchful/data/readers.json", import.meta.url));
 // the docs pages show the overview diagram and measured numbers from the same files the README uses
 const overviewFile = fileURLToPath(new URL("../docs/overview.svg", import.meta.url));
-const benchFile = fileURLToPath(new URL("../eval/results/bench-devbox_no_text.json", import.meta.url));
+const benchFile = fileURLToPath(new URL("../eval/results/bench-devbox_6cpu_no_text.json", import.meta.url));
 const buildFile = fileURLToPath(new URL("../eval/results/build_measurements.json", import.meta.url));
 const brand = JSON.parse(readFileSync(brandFile, "utf8")) as Record<string, string>;
 

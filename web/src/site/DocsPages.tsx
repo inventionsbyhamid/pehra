@@ -367,9 +367,10 @@ export function SelfHosting() {
           retention days.
         </li>
         <li>
-          Memory and CPU: on our {MEASURED.benchLabel}, {MEASURED.benchCameras} cameras on {MEASURED.benchCpus} CPUs
-          used {MEASURED.benchMemory} in all and analysed {MEASURED.benchFps} per camera (
-          <a href={repoFile("eval/results/bench-devbox_no_text.json")}>the measurement</a>). Newer CPUs do more.
+          Memory and CPU: on our dev box, a 2013 Xeon without AVX2, {MEASURED.benchCameras} busy cameras on{" "}
+          {MEASURED.benchCpus} CPUs used {MEASURED.benchMemory} in all and analysed {MEASURED.benchFps} per camera (
+          <a href={repoFile("eval/results/bench-devbox_6cpu_no_text.json")}>the measurement</a>). A watch described by
+          looks costs much more on an old CPU like this one.
         </li>
         <li>
           An https address for phone cameras and Telegram: a Cloudflare tunnel, or your own proxy. On plain http only
