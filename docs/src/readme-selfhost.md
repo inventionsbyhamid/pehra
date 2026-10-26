@@ -34,15 +34,5 @@ docker compose exec pehra python -m watchful.auth signin-link you@example.com --
 ```
 
 Then add cameras from the control room. To connect Telegram, open Settings, Telegram, Connect a group, add your bot
-to the group and send it the `/connect` code shown there.
-
-Everything Pehra keeps (the database, pictures and clips) is in the `pehra-data` volume. To back it up, and to
-upgrade (the database migrates itself on start):
-
-```
-docker compose stop pehra
-docker compose run --rm --no-deps --user root -v "$PWD:/backup" pehra tar czf /backup/pehra-data.tgz -C /app/data .
-docker compose start pehra
-
-git pull && docker compose up -d --build
-```
+to the group and send it the `/connect` code shown there. Backups and upgrades are on the
+[self hosting page]({{link.site}}/docs/self-hosting) of the website docs.

@@ -90,12 +90,12 @@ OpenRouter.
 ## AWS
 
 We built the production deployment for AWS in Mumbai (`ap-south-1`): one CloudFormation stack around one Graviton
-instance. It has not run on AWS yet. We test the template with `cfn-lint`, moto and a fake `aws` command.
+instance. It has not run on AWS yet.
 
 | Service | What it does for Pehra |
 | --- | --- |
 | EC2 c8g (Graviton4), from the COOL image | Runs everything, with OpenCV 5 built for Graviton |
-| S3 | Pictures and clips, incident clips under Object Lock, and a Litestream copy of the database |
+| S3 | Pictures, clips and a Litestream copy of the database |
 | Bedrock | Claude Haiku 5.5, for the AI check, writing watches and answering questions |
 | SSM Parameter Store | Settings and secrets |
 | CloudWatch | Logs, metrics, a dashboard and alarms |
@@ -111,9 +111,7 @@ deploy/deploy.sh --dry-run
 deploy/deploy.sh
 ```
 
-Point your domain at the address it prints. The deploy checks itself and fails unless OpenCV is loaded from COOL with
-KleidiCV and decodes H.264 and H.265. How much COOL speeds Pehra up on Graviton is not measured yet:
-the benchmark is ready (`eval/bench_aws.sh`) and waits for the AWS run.
+Point your domain at the address it prints. The deploy refuses to finish unless OpenCV from COOL is the one running.
 <!-- aws end -->
 
 <!-- selfhost start -->
@@ -153,18 +151,8 @@ docker compose exec pehra python -m watchful.auth signin-link you@example.com --
 ```
 
 Then add cameras from the control room. To connect Telegram, open Settings, Telegram, Connect a group, add your bot
-to the group and send it the `/connect` code shown there.
-
-Everything Pehra keeps (the database, pictures and clips) is in the `pehra-data` volume. To back it up, and to
-upgrade (the database migrates itself on start):
-
-```
-docker compose stop pehra
-docker compose run --rm --no-deps --user root -v "$PWD:/backup" pehra tar czf /backup/pehra-data.tgz -C /app/data .
-docker compose start pehra
-
-git pull && docker compose up -d --build
-```
+to the group and send it the `/connect` code shown there. Backups and upgrades are on the
+[self hosting page](https://pehra.dijmo.com/docs/self-hosting) of the website docs.
 <!-- selfhost end -->
 
 ## Privacy and safety
@@ -180,7 +168,7 @@ photo of someone's face.
 
 We ran the live engine on OpenCV's Plaza sample clip, which we labelled by eye ourselves, at 2 analysed frames a
 second. We also tested the plate reader on real photos and the camera pool on our x86 dev box. Each number links to
-its file in [eval/results](eval/results); anything we have not measured says so.
+its file in [eval/results](eval/results). The Graviton and COOL numbers come with the AWS run.
 
 | Plaza clip, 2 fps | Labelled | Matched | False alarms | Missed | Precision | Recall |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -194,8 +182,6 @@ its file in [eval/results](eval/results); anything we have not measured says so.
 | Line crossings going in at 1 fps, recall before and after the tracker fix | [0%](eval/results/eval-plaza_before_fix.json "runs.fps_1.watches.cross_in.recall.value"), [83%](eval/results/eval-plaza.json "runs.fps_1.watches.cross_in.recall.value") |
 | Plates read exactly, of real photos the grammar covers (not gate CCTV) | [5](eval/results/plates-commons.json "all.exact") of [7](eval/results/plates-commons.json "all.plates"); wrong [1](eval/results/plates-commons.json "all.wrong"), unread [1](eval/results/plates-commons.json "all.unread") |
 | Analysed frames a second per camera, 8 cameras on 2 CPUs of the dev box | [0.51](eval/results/bench-devbox_no_text.json "fps.per_camera.median") |
-| The same on c8g.large with COOL, and with stock OpenCV | not measured yet, not measured yet |
-| COOL over stock OpenCV on the same Graviton instance | not measured yet |
 | Memory of the whole app on the dev box, 8 cameras, median | [2,416 MB](eval/results/bench-devbox_no_text.json "memory_mb.total_median") |
 
 What goes wrong, so far: people walking close together, seen from above, merge into one box and one of them is

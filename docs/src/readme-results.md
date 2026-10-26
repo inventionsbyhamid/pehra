@@ -2,7 +2,7 @@
 
 We ran the live engine on OpenCV's Plaza sample clip, which we labelled by eye ourselves, at {{say:2 analysed frames a
 second}}. We also tested the plate reader on real photos and the camera pool on our x86 dev box. Each number links to
-its file in [eval/results](eval/results); anything we have not measured says so.
+its file in [eval/results](eval/results). The Graviton and COOL numbers come with the AWS run.
 
 | Plaza clip, {{say:2 fps}} | Labelled | Matched | False alarms | Missed | Precision | Recall |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -16,8 +16,6 @@ its file in [eval/results](eval/results); anything we have not measured says so.
 | Line crossings going in at {{say:1 fps}}, recall before and after the tracker fix | {{eval.plaza_before_fix.fps_1.cross_in.recall}}, {{eval.plaza.fps_1.cross_in.recall}} |
 | Plates read exactly, of real photos the grammar covers (not gate CCTV) | {{plates.commons.exact}} of {{plates.commons.plates}}; wrong {{plates.commons.wrong}}, unread {{plates.commons.unread}} |
 | Analysed frames a second per camera, 8 cameras on 2 CPUs of the dev box | {{bench.devbox_no_text.fps_per_camera|bare}} |
-| The same on c8g.large with COOL, and with stock OpenCV | {{bench.c8g_cool_no_text.fps_per_camera|bare}}, {{bench.c8g_stock_no_text.fps_per_camera|bare}} |
-| COOL over stock OpenCV on the same Graviton instance | {{bench.speedup.cool_over_stock_no_text}} |
 | Memory of the whole app on the dev box, 8 cameras, median | {{bench.devbox_no_text.memory_total}} |
 
 What goes wrong, so far: people walking close together, seen from above, merge into one box and one of them is
