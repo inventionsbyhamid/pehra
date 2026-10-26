@@ -9,10 +9,24 @@ This short report covers how it is built, how OpenCV is used, how we evaluated i
 * Video: https://youtu.be/nlv7qOpzlyI
 * Code: https://github.com/inventionsbyhamid/pehra
 
+| At a glance | |
+| --- | --- |
+| What | An AI control room for the CCTV a housing society already has: watches in plain words, OpenCV 5 on every camera, an AI agent that checks each flagged moment with OpenCV tools, graded Telegram alerts |
+| For | Society committees and facility managers, security supervisors, and the guards in the society's Telegram group |
+| OpenCV 5 | Detection (YOLOX on `cv2.dnn`), Kalman tracking, zones and directed lines, pose, DIS optical flow, YuNet and SFace, plate reading, camera health with ORB and MAGSAC, CLAHE, OpenCV.js face blur on phones |
+| Agent | Perceive, decide, act: the agent picks OpenCV tools one step at a time, and what they show changes its next step |
+| AWS | Live at https://aws.pehra.dijmo.com: Graviton4, S3, Bedrock, SSM, CloudWatch, SNS, one CloudFormation stack in Mumbai |
+| Results | Plaza clip at 2 fps: precision [86%](../eval/results/eval-plaza.json "runs.fps_2.all.precision.value"), recall [73%](../eval/results/eval-plaza.json "runs.fps_2.all.recall.value"); a tracker fix took line crossings at 1 fps from [0%](../eval/results/eval-plaza_before_fix.json "runs.fps_1.watches.cross_in.recall.value") to [83%](../eval/results/eval-plaza.json "runs.fps_1.watches.cross_in.recall.value") recall |
+| Safety | Never guesses anyone's age; faces only for consenting adult staff at entries; stills blurred |
+
 Every measured number here is filled in by `docs/fill.py` from a file in `eval/results/` and links to it. A number we
 have not measured says "not measured yet". Settings and design figures are written plainly.
 
 ## 1. The problem
+
+![The problem: last year a 13 year old child drowned in the swimming pool of the author's housing society; there was a camera at the pool and nobody was watching it](img/01-problem.jpg)
+
+*Why we built it: the author's own society, illustrated.*
 
 A housing society runs dozens of cameras and nobody watches them. At best a guard glances at one monitor, and footage
 is looked at after something goes wrong
@@ -43,6 +57,18 @@ society has used Pehra yet. The need comes from the reports above, not from our 
 * Cameras over RTSP, through a small bridge for recorders behind a router, from a phone or laptop browser (faces
   blurred on the device first), or as an uploaded video.
 
+![The control room of a demo society: the Pool and Plaza cameras and the incident feed](img/03-control-room.jpg)
+
+*The control room: every camera on one wall, one feed of incidents.*
+
+![A watch written in plain words, and the card that says what Pehra will watch, what it cannot, and how often it would have fired](img/04-watch.jpg)
+
+*A watch in plain words, with what it will and will not watch before it is saved.*
+
+![The Telegram message the guards get, with faces blurred and Acknowledge and False alarm buttons](img/06-telegram.jpg)
+
+*One Telegram message per incident, edited as it changes.*
+
 ## 3. Architecture
 
 ![Pehra at a glance](overview.svg)
@@ -58,7 +84,7 @@ alerts, metrics) are registered by name and picked by a setting.
 ## 4. How OpenCV is used
 
 Every pixel step goes through OpenCV 5: `opencv-python-headless` 5.0.0.93 in development and on the demo server,
-COOL's build on Graviton on AWS, and OpenCV.js 5.0 in the browser. One exception is deliberate. SigLIP 2, the image
+the same standard build on AWS Graviton (COOL's build when the stack is given the COOL image), and OpenCV.js 5.0 in the browser. One exception is deliberate. SigLIP 2, the image
 and text model for looks described in words, runs its forward pass on ONNX Runtime by default. On OpenCV DNN its image
 tower added [828 MB](../eval/results/build_measurements.json "pool.siglip.image_opencv_mb") to a process, on ONNX Runtime [400 MB](../eval/results/build_measurements.json "pool.siglip.image_ort_mb"),
 with the same vectors (cosine [1.0000](../eval/results/build_measurements.json "pool.siglip.cosine")). Its preprocessing stays in OpenCV, and
@@ -105,6 +131,10 @@ runs only on entry, gate and service door cameras.
 finds it. On a phone used as a camera, OpenCV.js runs `FaceDetectorYN` on each frame and covers every face before the
 picture is made; a frame is never sent unless detection ran on it.
 
+![The Plaza camera live: OpenCV's boxes, the walkway zone and its line, and the camera's watches](img/07-opencv.jpg)
+
+*OpenCV on a live camera: people boxed, the walkway zone and its directed line.*
+
 ## 5. The AI check
 
 ![Pehra agent workflow: a camera frame goes through OpenCV, the watch engine flags a moment or sends nothing, camera health and staff faces skip the AI, and the AI check calls OpenCV tools (more frames, zoom, brighten, denoise, flow, pose, path walked) in a loop until it alerts with a grade, asks a person, cannot judge, or dismisses. An incident goes to the control room and Telegram, and Acknowledge or False alarm comes back.](agent-workflow.svg)
@@ -136,6 +166,10 @@ moment; it does not measure the agent's accuracy. Those runs also showed a bug: 
 and read "[median motion inside the box: -0.00 body heights per second downward, -0.00 sideways](../eval/results/agent-trace-plaza.json "runs.0.steps.1.result")" for a walking person. It now compares neighbouring frames and says when they
 are too far apart. The traces were recorded before that fix.
 
+![An incident with the AI check's verdict, next to a recorded check's steps: get_frames, enhance with CLAHE because the crop is dark, raise_alert](img/05-agent.jpg)
+
+*The agent at work: on a dark moment it asks OpenCV to brighten the crop before deciding.*
+
 ## 6. Evaluation
 
 ### 6.1 Method
@@ -149,6 +183,10 @@ every candidate through the app's own path, with a stand in for the AI that call
 matches a label within [2 s](../eval/results/eval-plaza.json "tolerance_s"). Intervals are Wilson at 95%.
 
 ### 6.2 Results
+
+![Measured results on the Plaza clip, with a saved failure case](img/12-results.jpg)
+
+*Measured on OpenCV's Plaza clip, with the first false alarm saved as a picture.*
 
 | Watch, 2 fps | Labelled | Matched | False alarms | Missed | Precision | Recall |
 | --- | --- | --- | --- | --- | --- | --- |

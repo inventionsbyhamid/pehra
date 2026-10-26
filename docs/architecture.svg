@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="748" viewBox="0 0 1120 748" role="img" aria-labelledby="title desc">
   <title id="title">Pehra architecture</title>
-  <desc id="desc">At the society: the committee in a browser, a phone or laptop as a camera, the Pehra bridge, and CCTV cameras and recorders over RTSP. In AWS Mumbai, one EC2 Graviton4 instance with COOL (OpenCV 5 built for Graviton) runs the web app, the camera processes (decode, motion gate, detect, track, zones and lines, pose, faces at entries, plates, camera health), the AI check with its OpenCV tools, and the job worker. S3 keeps pictures, clips and the database copy; Bedrock runs the AI check; Parameter Store holds settings and secrets; CloudWatch has logs, metrics and alarms; SNS sends alarm email; CloudFormation builds the whole stack. Alerts go to the society's Telegram group.</desc>
+  <desc id="desc">At the society: the committee in a browser, a phone or laptop as a camera, the Pehra bridge, and CCTV cameras and recorders over RTSP. In AWS Mumbai, one EC2 Graviton4 instance running OpenCV 5 on Arm, ready for COOL (OpenCV 5 built for Graviton) runs the web app, the camera processes (decode, motion gate, detect, track, zones and lines, pose, faces at entries, plates, camera health), the AI check with its OpenCV tools, and the job worker. S3 keeps pictures, clips and the database copy; Bedrock runs the AI check; Parameter Store holds settings and secrets; CloudWatch has logs, metrics and alarms; SNS sends alarm email; CloudFormation builds the whole stack. Alerts go to the society's Telegram group.</desc>
   <style>
     .t { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
     .h { font-size: 16px; font-weight: 700; }
@@ -33,8 +33,8 @@
   <text class="t h awt" x="296" y="50">AWS Mumbai</text>
 
   <rect class="inst" x="296" y="64" width="554" height="428" rx="10"/>
-  <text class="t h" x="312" y="92"><tspan class="awt">EC2 Graviton4</tspan> with <tspan class="cvt">COOL</tspan></text>
-  <text class="t d m" x="312" y="112">OpenCV 5 built for Graviton</text>
+  <text class="t h" x="312" y="92"><tspan class="awt">EC2 Graviton4</tspan></text>
+  <text class="t d m" x="312" y="112">OpenCV 5 on Arm, COOL ready</text>
 
   <!-- at the society -->
   <rect class="box" x="24" y="72" width="220" height="64" rx="8"/>
