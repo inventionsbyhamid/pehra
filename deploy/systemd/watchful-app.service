@@ -17,7 +17,7 @@ Environment=OPENCV_IO_MAX_IMAGE_PIXELS=40000000
 WorkingDirectory=@APP@/current
 # settings and secrets from SSM join the environment first; one process, because sessions, live views and the
 # camera pool live in its memory. The camera processes are its children: stopping the unit stops them too.
-ExecStart=@PYTHON@ @APP@/current/deploy/ssm_env.py -- @PYTHON@ -m uvicorn watchful.api:create_app --factory --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
+ExecStart=@PYTHON@ @APP@/current/deploy/ssm_env.py -- @PYTHON@ -m uvicorn watchful.api:create_app --factory --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1 --ws-max-size 2097152 --no-access-log
 KillMode=control-group
 Restart=always
 RestartSec=3
