@@ -7,6 +7,8 @@
   "faces": {
     "label": "Staff register",
     "about": "Names enrolled staff by face on this camera, for the staff register. Everyone else stays unknown.",
-    "attributes": []
+    "attributes": [],
+    "purposes": ["main gate", "service gate", "lobby"],
+    "refused": "Staff recognition is for entry cameras. Set this camera's purpose to main gate, service gate or lobby first."
   }
 }

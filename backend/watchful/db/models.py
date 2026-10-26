@@ -433,7 +433,8 @@ class StaffFace(Base):
 
 
 class Attendance(Base):
-    """First in and last out of one staff member on one day (the society's time zone)."""
+    """When one staff member was first and last seen on one day (the society's time zone), and, where a camera has a
+    directed line, when they first crossed it going in and last going out."""
     __tablename__ = "attendance"
     __table_args__ = (UniqueConstraint("workspace_id", "staff_id", "day", name="uq_attendance_ws_staff_day"),
                       same_society("attendance", "staff_id", "staff"),
@@ -442,8 +443,10 @@ class Attendance(Base):
     workspace_id: Mapped[str] = workspace_fk()
     staff_id: Mapped[str]
     day: Mapped[str]  # "2026-10-25"
-    first_in: Mapped[datetime | None]
-    last_out: Mapped[datetime | None]
+    first_seen: Mapped[datetime | None]
+    last_seen: Mapped[datetime | None]  # None until a sighting at least Tuning staff.min_gap_s after the first
+    came_in: Mapped[datetime | None]  # the first crossing of a line going in
+    went_out: Mapped[datetime | None]  # the last crossing of a line going out
     camera_ids_json: Mapped[list[str]] = mapped_column(default=list)
 
 

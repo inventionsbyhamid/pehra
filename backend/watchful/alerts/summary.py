@@ -47,7 +47,7 @@ def daily(repo, day: date | str) -> str:
             .group_by(m.VehiclePassage.direction)).all())
         staff = s.scalar(select(func.count()).select_from(m.Attendance).where(
             m.Attendance.workspace_id == ws, m.Attendance.day == day.isoformat(),
-            m.Attendance.first_in.is_not(None))) or 0
+            m.Attendance.first_seen.is_not(None))) or 0
         watch_ids = {w for _, _, w in rows if w}
         watches = {w.id: w for w in s.scalars(select(m.Watch).where(m.Watch.workspace_id == ws,
                                                                     m.Watch.id.in_(watch_ids)))}

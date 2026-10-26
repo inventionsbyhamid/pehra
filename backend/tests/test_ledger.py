@@ -70,6 +70,10 @@ def test_in_and_out_pair_by_plate(repo, gate):
 
 def test_commercial_overstay_opens_an_incident(repo, gate):
     t = Tuning()
+    wid = ledger.ensure_overstay_watch(repo, t)  # what turning plate reading on gives a society, once
+    assert wid and ledger.ensure_overstay_watch(repo, t) is None
+    [row] = [w for w in repo.list_watches() if w.id == wid]
+    assert row.scope == "site" and row.enabled and row.watch["name"] == "A commercial vehicle stays inside more than 2 hours"
     cab = ledger.record_passage(repo, gate.id, cross(gate, "in", T0), PlateRead("KA01AB2345", 0.9, "yellow"))
     ledger.record_passage(repo, gate.id, cross(gate, "in", T0, 2), PlateRead("MH12AB1234", 0.9, "white"))
     gone = ledger.record_passage(repo, gate.id, cross(gate, "in", T0, 3), PlateRead("DL3CAB1234", 0.9, "yellow"))
@@ -77,18 +81,20 @@ def test_commercial_overstay_opens_an_incident(repo, gate):
                           PlateRead("DL3CAB1234", 0.9, "yellow"))
     assert ledger.check_stays(repo, T0 + timedelta(hours=1), t) == []
     late = T0 + timedelta(seconds=t.ledger.overstay_s + 60)
-    assert ledger.check_stays(repo, late, t) == [(cab.id, ledger.OVERSTAY)]
+    assert ledger.check_stays(repo, late, t) == [(cab.id, wid)]
     assert ledger.check_stays(repo, late + timedelta(minutes=5), t) == []  # once per vehicle
     [inc] = incidents_.list_incidents(repo)
-    assert inc.watch_id == ledger.OVERSTAY and inc.camera_id == gate.id and inc.severity == "warning"
-    assert "KA01AB2345 came in at 10:30 AM through Main gate" in inc.reason and "2 hours 1 minute" in inc.reason
+    assert inc.watch_id == wid and inc.camera_id == gate.id and inc.severity == "warning"
+    assert inc.reason == "KA01AB2345 came in at 10:30 AM through Main gate and has not been seen going out after " \
+                         "2 hours 1 minute."
     assert gone.id not in [p for p, _ in ledger.check_stays(repo, late + timedelta(hours=1), t)]
     # a Telegram message is the incident module's job: a warning is queued only when the society wants warnings
     with repo.tx() as s:
         assert s.scalars(select(m.Job).where(m.Job.kind == incidents_.SYNC)).all() == []
-    off = Tuning.model_validate({"ledger": {"overstay_s": 0}})
+    row.enabled = False  # a society switches it off like any watch
+    repo.update_watch(row)
     ledger.record_passage(repo, gate.id, cross(gate, "in", late, 5), PlateRead("TN09BC4821", 0.9, "yellow"))
-    assert ledger.check_stays(repo, late + timedelta(days=1), off) == []
+    assert ledger.check_stays(repo, late + timedelta(days=1), t) == []
 
 
 def test_a_cab_watch_works_through_the_generic_attribute_signal(repo, gate):
@@ -293,7 +299,7 @@ def test_retention_deletes_old_passages_and_attendance(tmp_path):
     with repo.tx() as tx:
         for days in (9, 2):
             day = (now - timedelta(days=days)).date().isoformat()
-            tx.add(m.Attendance(workspace_id=ws, staff_id=staff.id, day=day, first_in=now, last_out=now))
+            tx.add(m.Attendance(workspace_id=ws, staff_id=staff.id, day=day, first_seen=now, last_seen=now))
         tx.add(m.StaffFace(workspace_id=ws, staff_id=staff.id, embedding=m.pack_vec([0.2] * 128),
                            picture_key=f"{ws}/people/old.jpg"))
     blobs.put(f"{ws}/people/old.jpg", b"x", "image/jpeg")

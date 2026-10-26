@@ -43,20 +43,26 @@ class FaceMatch:
     name: str
     score: float
     margin: float = 1.0  # how much closer than the next enrolled person
+    ts: float = 0.0  # when the look was taken (a track's looks)
 
 
 def judge(looks: list[FaceMatch], cfg: FaceTuning) -> FaceMatch | None:
-    """A track's name from its face looks so far: one look at name_single or more, or name_frames looks of the same
-    person at name_multi or more, each at least name_margin ahead of the next person. Anything less (a possible
-    match, from possible_low up) never names anyone."""
+    """A track's name from its latest face looks (every face found, matched to the closest enrolled person however
+    weakly): the last look at name_single or more, or the last name_frames looks in a row of the same person, within
+    name_window_s, each at name_multi or more; every one of them at least name_margin ahead of the next person, so
+    two look alike staff are never confused. Looks spread over a long track, or alternating between people, never
+    add up to a name, and a possible match (from possible_low) is never one."""
     if not looks:
         return None
     last = looks[-1]
-    if last.score >= cfg.name_single:
+    if last.score >= cfg.name_single and last.margin >= cfg.name_margin:
         return last
-    agree = [x for x in looks if x.person_id == last.person_id and x.score >= cfg.name_multi
-             and x.margin >= cfg.name_margin]
-    return last if len(agree) >= cfg.name_frames and last in agree else None
+    recent = looks[-cfg.name_frames:]
+    if len(recent) >= cfg.name_frames and last.ts - recent[0].ts <= cfg.name_window_s and all(
+            x.person_id == last.person_id and x.score >= cfg.name_multi and x.margin >= cfg.name_margin
+            for x in recent):
+        return last
+    return None
 
 
 @register("faces", "yunet_sface")

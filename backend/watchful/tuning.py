@@ -79,6 +79,7 @@ class FaceTuning(_Section):
     name_single: float = 0.45
     name_multi: float = 0.363
     name_frames: int = 3
+    name_window_s: float = 10.0  # the name_frames looks must fall within this, in a row
     name_margin: float = 0.05
     possible_low: float = 0.30
     reload_s: float = 60.0  # every camera process has a society's enrolled staff as stored at most this long ago
@@ -234,7 +235,7 @@ class AlertTuning(_Section):
     code_length: int = 8
     summary_hour: int = 9  # the daily summary, in the society's time zone
     summary_late_h: float = 3.0  # a worker that was down at summary_hour still sends it this many hours late, no later
-    faces_refresh_s: float = 60.0  # enrolled faces used for blurring are read again this often
+    faces_refresh_s: float = 60.0  # face models for stills that failed to load are tried again after this
     http_timeout_s: float = 15.0
     bot_retry_s: float = 300.0  # the app asks Telegram for the bot's name again this long after a failed try
 
@@ -304,6 +305,13 @@ class PlateTuning(_Section):
     min_char_votes: int = 3  # reads of one length needed to vote character by character
     unread_weight: float = 0.15  # an unread crop counts against the voted text as a read this sure
     single_read: float = 0.8  # a text only one crop read keeps this share of its confidence
+    # crops whose small grey copies (view_size) correlate this much are one view read again (a vehicle waiting at the
+    # boom): one opinion. Measured on rendered cars: sensor noise and blur 0.9995 or more, a 3 px jitter 0.992, an
+    # 8 px move 0.972, a slight turn 0.956, coming 10% nearer 0.79
+    repeat_corr: float = 0.98
+    repeat_move: float = 0.1  # and a box whose centre moved this many box heights is a new view
+    repeat_size: float = 0.1  # or whose area changed by this share
+    view_size: tuple[int, int] = (64, 48)
     min_conf: float = 0.52  # a voted text less sure than this is left unread (the guess stays in reads)
     grey_chroma: float = 12  # max minus min channel at grey_percentile under this: an IR frame
     grey_percentile: float = 99
@@ -326,7 +334,9 @@ class LedgerTuning(_Section):
     min_box_px: int = 64  # a vehicle box shorter than this is too far away to read
     crop_margin: float = 0.05  # share of the box added on each side of the crop the reader gets
     settle_s: float = 3.0  # a crossing waits at most this long for the track's reads before its passage is logged
-    detect_stride: int = 1  # detector stride on a camera with plate reading: at 1 fps a skipped run loses a car
+    # a plate reading camera analysed slower than this runs the detector on every frame (stride 1): at about 1 fps a
+    # skipped run lost a car at the line before the tracker's distance pass; faster, it keeps detect.stride
+    every_frame_below_fps: float = 1.5
     dedupe_s: float = 30.0  # the same plate the same way through the same camera within this is one passage
     pair_window_s: float = 259200.0  # an out pairs with the latest unpaired in of its plate within this (3 days)
     overstay_s: float = 7200.0  # a commercial plate in for longer than this opens an incident; 0 turns it off
@@ -340,6 +350,7 @@ class StaffTuning(_Section):
     min_photos: int = 3
     max_photos: int = 5
     max_photo_mb: float = 8.0
+    min_gap_s: float = 120.0  # last seen is shown once someone is seen this long after they were first seen
     rollup_hour: int = 1  # yesterday's attendance is rolled up from this hour, society time
     rollup_late_h: float = 6.0  # a worker that was down then still rolls it up this many hours late
 

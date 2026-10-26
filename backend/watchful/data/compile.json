@@ -227,6 +227,8 @@
   "age_alternative": "anyone in that place, anyone alone there, or anyone not moving there for a while",
   "fallback_reason": "None of my building blocks can see that.",
   "fallback_alternative": "someone in a zone, crossing a line, staying too long, or looking like something you describe",
+  "stay_reason": "How long a vehicle has been inside comes from the gate log, which knows its plate and colour but not where it is now.",
+  "stay_alternative": "a vehicle inside the society for that long, or a vehicle staying in one spot in that place for that long",
   "colour_words": [
     "red",
     "orange",

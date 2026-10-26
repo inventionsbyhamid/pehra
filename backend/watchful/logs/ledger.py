@@ -2,32 +2,35 @@
 line's direction) with its plate as read; nothing here knows about gates. An out pairs with the latest unpaired in of
 the same plate; an unread plate (text None, whatever its confidence) never pairs.
 
-A vehicle that came in and has not gone out is "inside": the inside_s signal (rules/signals.py) gives its seconds, so
-a watch such as "a cab stays more than 2 hours" (attribute plate_colour is yellow, inside_s at least 7200) works on
-any society with plate reading, through the generic attribute signal. Those watches, and the built in overstay for
-commercial plates (Tuning ledger.overstay_s), are checked here every minute by the job worker, and open an incident
-through alerts/incidents.py (or write a log row), once per passage and watch."""
+A vehicle that came in and has not been seen going out is "inside": the inside_s signal (rules/signals.py) gives its
+seconds, so a watch such as "a cab stays more than 2 hours" (attribute plate_colour is yellow, inside_s at least 7200)
+works on any society with plate reading, through the generic attribute signal. The overstay for commercial plates is
+such a watch too: a site watch every society gets once it turns plate reading on (ensure_overstay_watch), which it can
+see, edit or switch off. These watches are checked here every minute by the job worker and open an incident through
+alerts/incidents.py (or write a log row), once per passage and watch; when several vehicles hold one watch's incident
+open, it names each of them. A vehicle that may have gone out unread (an unread out of its colour after it came in)
+is never alerted on."""
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, delete, exists, func, select
+from sqlalchemy import and_, delete, exists, func, or_, select
 from sqlalchemy.orm import aliased
 
 from watchful.db import models as m
 from watchful.jobs import handler, periodic
+from watchful.rules.engine import STAY_SIGNAL, STAY_SIGNALS, is_stay_watch
 from watchful.rules.signals import REGISTRY, SignalContext
-from watchful.rules.watch import Condition, Subject, Watch
-from watchful.store.db import EventRow
+from watchful.rules.watch import Watch
+from watchful.store.db import EventRow, WatchRow
 from watchful.tuning import LedgerTuning, Tuning
 from watchful.vision.reason import Tick, TrackState
 
 log = logging.getLogger("watchful.ledger")
 
-OVERSTAY = "overstay"  # the incidents' watch_id of the built in overstay
-STAY_SIGNAL = "inside_s"
-STAY_SIGNALS = {STAY_SIGNAL, "attribute", "present"}  # what a stay watch may use: the gate log knows nothing else
+OVERSTAY_KEY = "overstay_watch"  # Meta: the society has had its overstay watch; one it deletes stays deleted
+NAMED = 5  # vehicles an incident's reason names; the rest are counted (all are in its agent_json stays)
 RETENTION = "logs.retention"
 VEHICLE_WORDS = {"car": "car", "motorcycle": "two wheeler", "bus": "bus", "truck": "truck"}
 
@@ -127,30 +130,44 @@ def open_stays(repo, now: datetime, tuning: LedgerTuning | None = None) -> list[
             .order_by(m.VehiclePassage.at)))
 
 
-# stays: the built in overstay and watches using inside_s, checked here rather than on a camera
+# stays: watches using inside_s (the overstay among them), checked here rather than on a camera
 
 def overstay_watch(tuning: Tuning) -> Watch | None:
+    """The overstay watch a society gets with plate reading (presets.json vehicle_overstay, from Tuning ledger)."""
+    from watchful.rules.presets import preset
     cfg = tuning.ledger
     if cfg.overstay_s <= 0:
         return None
-    return Watch(name="A commercial vehicle stays too long", subject=Subject(classes=list(cfg.classes)),
-                 conditions=[Condition(signal="attribute", params={"name": "plate_colour"}, op="in",
-                                       value=list(cfg.overstay_colours)),
-                             Condition(signal=STAY_SIGNAL, op=">=", value=cfg.overstay_s)],
-                 severity=cfg.overstay_severity, verify="")
+    return preset("vehicle_overstay", seconds=cfg.overstay_s, hours=f"{cfg.overstay_s / 3600:g}",
+                  colours=list(cfg.overstay_colours), classes=list(cfg.classes), severity=cfg.overstay_severity)
 
 
-def is_stay_watch(w: Watch) -> bool:
-    """A watch about how long something has been inside: it runs here, on the gate log, not on a camera."""
-    return any(c.signal == STAY_SIGNAL for c in w.conditions)
+def add_overstay_watch(s, workspace_id: str, tuning: Tuning) -> str | None:
+    """ensure_overstay_watch in the caller's transaction."""
+    from watchful.store.sql import _watch_columns, upsert
+    if s.get(m.Meta, (workspace_id, OVERSTAY_KEY)) is not None:
+        return None
+    w = overstay_watch(tuning)
+    if w is None:
+        return None
+    row = m.Watch(id=m.new_id("wat"), workspace_id=workspace_id, camera_id=None,
+                  **_watch_columns(WatchRow(None, None, w.name.lower(), w.model_dump(mode="json"), True)))
+    s.add(row)
+    upsert(s, m.Meta, {"workspace_id": workspace_id, "key": OVERSTAY_KEY, "value": row.id}, ["workspace_id", "key"],
+           ["value"])
+    return row.id
 
 
-def stay_watches(repo, tuning: Tuning) -> list[tuple[str, Watch, str | None]]:
-    """(watch id, watch, home camera) of the built in overstay and the society's enabled stay watches."""
+def ensure_overstay_watch(repo, tuning: Tuning) -> str | None:
+    """A society with plate reading gets the overstay watch once (a site watch it can see, edit or switch off; one it
+    deletes is not added again). Returns the new watch's id, or None."""
+    with repo.tx() as s:
+        return add_overstay_watch(s, repo.workspace_id, tuning)
+
+
+def stay_watches(repo) -> list[tuple[str, Watch, str | None]]:
+    """(watch id, watch, home camera) of the society's enabled stay watches."""
     out = []
-    built_in = overstay_watch(tuning)
-    if built_in is not None:
-        out.append((OVERSTAY, built_in, None))
     for row in repo.list_watches():
         if not row.enabled:
             continue
@@ -175,12 +192,12 @@ def _clock(dt: datetime, tz: ZoneInfo) -> str:
     return dt.astimezone(tz).strftime("%I:%M %p").lstrip("0")
 
 
-def _holds(w: Watch, p: m.VehiclePassage, seconds: float, now: datetime) -> tuple[bool, list[str]]:
+def _holds(w: Watch, p: m.VehiclePassage, seconds: float, now: datetime, tuning: Tuning) -> tuple[bool, list[str]]:
     """Whether the watch holds for this vehicle inside, `seconds` after it came in."""
     if w.subject.classes and p.cls not in w.subject.classes:
         return False, []
     if w.subject.who != "anyone" or w.zones or any(c.signal not in STAY_SIGNALS for c in w.conditions):
-        return False, []
+        return False, []  # validate refuses these; a row saved before that never fires here
     if w.expires_at and now.timestamp() > w.expires_at:
         return False, []
     attributes = {"plate_text": p.plate_text, STAY_SIGNAL: f"{seconds:.0f}"}
@@ -189,7 +206,7 @@ def _holds(w: Watch, p: m.VehiclePassage, seconds: float, now: datetime) -> tupl
     track = TrackState(0, p.cls or "car", (0.0, 0.0, 0.0, 0.0), p.at.timestamp(), now.timestamp(),
                        attributes=attributes)
     tick = Tick(now.timestamp(), (0, 0), False, [track], [])
-    ctx = SignalContext(p.camera_id, {}, tick, Tuning().signals, {}, [], [track])
+    ctx = SignalContext(p.camera_id, {}, tick, tuning.signals, {}, [], [track])
     from watchful.rules.engine import RuleEngine, compare
     values = []
     for c in w.conditions:
@@ -199,12 +216,39 @@ def _holds(w: Watch, p: m.VehiclePassage, seconds: float, now: datetime) -> tupl
     return r.passed, r.reasons
 
 
+def maybe_gone(repo, p: m.VehiclePassage) -> bool:
+    """An out after it came in whose plate was not read, of its colour (or, when that out's colour is unknown, of its
+    kind): it may have been this vehicle going out, so it is not alerted on."""
+    unknown = or_(m.VehiclePassage.plate_colour.is_(None), m.VehiclePassage.plate_colour == "unknown")
+    if p.plate_colour in (None, "unknown"):
+        alike = and_(unknown, m.VehiclePassage.cls == p.cls)
+    else:
+        alike = or_(m.VehiclePassage.plate_colour == p.plate_colour, and_(unknown, m.VehiclePassage.cls == p.cls))
+    with repo.tx() as s:
+        return s.scalar(select(m.VehiclePassage.id).where(
+            _mine(repo), m.VehiclePassage.direction == "out", m.VehiclePassage.plate_text.is_(None),
+            m.VehiclePassage.at > p.at, alike).limit(1)) is not None
+
+
+def stay_reason(stays: list[dict], tz: ZoneInfo) -> str:
+    """Plain words for the vehicles an incident is about, each by its plate."""
+    def one(x: dict) -> str:
+        return f"{x['plate']} came in at {_clock(datetime.fromisoformat(x['at']), tz)} through {x['camera']}"
+
+    if len(stays) == 1:
+        return f"{one(stays[0])} and has not been seen going out after {_duration(stays[0]['seconds'])}."
+    named = "; ".join(one(x) for x in stays[:NAMED])
+    more = f"; and {len(stays) - NAMED} more" if len(stays) > NAMED else ""
+    return f"{len(stays)} vehicles have not been seen going out: {named}{more}."
+
+
 def check_stays(repo, now: datetime | None = None, tuning: Tuning | None = None) -> list[tuple[str, str]]:
-    """Fires each stay watch (and the built in overstay) once for each vehicle inside it holds for: an incident for an
-    alert watch, a log row for a log watch. Returns (passage id, watch id) of what fired."""
+    """Fires each stay watch once for each vehicle inside it holds for: an incident for an alert watch, a log row for
+    a log watch. A vehicle that may have gone out unread (maybe_gone) is left alone. Returns (passage id, watch id) of
+    what fired."""
     t = tuning or Tuning()
     now = now or m.utcnow()
-    watches = stay_watches(repo, t)
+    watches = stay_watches(repo)
     if not watches:
         return []
     stays = open_stays(repo, now, t.ledger)
@@ -219,25 +263,32 @@ def check_stays(repo, now: datetime | None = None, tuning: Tuning | None = None)
     fired = []
     for p in stays:
         seconds = (now - p.at).total_seconds()
-        for wid, w, home in watches:
-            if wid in (p.alerted_json or []) or not w.applies_to(p.camera_id, home or p.camera_id):
-                continue
-            if w.time_window and not w.time_window.contains(now.timestamp(), tz.key):
-                continue
-            ok, _ = _holds(w, p, seconds, now)
-            if not ok:
-                continue
-            reason = (f"{p.plate_text} came in at {_clock(p.at, tz)} through {names.get(p.camera_id, 'a gate')} and "
-                      f"has not gone out after {_duration(seconds)}.")
+        todo = [(wid, w) for wid, w, home in watches
+                if wid not in (p.alerted_json or []) and w.applies_to(p.camera_id, home or p.camera_id)
+                and not (w.time_window and not w.time_window.contains(now.timestamp(), tz.key))
+                and _holds(w, p, seconds, now, t)[0]]
+        if not todo or maybe_gone(repo, p):
+            continue
+        entry = {"passage_id": p.id, "plate": p.plate_text, "at": p.at.isoformat(), "seconds": round(seconds),
+                 "camera": names.get(p.camera_id, "a gate")}
+        for wid, w in todo:
+            reason = stay_reason([entry], tz)
             if w.output == "log":
                 repo.add_events([EventRow(None, p.camera_id, now.timestamp(), "watch_log", p.track_id, p.cls, None,
                                           {"watch_id": wid, "watch": w.name, "reasons": [reason],
                                            "signals": {STAY_SIGNAL: round(seconds)}, "passage_id": p.id},
                                           None, None, None, None)])
             else:
-                incidents_.open_or_touch_incident(repo, p.camera_id, wid, w.severity, reason, p.picture_key, now,
-                                                  tuning=t.alerts, fingerprint=f"stay|{p.id}|{wid}",
-                                                  extra={"cls": p.cls, "passage_id": p.id})
+                inc = incidents_.open_or_touch_incident(repo, p.camera_id, wid, w.severity, reason, p.picture_key,
+                                                        now, tuning=t.alerts, fingerprint=f"stay|{p.id}|{wid}",
+                                                        extra={"cls": p.cls})
+                with repo.tx() as s:  # every vehicle holding this incident open is named, not only the first
+                    row = s.get(m.Incident, inc.id)
+                    if row is not None and row.workspace_id == repo.workspace_id:
+                        held = [x for x in (row.agent_json or {}).get("stays", []) if x["passage_id"] != p.id]
+                        held.append(entry)
+                        row.agent_json = {**(row.agent_json or {}), "stays": held}
+                        row.reason = stay_reason(held, tz)
             with repo.tx() as s:
                 row = s.scalar(select(m.VehiclePassage).where(_mine(repo), m.VehiclePassage.id == p.id))
                 if row is not None:
@@ -282,30 +333,42 @@ def normalise_query(q: str | None) -> str:
     return "".join(ch for ch in (q or "").upper() if ch.isalnum())
 
 
-def passages(repo, day: date | str, q: str | None = None, camera_id: str | None = None,
-             limit: int = 2000) -> list[dict]:
-    """One day of the gate log (the society's calendar day), newest first, each with its pair."""
-    tz = society_zone(repo)
-    start, end = day_bounds(day, tz)
-    want = normalise_query(q)
-    other = aliased(m.VehiclePassage)
-    stmt = (select(m.VehiclePassage, other.at, m.Camera.name)
-            .join(other, and_(other.id == m.VehiclePassage.paired_id, other.workspace_id == repo.workspace_id),
-                  isouter=True)
-            .join(m.Camera, and_(m.Camera.id == m.VehiclePassage.camera_id,
-                                 m.Camera.workspace_id == repo.workspace_id), isouter=True)
-            .where(_mine(repo), m.VehiclePassage.at >= start, m.VehiclePassage.at < end))
-    if want:
-        stmt = stmt.where(m.VehiclePassage.plate_text.contains(want))
+PAGE = 200  # passages a page of the gate log holds
+
+
+def _day_filter(repo, day: date | str, q: str | None, camera_id: str | None) -> list:
+    start, end = day_bounds(day, society_zone(repo))
+    where = [_mine(repo), m.VehiclePassage.at >= start, m.VehiclePassage.at < end]
+    if want := normalise_query(q):
+        where.append(m.VehiclePassage.plate_text.contains(want))
     if camera_id:
-        stmt = stmt.where(m.VehiclePassage.camera_id == camera_id)
+        where.append(m.VehiclePassage.camera_id == camera_id)
+    return where
+
+
+def passages(repo, day: date | str, q: str | None = None, camera_id: str | None = None, limit: int = PAGE,
+             after: str | None = None) -> list[dict]:
+    """A page of one day of the gate log (the society's calendar day), newest first, each with its pair; `after` (a
+    passage id) continues after that passage."""
+    tz = society_zone(repo)
+    where = _day_filter(repo, day, q, camera_id)
+    other = aliased(m.VehiclePassage)
     with repo.tx() as s:
-        rows = s.execute(stmt.order_by(m.VehiclePassage.at.desc()).limit(limit)).all()
+        if after:
+            mark = s.scalar(select(m.VehiclePassage).where(_mine(repo), m.VehiclePassage.id == after))
+            if mark is not None:
+                where.append(or_(m.VehiclePassage.at < mark.at,
+                                 and_(m.VehiclePassage.at == mark.at, m.VehiclePassage.id < mark.id)))
+        stmt = (select(m.VehiclePassage, other.at, m.Camera.name)
+                .join(other, and_(other.id == m.VehiclePassage.paired_id, other.workspace_id == repo.workspace_id),
+                      isouter=True)
+                .join(m.Camera, and_(m.Camera.id == m.VehiclePassage.camera_id,
+                                     m.Camera.workspace_id == repo.workspace_id), isouter=True)
+                .where(*where).order_by(m.VehiclePassage.at.desc(), m.VehiclePassage.id.desc()).limit(limit))
+        rows = s.execute(stmt).all()
     out = []
     for p, paired_at, camera in rows:
-        stayed = None
-        if paired_at is not None:
-            stayed = abs((p.at - paired_at).total_seconds())
+        stayed = abs((p.at - paired_at).total_seconds()) if paired_at is not None else None
         out.append({"id": p.id, "at": p.at.astimezone(tz).isoformat(), "direction": p.direction,
                     "vehicle": VEHICLE_WORDS.get(p.cls or "", p.cls), "cls": p.cls, "plate": p.plate_text,
                     "plate_conf": p.plate_conf, "plate_colour": p.plate_colour or "unknown",
@@ -315,6 +378,28 @@ def passages(repo, day: date | str, q: str | None = None, camera_id: str | None 
                     "stayed_s": round(stayed) if stayed is not None else None,
                     "alerted": list(p.alerted_json or [])})
     return out
+
+
+def all_passages(repo, day: date | str, q: str | None = None, camera_id: str | None = None, page: int = PAGE):
+    """Every passage of the day, newest first, a page at a time (for the CSV)."""
+    after = None
+    while True:
+        rows = passages(repo, day, q, camera_id, page, after)
+        yield from rows
+        if len(rows) < page:
+            return
+        after = rows[-1]["id"]
+
+
+def day_counts(repo, day: date | str, q: str | None = None, camera_id: str | None = None) -> dict[str, int]:
+    """The whole day's passages in and out, and how many were not read."""
+    where = _day_filter(repo, day, q, camera_id)
+    with repo.tx() as s:
+        by = dict(s.execute(select(m.VehiclePassage.direction, func.count()).where(*where)
+                            .group_by(m.VehiclePassage.direction)).all())
+        unread = s.scalar(select(func.count()).select_from(m.VehiclePassage)
+                          .where(*where, m.VehiclePassage.plate_text.is_(None))) or 0
+    return {"in": by.get("in", 0), "out": by.get("out", 0), "unread": unread}
 
 
 def delete_before(repo, before: datetime) -> list[str]:

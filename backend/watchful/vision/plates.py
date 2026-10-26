@@ -47,6 +47,8 @@ class CropRead:
     colour: Colour
     plate: np.ndarray | None = None  # the warped plate, or the region around its text rows
     via: str = ""  # "plate box", "text rows around the plate box" or "text rows"
+    view: np.ndarray | None = None  # a small grey copy of the whole crop (view_of), to tell a repeat from a new view
+    where: tuple | None = None  # the crop's box in its frame (x, y, w, h), when a camera's tracker gave it
 
 
 # grammar
@@ -178,7 +180,7 @@ def vote(reads: list[CropRead], cfg: PlateTuning = PlateTuning(), grammar: Gramm
     read of `unread_weight`), times `single_read` when one crop alone read it; under `min_conf` it stays unread."""
     colour = _vote_colour(reads)
     texts = tuple(r.text for r in reads)
-    reads = distinct(reads)
+    reads = distinct(reads, cfg)
     valid = [r for r in reads if r.text]
     if not valid:
         return PlateRead(None, 0.0, colour, texts)
@@ -211,20 +213,49 @@ def vote(reads: list[CropRead], cfg: PlateTuning = PlateTuning(), grammar: Gramm
     return PlateRead(text if conf >= cfg.min_conf else None, conf, colour, texts)
 
 
-def _same_read(a: CropRead, b: CropRead) -> bool:
-    if a.text != b.text or a.score != b.score or a.via != b.via:
+def view_of(crop: np.ndarray, cfg: PlateTuning = PlateTuning()) -> np.ndarray:
+    """The crop small and grey: two crops of a vehicle that did not move (waiting at the boom) match almost exactly
+    here, sensor noise and all, while a vehicle that moved, turned or came nearer does not."""
+    return cv2.resize(grey(crop), tuple(cfg.view_size), interpolation=cv2.INTER_AREA).astype(np.float32)
+
+
+def same_view(a: np.ndarray | None, b: np.ndarray | None, cfg: PlateTuning = PlateTuning(), where_a=None,
+              where_b=None) -> bool:
+    """Two crops of one view: their small copies match at repeat_corr or more, and their boxes (when known) neither
+    moved repeat_move box heights nor changed size by repeat_size (a car coming nearer keeps a look alike crop, since
+    its box follows it, but its box grows)."""
+    if a is None or b is None or a.shape != b.shape:
+        return False
+    if where_a is not None and where_b is not None:
+        (ax, ay, aw, ah), (bx, by, bw, bh) = where_a, where_b
+        h = max(ah, bh, 1.0)
+        if np.hypot(ax + aw / 2 - bx - bw / 2, ay + ah / 2 - by - bh / 2) > cfg.repeat_move * h \
+                or abs(aw * ah - bw * bh) > cfg.repeat_size * max(aw * ah, bw * bh, 1.0):
+            return False
+    if a.std() < 1e-6 or b.std() < 1e-6:
+        return bool(np.allclose(a, b))
+    return float(cv2.matchTemplate(a, b, cv2.TM_CCOEFF_NORMED)[0, 0]) >= cfg.repeat_corr
+
+
+def _same_read(a: CropRead, b: CropRead, cfg: PlateTuning) -> bool:
+    if a.text != b.text:
+        return False
+    if a.view is not None and b.view is not None:
+        return same_view(a.view, b.view, cfg, a.where, b.where)
+    if a.score != b.score or a.via != b.via:
         return False
     if a.plate is None or b.plate is None:
         return a.plate is None and b.plate is None
     return a.plate.shape == b.plate.shape and np.array_equal(a.plate, b.plate)
 
 
-def distinct(reads: list[CropRead]) -> list[CropRead]:
-    """The reads with identical repeats of a text (the same crop read again) counted once: a repeat is not a second
-    opinion, so it never lifts a costly read over min_conf. Unread crops all count against the text."""
+def distinct(reads: list[CropRead], cfg: PlateTuning = PlateTuning()) -> list[CropRead]:
+    """The reads with repeats of a text counted once: a crop of the same view again (the vehicle did not move:
+    view_of matches at repeat_corr or more, noise and all) is not a second opinion, so it never lifts a costly read
+    over min_conf. Unread crops all count against the text."""
     out: list[CropRead] = []
     for r in reads:
-        if r.text is None or not any(_same_read(r, o) for o in out):
+        if r.text is None or not any(_same_read(r, o, cfg) for o in out):
             out.append(r)
     return out
 
@@ -435,9 +466,10 @@ class PlateReader:
             best = self._read_text_rows(crop, self.cfg.rows_score)
         if best is None:
             colour = plate_colour(first_plate, crop, self.cfg) if first_plate is not None else "unknown"
-            return CropRead(None, 0.0, colour, first_plate)
+            return CropRead(None, 0.0, colour, first_plate, view=view_of(crop, self.cfg))
         conf = crop_confidence(best.parsed, best.read_score, best.box_score, self.cfg)
-        return CropRead(best.parsed.text, conf, plate_colour(best.plate, crop, self.cfg), best.plate, best.via)
+        return CropRead(best.parsed.text, conf, plate_colour(best.plate, crop, self.cfg), best.plate, best.via,
+                        view_of(crop, self.cfg))
 
     def _pick(self, a: _Candidate | None, b: _Candidate | None) -> _Candidate | None:
         """The better of two reads: the lower grammar cost, then the higher score."""

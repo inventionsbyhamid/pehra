@@ -156,7 +156,7 @@ def utc(*a) -> float:
     return datetime(*a, tzinfo=UTC).timestamp()
 
 
-def test_first_in_last_out(tmp_path):
+def test_first_and_last_seen(tmp_path):
     repo = open_sqlite(tmp_path / "w.db")  # Asia/Kolkata
     gate = repo.add_camera(Camera(None, "Service gate", "stream", "rtsp://s", readers=["faces"]))
     lobby = repo.add_camera(Camera(None, "Lobby", "stream", "rtsp://l"))
@@ -172,11 +172,13 @@ def test_first_in_last_out(tmp_path):
     repo.add_events(rows)
     assert register.on_events(repo, rows) == 2
     day = {r["name"]: r for r in register.attendance(repo, "2026-10-25")}
-    assert day["Sunita"]["first_in"] == "2026-10-25T08:29:00+05:30"
-    assert day["Sunita"]["last_out"] == "2026-10-25T17:30:00+05:30"
+    assert day["Sunita"]["first_seen"] == "2026-10-25T08:29:00+05:30"
+    assert day["Sunita"]["last_seen"] == "2026-10-25T17:30:00+05:30"
+    assert (day["Sunita"]["came_in"], day["Sunita"]["went_out"]) == ("2026-10-25T17:00:00+05:30", None)  # crossings
     assert sorted(day["Sunita"]["cameras"]) == ["Lobby", "Service gate"]
     assert day["Kamla"]["present"] is False and day["Ravi"]["present"] is False
-    assert [r["name"] for r in register.attendance(repo, "2026-10-26") if r["present"]] == ["Sunita"]
+    [late] = [r for r in register.attendance(repo, "2026-10-26") if r["present"]]
+    assert late["name"] == "Sunita" and late["last_seen"] is None  # seen once: no last seen
     # the daily roll up works the day out again from the stored events: a missed live update is filled in
     ravi_rows = [named(gate, utc(2026, 10, 25, 2, 0), person=ravi.id, duration=120),
                  named(gate, utc(2026, 10, 25, 14, 0), person=ravi.id)]
@@ -184,14 +186,14 @@ def test_first_in_last_out(tmp_path):
     assert register.roll_up(repo, "2026-10-25") == 2
     assert register.roll_up(repo, "2026-10-25") == 2  # safe to repeat
     day = {r["name"]: r for r in register.attendance(repo, "2026-10-25")}
-    assert (day["Ravi"]["first_in"], day["Ravi"]["last_out"]) == ("2026-10-25T07:28:00+05:30",
-                                                                  "2026-10-25T19:30:00+05:30")
-    assert day["Sunita"]["first_in"] == "2026-10-25T08:29:00+05:30"
+    assert (day["Ravi"]["first_seen"], day["Ravi"]["last_seen"]) == ("2026-10-25T07:28:00+05:30",
+                                                                    "2026-10-25T19:30:00+05:30")
+    assert day["Sunita"]["first_seen"] == "2026-10-25T08:29:00+05:30"
     # removed: no longer listed when absent, kept with their history where they were in
     register.remove(repo, sunita.id, None)
     assert register.on_events(repo, [named(gate, utc(2026, 10, 27, 3, 0), person=sunita.id)]) == 0
     day = {r["name"]: r for r in register.attendance(repo, "2026-10-25")}
-    assert day["Sunita"]["active"] is False and day["Sunita"]["first_in"] == "2026-10-25T08:29:00+05:30"
+    assert day["Sunita"]["active"] is False and day["Sunita"]["first_seen"] == "2026-10-25T08:29:00+05:30"
     assert "Sunita" not in {r["name"] for r in register.attendance(repo, "2026-10-27")}
     assert absent.id in {r["staff_id"] for r in register.attendance(repo, "2026-10-27")}
 
@@ -215,7 +217,7 @@ def test_roll_up_runs_in_society_time(tmp_path):
     assert register.queue_roll_ups(worker, datetime(2026, 10, 25, 20, 45, tzinfo=UTC)) == []  # queued once
     worker.run_due(now=datetime(2026, 10, 25, 19, 46, tzinfo=UTC))
     [row] = register.attendance(repo, "2026-10-25")
-    assert row["present"] and row["first_in"] == "2026-10-25T08:29:00+05:30"
+    assert row["present"] and row["first_seen"] == "2026-10-25T08:29:00+05:30"
 
 
 def test_staff_register_api_and_csv(app):
@@ -225,11 +227,13 @@ def test_staff_register_api_and_csv(app):
     sunita = register.enrol(repo, "=cmd", "maid", [[0.1] * 128], None)
     register.on_events(repo, [named(gate, utc(2026, 10, 25, 3, 0), person=sunita.id, duration=60)])
     body = c.get("/api/logs/staff?day=2026-10-25").json()
-    assert body["present"] == 1 and body["staff"][0]["first_in"] == "2026-10-25T08:29:00+05:30"
+    assert body["present"] == 1 and body["staff"][0]["first_seen"] == "2026-10-25T08:29:00+05:30"
+    assert not {"first_in", "last_out"} & set(body["staff"][0])
     r = c.get("/api/logs/staff.csv?day=2026-10-25")
     rows = list(csv.reader(io.StringIO(r.text)))
-    assert rows[0] == ["Date", "Name", "Role", "First in", "Last out", "Cameras", "Still enrolled"]
-    assert rows[1] == ["2026-10-25", "'=cmd", "maid", "08:29:00", "08:30:00", "Service gate", "yes"]
+    assert rows[0] == ["Date", "Name", "Role", "First seen", "Last seen", "Came in", "Went out", "Cameras",
+                       "Still enrolled"]
+    assert rows[1] == ["2026-10-25", "'=cmd", "maid", "08:29:00", "", "", "", "Service gate", "yes"]
     assert "staff_register_2026-10-25.csv" in r.headers["content-disposition"]
     with app.state.ctx.db.tx() as s:
         assert [a.data["log"] for a in s.scalars(select(m.Audit).where(m.Audit.action == "logs.export"))] == ["staff"]
@@ -270,6 +274,7 @@ def _wait(cond, timeout: float) -> bool:
     return False
 
 
+@pytest.mark.slow
 def test_deleted_staff_is_never_named_again(tmp_path, photos):
     """Review Focus 5 across the shared camera processes: two cameras of one society on two processes name Sunita;
     once her enrolment is deleted she is not named again on either (at once when the app tells them, within
@@ -353,10 +358,11 @@ def test_the_demo_day_fills_both_logs_with_nobody_real(tmp_path, photos):
     assert any(p["paired_id"] for p in today) and any(p["plate"] is None for p in both)
     assert blobs.get(f"{repo.workspace_id}/{gate.id}/passages/demo_0.jpg")
     fired = ledger.check_stays(repo, now, Tuning())
-    assert any(w == ledger.OVERSTAY for _, w in fired)  # the cab still inside opens an incident
+    overstay = repo.get_meta(ledger.OVERSTAY_KEY)  # the demo society has the overstay watch, as plate reading gives
+    assert overstay and any(w == overstay for _, w in fired)  # and the cab still inside opens an incident
     present = [r for r in register.attendance(repo, "2026-10-26") if r["present"]]
     assert {r["name"] for r in present} <= {"Sunita", "Kamla", "Ravi", "Mohan", "Geeta", "Imran"} and present
-    assert all(r["first_in"] <= r["last_out"] for r in present if r["last_out"])
+    assert all(r["first_seen"] <= r["last_seen"] for r in present if r["last_seen"])
     # the templates are random vectors: no real face is ever named or even possible
     index = FaceIndex()
     index.load(repo.list_enrollments())

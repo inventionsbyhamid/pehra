@@ -306,5 +306,21 @@
       "severity": "warning",
       "cooldown_s": 600
     }
+  },
+  "vehicle_overstay": {
+    "description": "A commercial vehicle (yellow plate) stays inside longer than set; a society gets it once plate reading is on",
+    "defaults": {"seconds": 7200, "hours": "2", "colours": ["yellow"], "classes": ["car", "motorcycle", "bus", "truck"],
+                 "severity": "warning"},
+    "watch": {
+      "name": "A commercial vehicle stays inside more than $hours hours",
+      "scope": "site",
+      "subject": {"classes": "$classes"},
+      "conditions": [
+        {"signal": "attribute", "params": {"name": "plate_colour"}, "op": "in", "value": "$colours"},
+        {"signal": "inside_s", "op": ">=", "value": "$seconds"}
+      ],
+      "severity": "$severity",
+      "cooldown_s": 600
+    }
   }
 }

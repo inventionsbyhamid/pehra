@@ -191,7 +191,7 @@ def test_daily_summary_counts_the_day(env):
         staff = m.Staff(workspace_id=env.a.workspace_id, name="Sunita")
         s.add(staff)
         s.flush()
-        s.add(m.Attendance(workspace_id=env.a.workspace_id, staff_id=staff.id, day="2026-10-25", first_in=at(1)))
+        s.add(m.Attendance(workspace_id=env.a.workspace_id, staff_id=staff.id, day="2026-10-25", first_seen=at(1)))
     text = daily(env.a, day)
     assert text.splitlines()[0] == "Daily summary for Green Park, Sunday 25 October"
     assert "Alerts: 3 (1 critical, 1 warning, 1 note). 1 was a false alarm." in text

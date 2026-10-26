@@ -69,7 +69,7 @@ class _TrackMemo:
     suspicious_until: float = float("-inf")
     face_ts: float = float("-inf")
     face: FaceMatch | None = None  # the name, once judge() gives one
-    looks: list[FaceMatch] = field(default_factory=list)  # face looks that matched someone at possible_low or more
+    looks: list[FaceMatch] = field(default_factory=list)  # the latest face looks, name_frames at most
     keyframe_ts: float = float("-inf")
     keyframe_key: str | None = None
     best_key: str | None = None
@@ -217,9 +217,10 @@ class Perceiver:
                 and ts - m.face_ts >= 1 / self.t.faces.rate_hz:
             m.face_ts = ts
             self.counts["face_runs"] += 1
-            look = self.faces.identify(image, t.box, floor=self.t.faces.possible_low)
+            look = self.faces.identify(image, t.box, floor=-1.0)  # every face found, however weak, breaks a streak
             if look is not None:
-                m.looks.append(look)
+                look.ts = ts
+                m.looks = (m.looks + [look])[-max(1, self.t.faces.name_frames):]
                 m.face = judge(m.looks, self.t.faces)
         if started or ts - m.keyframe_ts >= self.t.perceive.keyframe_every_s:
             self._keyframe(image, t, ts, m)

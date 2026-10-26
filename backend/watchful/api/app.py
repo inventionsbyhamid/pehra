@@ -21,6 +21,8 @@ from watchful.components import make_blobs, make_detector, make_embedder, make_f
 from watchful.config import Settings, get_settings
 from watchful.db import models as m
 from watchful.jobs import worker_alive
+from watchful.logs.ledger import ensure_overstay_watch
+from watchful.logs.readers import PLATES
 from watchful.store.sql import ensure_default_watches
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
@@ -157,7 +159,10 @@ def create_app(settings: Settings | None = None, llm=None, manager=None, provide
         app.state.sandboxes.start()  # and the cameras of demo sandboxes that ended
         for ws in ctx.workspace_ids():
             ensure_default_watches(ctx.repo_for(ws))  # societies made before them, or by a tool, once
-            for cam in ctx.repo_for(ws).list_cameras():
+            cams = ctx.repo_for(ws).list_cameras()
+            if any(PLATES in c.readers for c in cams):  # plate reading from before the overstay was a watch
+                ensure_overstay_watch(ctx.repo_for(ws), ctx.tuning)
+            for cam in cams:
                 if cam.enabled and cam.kind in LIVE_KINDS:  # a camera that sends its own pictures too, so it can
                     ctx.manager.start(cam.id, ws)  # go offline when its device does not come back
         if jobs:

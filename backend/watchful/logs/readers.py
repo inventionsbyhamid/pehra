@@ -31,7 +31,16 @@ def attributes_of(camera) -> list[str]:
 
 
 def has(camera, name: str) -> bool:
-    return name in (getattr(camera, "readers", None) or [])
+    """The reader is on for this camera, and allowed for its purpose (staff recognition only on entry cameras)."""
+    return name in (getattr(camera, "readers", None) or []) and refused(name, getattr(camera, "purpose", None)) is None
+
+
+def refused(name: str, purpose: str | None) -> str | None:
+    """Plain words for why this reader can't be on a camera with this purpose, or None when it can."""
+    allowed = readers().get(name, {}).get("purposes")
+    if allowed is None or (purpose or "") in allowed:
+        return None
+    return readers()[name]["refused"]
 
 
 def needed(watch, camera) -> list[dict]:

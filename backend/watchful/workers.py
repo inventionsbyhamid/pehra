@@ -179,6 +179,7 @@ class WorkerManager:
         threading.Thread(target=self._watch_health, daemon=True).start()
         threading.Thread(target=self._report, daemon=True).start()
         threading.Thread(target=self._janitor, daemon=True).start()
+        self._faces_sent: dict[str, tuple] = {}  # each society's staff version its camera processes last got
         threading.Thread(target=self._sync_faces, daemon=True).start()
         self.indexer = None
         if settings.index_embeddings:
@@ -191,15 +192,24 @@ class WorkerManager:
         return [self.repo_for(ws) for ws in self.societies()]
 
     def _sync_faces(self) -> None:
-        """Every Tuning faces.reload_s each society's enrolled staff go to its camera processes again, as stored (a
-        lost command, a change made outside this app), so nobody removed is named for longer than that."""
+        """Every Tuning faces.reload_s a society whose enrolled staff changed since its camera processes last got
+        them (register.staff_version: a change made outside this app) gets them again, so nobody removed is named for
+        longer than that."""
         while not self._closed:
             time.sleep(self.tuning.faces.reload_s)
-            for ws in {self._society(c) for c, st in list(self.cams.items()) if st.status.running}:
-                try:
+            self.sync_faces()
+
+    def sync_faces(self) -> list[str]:
+        """The societies whose staff changed since their camera processes last got them, sent again now."""
+        sent = []
+        for ws in {self._society(c) for c, st in list(self.cams.items()) if st.status.running}:
+            try:
+                if register.staff_version(self.repo_for(ws)) != self._faces_sent.get(ws):
                     self.reload_faces(ws)
-                except Exception:
-                    log.exception("sending %s's enrolled staff to its cameras failed", ws)
+                    sent.append(ws)
+            except Exception:
+                log.exception("sending %s's enrolled staff to its cameras failed", ws)
+        return sent
 
     def _janitor(self, every_s: float = 6 * 3600) -> None:
         from watchful.store.rekey import rekey_society
@@ -341,7 +351,10 @@ class WorkerManager:
     def reload_faces(self, workspace_id: str) -> None:
         """A society's enrolled staff changed: every camera process watching one of its cameras reloads its face
         index and forgets anyone removed; no camera restarts."""
-        self.pool.reload(workspace_id, self.repo_for(workspace_id).list_enrollments())
+        repo = self.repo_for(workspace_id)
+        version = register.staff_version(repo)
+        self.pool.reload(workspace_id, repo.list_enrollments())
+        self._faces_sent[workspace_id] = version
 
     def status(self, camera_id: str) -> WorkerStatus:
         c = self.cams.get(camera_id)
@@ -474,7 +487,7 @@ class WorkerManager:
             rows = [r for r in msg["rows"] if r.camera_id == msg["camera_id"]]
             if ws and rows:
                 self.repo_for(ws).add_events(rows)
-                register.on_events(self.repo_for(ws), rows)  # the staff register, live
+                register.on_events(self.repo_for(ws), rows, self.tuning.staff.min_gap_s)  # the register, live
         elif kind == "passage":
             ws = self._from_society(msg)
             if ws:
@@ -670,7 +683,7 @@ class WorkerManager:
             start_epoch = ((cam.last_scan or {}).get("start_epoch") or probe_start_time(cam.url) or time.time())
             result = scan_file(cam.url, cam, watches, self._pool(), SocietyBlobs(self.blobs, repo.workspace_id),
                                self.settings, self.tuning,
-                               start_epoch=start_epoch, enrollments=repo.list_enrollments(),
+                               start_epoch=start_epoch, enrollments=repo.list_enrollments,
                                embedder=self._embedder if needs.embed else None,
                                on_progress=lambda p: info.update(progress=round(p, 3)))
             repo.delete_camera_events(cam.id)  # a rescan replaces the earlier timeline

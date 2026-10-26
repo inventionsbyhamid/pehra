@@ -5,14 +5,14 @@ for the attribute signal, and each vehicle crossing of a line becomes a passage 
 the track's reads are in."""
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import cv2
 import numpy as np
 
 from watchful.store.blobs import society_key
-from watchful.tuning import Tuning
-from watchful.vision.plates import CropRead, PlateRead
+from watchful.tuning import PlateTuning, Tuning
+from watchful.vision.plates import CropRead, PlateRead, same_view, view_of
 from watchful.vision.zones import foot_point, line_position
 
 ENDED_KEPT = 64  # ended tracks whose plates are kept until their passage goes
@@ -70,9 +70,13 @@ class PlateSampler:
             x0, y0 = int(max(0, x - mx)), int(max(0, y - my))
             x1, y1 = int(min(w, x + bw + mx)), int(min(h, y + bh + my))
             crop = image[y0:y1, x0:x1]
-            if crop.size:
+            pcfg = getattr(self.reader, "cfg", PlateTuning())
+            where = (float(x), float(y), float(bw), float(bh))
+            if crop.size and not (st.reads and same_view(view_of(crop, pcfg), st.reads[-1].view, pcfg, where,
+                                                         st.reads[-1].where)):
+                # a vehicle that has not moved since its last read (waiting at the boom) is not read again
                 start = time.perf_counter()
-                got = self.reader.read_crop(crop)
+                got = replace(self.reader.read_crop(crop), where=where)
                 self.ms += (time.perf_counter() - start) * 1000
                 self.reads += 1
                 st.reads.append(got)

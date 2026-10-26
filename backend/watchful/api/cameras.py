@@ -25,7 +25,7 @@ from watchful.auth.deps import CurrentMember, current_member, require_role
 from watchful.billing.limits import CHECKS, ai_used, daily_ai_cap, start_watching, stop_watching
 from watchful.ingest import nvr
 from watchful.ingest.push import CLOSE_GONE, CLOSE_OFF, push_parts, qr_svg
-from watchful.logs import readers as readers_
+from watchful.logs import ledger, readers as readers_
 from watchful.netguard import check_url, clip_roots, inside
 from watchful.rules.engine import validate
 from watchful.rules.presets import purposes
@@ -180,6 +180,10 @@ def make_router(ctx) -> APIRouter:
             except ValueError:
                 raise HTTPException(400, "Pick from the listed readers: " +
                                     ", ".join(r["label"].lower() for r in readers_.readers().values()) + ".")
+        final_purpose = purpose if purpose is not None else cam.purpose
+        for name in chosen if body.readers is not None else cam.readers:
+            if refusal := readers_.refused(name, final_purpose):
+                raise HTTPException(400, refusal)
         switching_on = bool(body.enabled) and not cam.enabled
         if switching_on and (refused := start_watching(ctx.db, member.workspace.id, cam.id)):
             raise HTTPException(403, refused)
@@ -198,6 +202,8 @@ def make_router(ctx) -> APIRouter:
         faces_before = readers_.has(cam, readers_.FACES)
         if body.readers is not None:
             cam.readers = chosen
+            if readers_.PLATES in chosen:  # the overstay watch comes with plate reading, once
+                ledger.ensure_overstay_watch(r, ctx.tuning)
         try:
             r.update_camera(cam)
         except Exception:

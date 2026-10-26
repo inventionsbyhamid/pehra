@@ -199,8 +199,7 @@ class CameraRunner:
         self.sink = EventSink(self.send, self.ws, self.id)
         self.sink.recording = self.recording = job.record
         self.pipe = CameraPipeline(cam, self.sink, blobs, faces, s, t, needs, embedder, detector, pose, sampler)
-        if sampler is not None:  # at about 1 analysed fps a skipped detection loses a vehicle's track at the line
-            self.pipe.perceiver.stride = min(self.pipe.perceiver.stride, max(1, t.ledger.detect_stride))
+        self.stride = self.pipe.perceiver.stride
         states = None
         if any(c.signal == "zone_state" for _, w in watches for c in w.conditions):
             states = load_states(job.examples, blobs.get, cam.zones, t.zones, embedder)
@@ -298,6 +297,13 @@ class CameraRunner:
             self._slot_lock.notify_all()
         return item
 
+    def fps(self) -> float:
+        """Frames analysed a second, over the last 10 s."""
+        mono = time.monotonic()
+        while self.done_at and self.done_at[0] < mono - 10:
+            self.done_at.popleft()
+        return len(self.done_at) / max(min(10.0, mono - self._t0), 1.0)
+
     def after(self, frame, arrived: float, result) -> None:
         """The rest of an analysed frame: evidence, the live overlay, rules, clips and candidates."""
         tick = result.tick
@@ -309,7 +315,11 @@ class CameraRunner:
             self.send({"type": "overlay", "camera_id": self.id, "ts": frame.ts, "tracks": self.tracks})
         self._judge()
         tick.health = None if self.health == "live" else self.health  # health is a signal: the rules hear it
-        self._passages(self.passages.on_tick(tick) if self.passages else [])
+        if self.passages:
+            self._passages(self.passages.on_tick(tick))
+            # a plate reading camera analysed this slowly detects on every frame: a skipped run loses a car's track
+            slow = self.fps() < self.tuning.ledger.every_frame_below_fps
+            self.pipe.perceiver.stride = 1 if slow else self.stride
         self._rules(tick, frame.ts, frame.image)
         for item in [p for p in self.pending if frame.ts >= p[0]]:
             self.pending.remove(item)
@@ -367,10 +377,7 @@ class CameraRunner:
             self.send(self.status())
 
     def status(self, stopped: bool = False) -> dict:
-        mono = time.monotonic()
-        while self.done_at and self.done_at[0] < mono - 10:
-            self.done_at.popleft()
-        fps = len(self.done_at) / max(min(10.0, mono - self._t0), 1.0)  # analysed frames, the last 10 s
+        fps = self.fps()
         plates = self.pipe.perceiver.plates.stats() if self.pipe.perceiver.plates else {}
         stats = {**self.pipe.stats(), **plates, "latency_p50_ms": percentile(self.latency_ms, 50),
                  "latency_p95_ms": percentile(self.latency_ms, 95), "process": self.worker.index}
@@ -457,6 +464,8 @@ class PoolWorker:
     def remove(self, camera_id: str) -> None:
         runner = self.cameras.pop(camera_id, None)
         if runner is not None:
+            if runner.passages:  # crossings still waiting for their reads go now, not never
+                runner._passages(runner.passages.flush())
             self._stopping = [t for t in self._stopping if t.is_alive()] + [runner.stop_later()]
             ws = runner.ws
             if not any(r.ws == ws for r in self.cameras.values()):

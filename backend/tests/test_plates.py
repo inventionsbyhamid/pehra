@@ -9,7 +9,7 @@ from watchful.config import Settings
 from watchful.tuning import Tuning
 from watchful.vision.ocr import ctc_greedy
 from watchful.vision.plates import (CropRead, LpdYunet, crop_confidence, load_grammar, parse, plate_colour,
-                                    quad_fill, read_plate, split_lines, vote)
+                                    quad_fill, read_plate, split_lines, view_of, vote)
 
 WHITE, YELLOW, BLACK = (250, 250, 250), (30, 205, 245), (20, 20, 20)
 GREEN, BLUE = (60, 150, 30), (150, 70, 20)
@@ -114,7 +114,7 @@ def test_grey_ir_frame_gives_colour_unknown(reader):
 
 
 def test_voting_fixes_one_bad_crop(reader):
-    good = [vehicle(plate(["TN 09 BC 4821"]), seed=s) for s in (4, 5)]
+    good = [vehicle(plate(["TN 09 BC 4821"]), seed=4), vehicle(plate(["TN 09 BC 4821"]), tilt=0.06, seed=5)]
     bad = far(good[0], 0.25)  # the car still far from the gate: a quarter of the pixels
     misread = reader.read_crop(bad)
     assert misread.text not in (None, "TN09BC4821")  # a wrong read that still fits the grammar
@@ -300,3 +300,57 @@ def test_identical_repeats_do_not_lift_a_costly_read():
     assert got.text is None and got.confidence < cfg.min_conf and got.reads == (cut.text, cut.text)
     other = CropRead(cut.text, score * 0.99, "white", np.full((96, 400, 3), 190, np.uint8), "plate box")
     assert vote([same, other]).text == cut.text  # two different crops agreeing still count as two
+
+
+def test_near_identical_repeats_do_not_lift_a_costly_read():
+    """Review I3: a car waiting at the boom gives crops that differ only by sensor noise; they are one opinion, so
+    a truncated read bent into another plate stays unread. A crop of a new view (the car turned or came nearer)
+    still counts as a second opinion."""
+    cfg = Tuning().plates
+    cut = parse("MH12AB123")
+    score = crop_confidence(cut, 1.0, 1.0)
+    car = vehicle(plate(["MH 12 AB 123"]), seed=4)
+    noise = np.random.default_rng(0).integers(-2, 3, car.shape)
+    noisy = np.clip(car.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+    first = CropRead(cut.text, score, "white", None, "plate box", view_of(car, cfg))
+    again = CropRead(cut.text, score * 0.998, "white", None, "plate box", view_of(noisy, cfg))
+    got = vote([first, again])
+    assert got.text is None and got.confidence < cfg.min_conf
+    nearer = cv2.resize(cv2.resize(car, None, fx=1.1, fy=1.1)[18:378, 24:504], (480, 360))
+    moved = CropRead(cut.text, score * 0.99, "white", None, "plate box", view_of(nearer, cfg))
+    assert vote([first, moved]).text == cut.text
+
+
+def test_a_waiting_car_is_not_read_again():
+    """The gate camera reads a car again only once its view changed: one opinion while it waits at the boom."""
+    from watchful.logs.reading import PlateSampler
+
+    class Reader:
+        cfg = Tuning().plates
+
+        def __init__(self):
+            self.calls = 0
+
+        def read_crop(self, crop):
+            self.calls += 1
+            return CropRead("MH12AB1234", 0.9, "white", None, "plate box", view_of(crop, self.cfg))
+
+        def vote(self, reads):
+            return vote(reads, self.cfg)
+
+    class Box:
+        def __init__(self, box):
+            self.id, self.cls, self.box = 1, "car", box
+
+    reader = Reader()
+    sampler = PlateSampler(reader, [], Tuning())
+    frame = np.full((540, 960, 3), 90, np.uint8)
+    frame[100:460, 200:680] = vehicle(plate(["MH 12 AB 1234"]), seed=4)
+    sampler.observe(frame, Box((200.0, 100.0, 480.0, 360.0)), 1.0)
+    later = np.clip(frame.astype(np.int16) + np.random.default_rng(1).integers(-2, 3, frame.shape), 0, 255)
+    sampler.observe(later.astype(np.uint8), Box((201.0, 100.0, 480.0, 360.0)), 2.0)  # still at the boom
+    assert reader.calls == 1
+    moved = np.full((540, 960, 3), 90, np.uint8)
+    moved[60:456, 160:688] = cv2.resize(vehicle(plate(["MH 12 AB 1234"]), seed=4), (528, 396))
+    sampler.observe(moved, Box((160.0, 60.0, 528.0, 396.0)), 3.0)  # came nearer
+    assert reader.calls == 2

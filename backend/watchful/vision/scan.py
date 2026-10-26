@@ -281,8 +281,10 @@ def cut_clip(path: str, pos: float, settings: Settings, tuning: Tuning) -> bytes
 
 def scan_file(path: str | Path, camera: Camera, watches: list[tuple[str, Watch]], pool: ScanPool, blobs: BlobStore,
               settings: Settings, tuning: Tuning, start_epoch: float | None = None,
-              enrollments: list[Enrollment] | None = None, embedder=None,
+              enrollments: list[Enrollment] | Callable[[], list[Enrollment]] | None = None, embedder=None,
               on_progress: Callable[[float], None] | None = None) -> ScanResult:
+    """`enrollments` may be a function: it is asked again for each chunk started Tuning faces.reload_s or more after
+    the last ask, so someone removed during a long scan is not named in its later chunks."""
     t0 = time.perf_counter()
     stages: dict[str, float] = {}
     path = str(path)
@@ -292,14 +294,26 @@ def scan_file(path: str | Path, camera: Camera, watches: list[tuple[str, Watch]]
     plan = chunk_plan(duration, pool.workers, settings.scan_overlap_s, tuning.scan.min_chunk_s,
                       tuning.scan.target_chunk_s)
     base = session_id_base()
-    jobs = [_Job(i, path, a, b, camera, needs, enrollments or [], start_epoch, base) for i, (a, b) in enumerate(plan)]
+    ask = enrollments if callable(enrollments) else (lambda: list(enrollments or []))
+    held: list = [None, []]  # when last asked, and what
 
+    def people() -> list[Enrollment]:
+        if held[0] is None or time.monotonic() - held[0] >= tuning.faces.reload_s:
+            held[:] = [time.monotonic(), ask()]
+        return held[1]
+
+    todo = list(enumerate(plan))
     chunks = []
-    futures = [pool.ex.submit(_run_chunk, j) for j in jobs]
-    for f in as_completed(futures):
-        chunks.append(f.result())
+    running = set()
+    while todo or running:  # a chunk starts when a worker is free, with the enrolled people as they are then
+        while todo and len(running) < pool.workers:
+            i, (a, b) = todo.pop(0)
+            running.add(pool.ex.submit(_run_chunk, _Job(i, path, a, b, camera, needs, people(), start_epoch, base)))
+        done = next(as_completed(running))
+        running.discard(done)
+        chunks.append(done.result())
         if on_progress:
-            on_progress(0.8 * len(chunks) / len(jobs))
+            on_progress(0.8 * len(chunks) / len(plan))
     stages["perceive"] = time.perf_counter() - t0
 
     t1 = time.perf_counter()

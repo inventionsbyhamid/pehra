@@ -649,14 +649,17 @@ def _stills(ctx: JobContext) -> StillMaker | None:
 
 
 def _people(ctx: JobContext, repo) -> list:
-    """The society's enrolled faces, read again every Tuning alerts.faces_refresh_s."""
+    """The society's enrolled faces, read again whenever its staff changed (register.staff_version, checked for
+    every still), so someone removed is blurred in the very next still."""
+    from watchful.logs.register import staff_version
+    version = staff_version(repo)
     with _faces_lock:
         held = ctx.worker.state.setdefault("people", {}).get(repo.workspace_id)
-        if held is not None and time.monotonic() - held[0] < ctx.tuning.alerts.faces_refresh_s:
+        if held is not None and held[0] == version:
             return held[1]
     people = repo.list_enrollments()
     with _faces_lock:
-        ctx.worker.state["people"][repo.workspace_id] = (time.monotonic(), people)
+        ctx.worker.state["people"][repo.workspace_id] = (version, people)
     return people
 
 

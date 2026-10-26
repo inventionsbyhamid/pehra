@@ -83,8 +83,8 @@ def seed(s, workspace_id: str, cameras: dict[str, str], now: datetime, blobs=Non
     service_gate (else main_gate); the gate camera gets plate reading and the staff camera the staff register. Only
     what is in the past of `now` is written, and outs pair with ins as the gate log pairs them. `rows` may give the
     passages instead ({"direction", "at", "colour", "cls", "plate"}). Returns how many rows of each were made."""
-    from watchful.logs.ledger import _pair
-    from watchful.tuning import LedgerTuning
+    from watchful.logs.ledger import _pair, add_overstay_watch
+    from watchful.tuning import LedgerTuning, Tuning
     rng = random.Random(seed_value)
     society = s.get(m.Workspace, workspace_id)
     tz = ZoneInfo(society.timezone if society and society.timezone else "Asia/Kolkata")
@@ -98,9 +98,12 @@ def seed(s, workspace_id: str, cameras: dict[str, str], now: datetime, blobs=Non
             row.settings_json = st
     made = {"passages": 0, "staff": 0, "attendance": 0}
     if gate:
+        add_overstay_watch(s, workspace_id, Tuning())  # as turning plate reading on gives it
         pictures: dict[str, str] = {}
         for n, v in enumerate(rows or _day_plan(rng, now, tz)):
-            text = None if n % 9 == 4 else v["plate"]  # now and then a plate the reader could not read
+            # now and then a resident's plate the reader could not read; never a cab's, so the cab still inside is
+            # not taken for one that went out unread
+            text = None if n % 9 == 4 and v["colour"] == "white" else v["plate"]
             key = pictures.get(v["plate"])
             if blobs is not None and key is None:
                 key = pictures[v["plate"]] = society_key(workspace_id, gate, "passages", f"demo_{len(pictures)}.jpg")
@@ -133,8 +136,8 @@ def seed(s, workspace_id: str, cameras: dict[str, str], now: datetime, blobs=Non
             last = min(midnight + timedelta(hours=left + rng.uniform(-0.4, 0.4)), now)
             if first > now:
                 continue
-            s.add(m.Attendance(workspace_id=workspace_id, staff_id=staff.id, day=day.isoformat(), first_in=first,
-                               last_out=last if last > first else None,
+            s.add(m.Attendance(workspace_id=workspace_id, staff_id=staff.id, day=day.isoformat(), first_seen=first,
+                               last_seen=last if last > first else None,
                                camera_ids_json=[staff_cam] if staff_cam else []))
             made["attendance"] += 1
     return made

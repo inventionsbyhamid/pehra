@@ -81,6 +81,33 @@ def kind_problem(name: str, kind: str | None, want_line: bool) -> str | None:
     return f"{name} is a line, not an area, so nothing can be inside it; only crossed can use a line"
 
 
+STAY_SIGNAL = "inside_s"
+STAY_SIGNALS = {STAY_SIGNAL, "attribute", "present"}  # all the gate log knows of a vehicle inside: plate and colour
+STAY_PROBLEM = "inside_s comes from the gate log"
+
+
+def is_stay_watch(w: Watch) -> bool:
+    """A watch about how long something has been inside: it runs on the gate log (logs/ledger.py), not on a camera."""
+    return any(c.signal == STAY_SIGNAL for c in w.conditions)
+
+
+def stay_problems(w: Watch) -> list[str]:
+    """inside_s mixed with what the gate log cannot know would compile and never fire."""
+    if not is_stay_watch(w):
+        return []
+    mixed = sorted({c.signal for c in w.conditions if c.signal not in STAY_SIGNALS})
+    if any(c.zones or c.params.get("line") for c in w.conditions) or w.zones:
+        mixed.append("a zone or line")
+    if w.subject.who != "anyone":
+        mixed.append("who the person is")
+    if w.subject.same_as or w.subject.looks_like:
+        mixed.append("what it looks like")
+    if not mixed:
+        return []
+    return [f"{STAY_PROBLEM}, which knows only a vehicle's plate and colour and how long since it came in, so it "
+            f"can't be combined with {', '.join(mixed)}"]
+
+
 def validate(w: Watch, zones: set[str] | dict[str, str | None]) -> list[str]:
     """zones are the drawn names, or names to kinds; with kinds, a line used as an area (or the other way) is a
     problem too. Lines are zones of kind line."""
@@ -104,7 +131,7 @@ def validate(w: Watch, zones: set[str] | dict[str, str | None]) -> list[str]:
     for z in w.zones:
         check(z, False, "unknown zone")
     problems += [f"unknown class: {c}" for c in w.subject.classes if c not in COCO]
-    return problems
+    return problems + stay_problems(w)
 
 
 def needs_for(watches: list[Watch]) -> Needs:

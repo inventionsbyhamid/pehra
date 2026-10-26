@@ -1,8 +1,11 @@
 """The staff register: consenting adult staff (maids, cooks, drivers, guards) enrolled from 3 to 5 photos, of which
-only the face templates are kept, and their first in and last out each day, in the society's time zone.
+only the face templates are kept, and when each was first and last seen each day, in the society's time zone.
 
 Attendance comes from named sightings: every event of a track named by face (or by clothes after a face, the same
-day) carries person_id (vision/reason.py); the app hands each batch of events here (live updates), and a daily job
+day) carries person_id (vision/reason.py). A sighting is not an arrival or a departure, so the register says first
+and last seen; last seen stays empty until a sighting at least Tuning staff.min_gap_s after the first (someone seen
+once has no last seen). Where a camera has a directed line, crossings going in and out add came_in and went_out. The
+app hands each batch of events here (live updates), and a daily job
 rolls the day up again from the stored events (in society time, Tuning staff.rollup_hour), so a missed update is
 filled in. Nobody's age is ever estimated: the form and the consent words say adults only.
 
@@ -55,14 +58,29 @@ def active_count(repo) -> int:
                                                                          m.Staff.active.is_(True))) or 0
 
 
+def staff_version(repo) -> tuple:
+    """Changes whenever the society's enrolled faces change (an enrolment, a removal, templates added or deleted):
+    caches of enrolled faces (Telegram's blur, the camera processes) compare it before trusting what they hold."""
+    with repo.tx() as s:
+        staff = s.execute(select(func.count(), func.max(m.Staff.created_at))
+                          .where(_mine(repo, m.Staff), m.Staff.active.is_(True))).one()
+        removed = s.scalar(select(func.max(m.Staff.removed_at)).where(_mine(repo, m.Staff)))
+        faces = s.execute(select(func.count(), func.max(m.StaffFace.created_at))
+                          .where(_mine(repo, m.StaffFace))).one()
+    return (staff[0], staff[1], removed, faces[0], faces[1])
+
+
 def check_photos(features: list[list[float]], similarity, cfg) -> int | None:
-    """The 1 based number of a photo that does not look like the others (each must be at faces.enrol_same or more
-    to the rest on average), or None."""
+    """The 1 based number of the photo least like the others, when its mean similarity to them is under
+    faces.enrol_same (it may be someone else), or None."""
+    means = []
     for i, f in enumerate(features):
         others = [similarity(f, g) for j, g in enumerate(features) if j != i]
-        if others and sum(others) / len(others) < cfg.enrol_same:
-            return i + 1
-    return None
+        means.append(sum(others) / len(others) if others else 1.0)
+    if not means:
+        return None
+    worst = min(range(len(means)), key=means.__getitem__)
+    return worst + 1 if means[worst] < cfg.enrol_same else None
 
 
 def enrol(repo, name: str, role: str, features: list[list[float]], by: str | None, now: datetime | None = None,
@@ -129,46 +147,74 @@ def _zone(s, workspace_id: str) -> ZoneInfo:
     return ZoneInfo(society.timezone if society and society.timezone else "Asia/Kolkata")
 
 
+def _gap(min_gap_s: float | None) -> float:
+    if min_gap_s is not None:
+        return min_gap_s
+    from watchful.tuning import StaffTuning
+    return StaffTuning().min_gap_s
+
+
 def _when(ts: float) -> datetime:
     return datetime.fromtimestamp(ts, ZoneInfo("UTC"))
 
 
-def sightings(events, tz: ZoneInfo, active: set[str]) -> dict[tuple[str, str], list]:
-    """(staff id, day) to [first seen, last seen, cameras] from events that name an active staff member."""
-    out: dict[tuple[str, str], list] = {}
+def sightings(events, tz: ZoneInfo, active: set[str]) -> dict[tuple[str, str], dict]:
+    """(staff id, day) to the first and last moment seen, the first crossing in and last crossing out, and the
+    cameras, from events that name an active staff member."""
+    out: dict[tuple[str, str], dict] = {}
     for e in events:
-        pid = (e.data or {}).get("person_id")
+        data = e.data or {}
+        pid = data.get("person_id")
         if not pid or pid not in active:
             continue
-        start = e.ts - float((e.data or {}).get("duration_s") or 0) if e.kind == "track_end" else e.ts
+        start = e.ts - float(data.get("duration_s") or 0) if e.kind == "track_end" else e.ts
         for ts in {start, e.ts}:
             day = datetime.fromtimestamp(ts, tz).date().isoformat()
-            got = out.setdefault((pid, day), [ts, ts, set()])
-            got[0], got[1] = min(got[0], ts), max(got[1], ts)
-            got[2].add(e.camera_id)
+            got = out.setdefault((pid, day), {"first": ts, "last": ts, "in": None, "out": None, "cams": set()})
+            got["first"], got["last"] = min(got["first"], ts), max(got["last"], ts)
+            got["cams"].add(e.camera_id)
+        if e.kind == "cross" and data.get("direction") in ("in", "out"):
+            got = out.setdefault((pid, datetime.fromtimestamp(e.ts, tz).date().isoformat()),
+                                 {"first": e.ts, "last": e.ts, "in": None, "out": None, "cams": {e.camera_id}})
+            if data["direction"] == "in":
+                got["in"] = e.ts if got["in"] is None else min(got["in"], e.ts)
+            else:
+                got["out"] = e.ts if got["out"] is None else max(got["out"], e.ts)
     return out
 
 
-def _merge(s, workspace_id: str, seen: dict[tuple[str, str], list]) -> int:
+def _earliest(*values):
+    return min((v for v in values if v is not None), default=None)
+
+
+def _latest(*values):
+    return max((v for v in values if v is not None), default=None)
+
+
+def _merge(s, workspace_id: str, seen: dict[tuple[str, str], dict], min_gap_s: float) -> int:
     n = 0
-    for (pid, day), (first, last, cams) in seen.items():
-        row = s.scalar(select(m.Attendance).where(m.Attendance.workspace_id == workspace_id,
-                                                  m.Attendance.staff_id == pid, m.Attendance.day == day))
+    for (pid, day), got in seen.items():
+        key = {"workspace_id": workspace_id, "staff_id": pid, "day": day}
+        row = s.scalar(select(m.Attendance).filter_by(**key))
         if row is None:
-            upsert(s, m.Attendance, {"id": m.new_id("att"), "workspace_id": workspace_id, "staff_id": pid,
-                                     "day": day, "first_in": _when(first), "last_out": _when(last),
-                                     "camera_ids_json": sorted(cams)}, ["workspace_id", "staff_id", "day"])
-            row = s.scalar(select(m.Attendance).where(m.Attendance.workspace_id == workspace_id,
-                                                      m.Attendance.staff_id == pid, m.Attendance.day == day))
-        row.first_in = min(x for x in (row.first_in, _when(first)) if x is not None)
-        row.last_out = max(x for x in (row.last_out, _when(last)) if x is not None)
-        row.camera_ids_json = sorted(set(row.camera_ids_json or []) | cams)
+            upsert(s, m.Attendance, {"id": m.new_id("att"), **key, "camera_ids_json": []},
+                   ["workspace_id", "staff_id", "day"])
+            row = s.scalar(select(m.Attendance).filter_by(**key))
+        first = _earliest(row.first_seen, _when(got["first"]))
+        last = _latest(row.last_seen, _when(got["last"]))
+        row.first_seen = first
+        row.last_seen = last if (last - first).total_seconds() >= min_gap_s else None
+        if got["in"] is not None:
+            row.came_in = _earliest(row.came_in, _when(got["in"]))
+        if got["out"] is not None:
+            row.went_out = _latest(row.went_out, _when(got["out"]))
+        row.camera_ids_json = sorted(set(row.camera_ids_json or []) | got["cams"])
         n += 1
     return n
 
 
-def on_events(repo, rows) -> int:
-    """Live: events from a camera of this society update the day's first in and last out of whoever they name."""
+def on_events(repo, rows, min_gap_s: float | None = None) -> int:
+    """Live: events from a camera of this society update the day's first and last seen of whoever they name."""
     named = [e for e in rows if (e.data or {}).get("person_id")]
     if not named:
         return 0
@@ -176,12 +222,12 @@ def on_events(repo, rows) -> int:
         tz = _zone(s, repo.workspace_id)
         active = set(s.scalars(select(m.Staff.id).where(_mine(repo, m.Staff), m.Staff.active.is_(True),
                                                         m.Staff.id.in_({e.data["person_id"] for e in named}))))
-        return _merge(s, repo.workspace_id, sightings(named, tz, active))
+        return _merge(s, repo.workspace_id, sightings(named, tz, active), _gap(min_gap_s))
 
 
-def roll_up(repo, day: date | str) -> int:
+def roll_up(repo, day: date | str, min_gap_s: float | None = None) -> int:
     """The day's attendance worked out again from the stored events that name someone, merged into the live rows
-    (earliest in, latest out); safe to repeat. Returns the rows touched."""
+    (earliest first seen, latest last seen); safe to repeat. Returns the rows touched."""
     day = date.fromisoformat(day) if isinstance(day, str) else day
     with repo.tx() as s:
         tz = _zone(s, repo.workspace_id)
@@ -194,11 +240,11 @@ def roll_up(repo, day: date | str) -> int:
             m.Event.data["person_id"].as_string().is_not(None))))
     seen = {k: v for k, v in sightings(rows, tz, active).items() if k[1] == day.isoformat()}
     with repo.tx() as s:
-        return _merge(s, repo.workspace_id, seen)
+        return _merge(s, repo.workspace_id, seen, _gap(min_gap_s))
 
 
 def attendance(repo, day: date | str) -> list[dict]:
-    """The register for one day: every active staff member (present or not) and anyone removed since who was in."""
+    """The register for one day: every active staff member (present or not) and anyone removed since who was seen."""
     day = day.isoformat() if isinstance(day, date) else day
     with repo.tx() as s:
         tz = _zone(s, repo.workspace_id)
@@ -206,15 +252,19 @@ def attendance(repo, day: date | str) -> list[dict]:
                                                                            m.Attendance.day == day))}
         staff = list(s.scalars(select(m.Staff).where(_mine(repo, m.Staff)).order_by(m.Staff.name, m.Staff.id)))
         cameras = dict(s.execute(select(m.Camera.id, m.Camera.name).where(_mine(repo, m.Camera))).all())
+
+    def local(dt):
+        return dt.astimezone(tz).isoformat() if dt is not None else None
+
     out = []
     for st in staff:
         a = rows.get(st.id)
         if not st.active and a is None:
             continue
         out.append({"staff_id": st.id, "name": st.name, "role": st.role, "active": st.active,
-                    "present": a is not None and a.first_in is not None,
-                    "first_in": a.first_in.astimezone(tz).isoformat() if a and a.first_in else None,
-                    "last_out": a.last_out.astimezone(tz).isoformat() if a and a.last_out else None,
+                    "present": a is not None and a.first_seen is not None,
+                    "first_seen": local(a.first_seen) if a else None, "last_seen": local(a.last_seen) if a else None,
+                    "came_in": local(a.came_in) if a else None, "went_out": local(a.went_out) if a else None,
                     "cameras": [cameras.get(c, "a removed camera") for c in (a.camera_ids_json if a else [])]})
     return out
 
@@ -260,4 +310,4 @@ def queue_roll_ups(worker, now: datetime) -> list[str]:
 
 @handler(ROLL_UP)
 def _roll_up(ctx, payload: dict) -> None:
-    roll_up(ctx.repo(payload["workspace_id"]), payload["day"])
+    roll_up(ctx.repo(payload["workspace_id"]), payload["day"], ctx.tuning.staff.min_gap_s)

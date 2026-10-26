@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
 from watchful.agent.meaning import default_meaning
 from watchful.agent.prompting import parse_json, render
-from watchful.rules.engine import validate
+from watchful.rules.engine import STAY_PROBLEM, validate
 from watchful.rules.presets import describe
 from watchful.rules.signals import REGISTRY, TIERS, catalog, worse
 from watchful.rules.vocab import DATA, resolve_classes, vocabulary
@@ -507,6 +507,7 @@ def compile_watch(text: str, ctx: CompileContext | list[str], llm: LLM,
                     attributes=words["attributes"], camera_flags=ctx.camera_flags, purpose=ctx.purpose or "not set",
                     default_hours=words["default_hours"], presets=describe())
     mixed = ""  # the last line and area mix up, which becomes the reason if the AI never fixes it
+    stay = ""  # the same for inside_s mixed with what the gate log cannot know
     messages = [Msg("user", text)]
     last, data = "", {}
     for _ in range(ATTEMPTS):
@@ -526,12 +527,16 @@ def compile_watch(text: str, ctx: CompileContext | list[str], llm: LLM,
         except (ValueError, KeyError, TypeError, ValidationError) as e:
             if isinstance(e, Invalid):
                 mixed = next((p for p in e.problems if " not a line" in p or " not an area" in p), mixed)
+                stay = next((p for p in e.problems if p.startswith(STAY_PROBLEM)), stay)
             last = _explain(e)
             messages = [Msg("user", text), Msg("assistant", raw),
                         Msg("user", f"That watch is not valid: {last}. Reply with fixed JSON.")]
     if last and data:
         reason = (mixed[:1].upper() + mixed[1:] + ".") if mixed else words["fallback_reason"]
-        cannot = _finish([Cannot(text, reason, words["fallback_alternative"])], text,
+        alternative = words["fallback_alternative"]
+        if stay and not mixed:
+            reason, alternative = words["stay_reason"], words["stay_alternative"]
+        cannot = _finish([Cannot(text, reason, alternative)], text,
                          mentions_age(text, ctx.place_names) or data.get("about_age") is True, [], ctx.place_names)
         return CompileResult(None, [], [], cannot)
     return CompileResult(None, error=f"I couldn't turn that into a watch: {last}")
