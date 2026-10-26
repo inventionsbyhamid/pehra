@@ -210,3 +210,64 @@ def test_the_control_room_hears_when_todays_ai_checks_are_used_up(app):
     for _ in range(first["day"]):
         repo.record_ai_call("verify")
     assert c.get("/api/checks/today").json() == {"used": first["day"], "day": first["day"], "reached": True}
+
+
+# I4: zone state examples are settings, so retention keeps them; the camera page counts pictures that load
+
+def _jpg(value=90):
+    import cv2
+    img = np.full((120, 160, 3), value, np.uint8)
+    img[30:90, 40:120] = 255 - value
+    return cv2.imencode(".jpg", img)[1].tobytes()
+
+
+def test_retention_keeps_zone_state_examples(tmp_path):
+    import os
+    import time
+    from accounts import society_repo
+    from watchful.config import Settings
+    from watchful.rules.zonestate import example_key, load_states
+    from watchful.store.blobs import LocalBlobStore
+    from watchful.store.db import Camera
+    from watchful.tuning import ZoneTuning
+    from watchful.vision.zones import Zone
+    from watchful.workers import run_retention
+    settings = Settings(session_secret="y", data_dir=tmp_path, _env_file=None)
+    repo = society_repo(settings)
+    gate = Zone("z1", "gate", [(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)])
+    cam = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://g", zones=[gate]))
+    blobs = LocalBlobStore(tmp_path)
+    ws = repo.workspace_id
+    key = example_key(ws, cam.id, "z1", "day", time.time())
+    clip = f"{ws}/{cam.id}/clips/old.mp4"
+    blobs.put(key, _jpg(), "image/jpeg")
+    blobs.put(clip, b"clip", "video/mp4")
+    repo.add_state_example(cam.id, "z1", "open", key)
+    old = time.time() - 9 * 86400  # the Free plan keeps footage 7 days
+    for k in (key, clip):
+        os.utime(tmp_path / "blobs" / k, (old, old))
+    run_retention(settings, [repo], blobs)
+    assert not (tmp_path / "blobs" / clip).exists()
+    states = load_states(repo.list_state_examples(cam.id), blobs.get, [gate], ZoneTuning())
+    assert states.has("gate")
+
+
+def test_the_camera_page_counts_only_pictures_that_load(tmp_path):
+    from accounts import SOCIETY, browser
+    from test_api import StubManager
+    from watchful.api import create_app
+    from watchful.config import Settings
+    from watchful.store.db import Camera
+    from watchful.vision.zones import Zone
+    app = create_app(Settings(session_secret="s" * 32, data_dir=tmp_path, _env_file=None), llm=FakeLLM([]),
+                     manager=StubManager())
+    c = browser(app)
+    repo = app.state.ctx.repo_for(SOCIETY)
+    gate = Zone("z1", "gate", [(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)])
+    cam = repo.add_camera(Camera(None, "Gate", "stream", "rtsp://g", zones=[gate]))
+    there, gone = f"{SOCIETY}/{cam.id}/states/z1/1_day.jpg", f"{SOCIETY}/{cam.id}/states/z1/2_day.jpg"
+    app.state.ctx.blobs.put(there, _jpg(), "image/jpeg")
+    repo.add_state_example(cam.id, "z1", "open", there)
+    repo.add_state_example(cam.id, "z1", "open", gone)
+    got = c.get(f"/api/cameras/{cam.id}/examples").json()
+    assert [e["state"] for e in got] == ["open"] and len(got) == 1

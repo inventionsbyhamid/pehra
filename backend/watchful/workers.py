@@ -58,7 +58,10 @@ def run_retention(settings: Settings, repos, blobs) -> None:
     legacy = {id(r): legacy_keys(r) for r in repos}  # bare people/ and camera keys are kept only until rekeyed
     keep = (*(["people/"] if any(legacy.values()) else []), *(f"{r.workspace_id}/people/" for r in repos),
             *(p for r in repos for d in demos[id(r)] for p in (f"{r.workspace_id}/{d}/",
-                                                                   *([f"{d}/"] if legacy[id(r)] else []))))
+                                                                   *([f"{d}/"] if legacy[id(r)] else []))),
+            # zone state examples are settings, not footage: without them a zone_state watch goes dead
+            *(p for r in repos for c in r.list_cameras() for p in (f"{r.workspace_id}/{c.id}/states/",
+                                                                     *([f"{c.id}/states/"] if legacy[id(r)] else []))))
     owned = {id(r): (f"{r.workspace_id}/", *(f"{c.id}/" for c in r.list_cameras())) for r in repos}
     for kept in sorted(set(days.values()) or {settings.retention_days}):  # a longer plan's pictures wait for theirs
         blobs.delete_older_than(kept, keep=keep + tuple(p for r in repos if days[id(r)] > kept for p in owned[id(r)]))

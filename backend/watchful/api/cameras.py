@@ -30,7 +30,7 @@ from watchful.netguard import check_url, clip_roots, inside
 from watchful.rules.engine import validate
 from watchful.rules.presets import purposes
 from watchful.rules.watch import Watch
-from watchful.rules.zonestate import example_key, is_night
+from watchful.rules.zonestate import example_key, is_night, picture_loads
 from watchful.store.db import Camera, new_id
 from watchful.tuning import load_tuning
 from watchful.vision.zones import Zone
@@ -293,10 +293,11 @@ def make_router(ctx) -> APIRouter:
 
     @router.get("/api/cameras/{camera_id}/examples")
     def state_examples(camera_id: str, member: CurrentMember = Depends(current_member)):
+        """The zone state pictures the camera can learn from: a row whose picture is gone is not counted."""
         r = repo(member)
         cam = camera_or_404(r, camera_id)
         return [{"id": i, "zone_id": z, "state": st, "url": ctx.blobs.url(key)}
-                for i, z, st, key in r.list_state_examples(cam.id)]
+                for i, z, st, key in r.list_state_examples(cam.id) if picture_loads(ctx.blobs.get, key)]
 
     @router.delete("/api/examples/{example_id}")
     def delete_state_example(example_id: str, member: CurrentMember = Depends(require_role("admin"))):

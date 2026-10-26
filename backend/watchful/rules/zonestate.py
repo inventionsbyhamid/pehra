@@ -134,6 +134,16 @@ def load_states(rows, read_picture, zones: list[Zone], cfg: ZoneTuning, embedder
     return out
 
 
+def picture_loads(read_picture, key: str) -> bool:
+    """Whether a saved example's picture is there and reads, as load_states needs it: a row whose picture is gone
+    teaches nothing."""
+    try:
+        data = read_picture(key)
+    except (OSError, KeyError, ValueError):
+        return False
+    return bool(data) and cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_REDUCED_GRAYSCALE_8) is not None
+
+
 def example_key(workspace_id: str, camera_id: str, zone_id: str, period: str, ts: float) -> str:
     """Where a saved example picture lives, under its society; the period rides in the name so lists need no
     decoding."""
