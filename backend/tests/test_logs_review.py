@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from sqlalchemy import select
 
-from accounts import SOCIETY, browser
+from accounts import SOCIETY, browser, on_plan
 from watchful.agent.llm import FakeLLM
 from watchful.alerts import incidents as incidents_
 from watchful.api import create_app
@@ -365,6 +365,7 @@ def test_the_gate_log_pages_and_the_csv_has_every_row(tmp_path):
     app = create_app(Settings(session_secret="s" * 32, data_dir=tmp_path, _env_file=None), llm=FakeLLM([]),
                      manager=StubManager())
     c = browser(app)
+    on_plan(app.state.ctx.db, SOCIETY)  # the gate log comes with the Society plan
     repo = app.state.ctx.repo_for(SOCIETY)
     gate = repo.add_camera(Camera(None, "Main gate", "stream", "rtsp://g", [LINE], readers=["plates"]))
     with repo.tx() as s:
