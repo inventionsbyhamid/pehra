@@ -82,7 +82,7 @@ chmod 755 /usr/local/bin/watchful-python
 say "models and sample clips"
 # fetch_assets.py writes models/ and data/samples/ under the folder it runs in
 (cd "$APP" && LD_LIBRARY_PATH="$COOL_LIB" "$PY" "$SRC/scripts/fetch_assets.py")
-cp -n "$APP"/data/samples/* "$DATA/samples/" 2> /dev/null || true
+cp -rn "$APP"/data/samples/* "$DATA/samples/" 2> /dev/null || true  # -r: demo clips sit in samples/demo/
 chown -R watchful:watchful "$DATA/samples"
 # paths under data/ (demo cameras' clips) resolve to the data folder, as in development
 ln -sfn "$DATA" "$SRC/data"

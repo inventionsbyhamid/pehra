@@ -582,3 +582,40 @@ def test_setup_tasks_from_the_card_survive_the_save():
              "Tell the kids not to play here."]
     r = check_watch(spec, "someone enters the gate", CompileContext(zones={"gate": "area"}), setup=setup)
     assert r.setup == ["Ask the guard to keep the gate light on at night."]
+
+
+# Also: the AWS build installs pinned versions of everything the app imports, and copies the demo clips
+
+def test_everything_the_app_imports_is_pinned_in_the_lock():
+    import ast
+    import sys
+    from importlib.metadata import packages_distributions
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    lock = {line.split("==")[0].strip().lower().replace("_", "-")
+            for line in (root / "requirements.lock").read_text().splitlines() if "==" in line}
+    wanted = (root / "requirements.in").read_text().lower()
+    found = set()
+    for path in (root / "backend" / "watchful").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Import):
+                found |= {a.name.split(".")[0] for a in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                found.add(node.module.split(".")[0])
+    third = sorted(n for n in found if n not in sys.stdlib_module_names and n != "watchful")
+    dists = packages_distributions()
+    missing = []
+    for name in third:
+        names = [d.lower().replace("_", "-") for d in dists.get(name, [name])]
+        if not any(d in lock for d in names):
+            missing.append(name)
+    assert missing == [], f"imported but not pinned in requirements.lock: {missing}"
+    assert "onnxruntime==" in wanted and "onnxruntime==" in (root / "requirements.lock").read_text()
+    setup = (root / "deploy" / "remote_setup.sh").read_text()
+    assert '-c /tmp/watchful-constraints.txt' in setup and 'requirements.lock" > /tmp/watchful-constraints' in setup
+
+
+def test_aws_copies_the_samples_with_their_folders():
+    from pathlib import Path
+    setup = (Path(__file__).resolve().parents[2] / "deploy" / "remote_setup.sh").read_text()
+    assert 'cp -rn "$APP"/data/samples/* "$DATA/samples/"' in setup
