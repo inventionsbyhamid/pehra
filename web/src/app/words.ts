@@ -5,7 +5,7 @@ export const SEVERITY_WORDS: Record<Severity, string> = { critical: "Critical", 
 export const SEVERITY_HELP: Record<Severity, string> = {
   critical: "Sent to your Telegram group at once, and posted there again while nobody acknowledges it.",
   warning: "Shown here, and on Telegram if your society turns that on.",
-  info: "Kept as a note in the watch log and on the camera's history, and counted in the 9 AM daily summary.",
+  info: "Kept as a note in the watch log and on the camera's history, and counted in the 9 AM daily summary on plans that have it.",
 };
 
 export const TIER_WORDS: Record<string, string> = {

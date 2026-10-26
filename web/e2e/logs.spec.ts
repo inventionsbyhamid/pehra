@@ -228,7 +228,7 @@ test("the watch log: rows log watches wrote and notes, on every plan, and on the
   await expect(page.locator(".log-summary")).toContainText("1 row from log watches, 1 note");
   await check(page, "47-watch-log");
   const download = await page.request.get((await page.getByRole("link", { name: "Download CSV" }).getAttribute("href"))!);
-  expect((await download.text()).split("\n")[0]).toBe("Date,Time,Camera,Watch,What,Kind");
+  expect((await download.text()).split(/\r?\n/)[0]).toBe("Date,Time,Camera,Watch,What,Kind");
 
   await page.goto(`/app/cameras/${gate}/history`);
   const events = page.locator(".events");
