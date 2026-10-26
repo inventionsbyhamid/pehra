@@ -9,7 +9,7 @@ from watchful.config import Settings
 from watchful.tuning import Tuning
 from watchful.vision.ocr import ctc_greedy
 from watchful.vision.plates import (CropRead, LpdYunet, crop_confidence, load_grammar, parse, plate_colour,
-                                    read_plate, split_lines, vote)
+                                    quad_fill, read_plate, split_lines, vote)
 
 WHITE, YELLOW, BLACK = (250, 250, 250), (30, 205, 245), (20, 20, 20)
 GREEN, BLUE = (60, 150, 30), (150, 70, 20)
@@ -185,7 +185,8 @@ def test_confidence_counts_cost_crops_and_agreement():
     assert bent.text == exact.text and crop_confidence(bent, 0.95, 0.9) < crop_confidence(exact, 0.95, 0.9)
     assert crop_confidence(exact, 0.95, cfg.rows_score) < crop_confidence(exact, 0.95, 0.9)  # no plate box
     one = CropRead("MH12AB1234", crop_confidence(exact, 0.95, 0.9), "white")
-    alone, agreed = vote([one]), vote([one, one])
+    two = CropRead("MH12AB1234", crop_confidence(exact, 0.93, 0.9), "white")  # another crop, not the same one again
+    alone, agreed = vote([one]), vote([one, two])
     assert alone.text == agreed.text == "MH12AB1234" and alone.confidence < agreed.confidence
     with_unread = vote([one, CropRead(None, 0.0, "unknown"), CropRead(None, 0.0, "unknown")])
     assert with_unread.confidence < alone.confidence
@@ -240,3 +241,62 @@ def test_ctc_greedy_decode():
     text, score = ctc_greedy(probs, list("abc"))
     assert text == "aabc"
     assert score == pytest.approx(0.9)
+
+
+# review carries: turned plates keep their corners, a repeat is not a second opinion
+
+def turned(angle: float, w: float = 400, h: float = 96, centre=(320.0, 240.0)) -> np.ndarray:
+    box = cv2.boxPoints((centre, (w, h), angle))
+    return np.asarray([box[1], box[2], box[3], box[0]], np.float32)  # around the plate, as LPD-YuNet gives them
+
+
+@pytest.mark.parametrize("angle", [0, 12, 20])
+def test_turned_plates_keep_their_corners(angle):
+    """The fill check is the quad's area against its edges, so it is the same however the plate is turned (the old
+    check against the upright bounding box took a correct quad at 12 degrees for a sliver)."""
+    cfg = Tuning().plates
+    quad = turned(angle)
+    assert quad_fill(quad)[0] == pytest.approx(1.0, abs=1e-3) and quad_fill(quad)[0] >= cfg.min_fill
+    lo, hi = quad.min(0), quad.max(0)
+    upright_fill = 400 * 96 / float(np.prod(hi - lo))  # what the old check measured
+    assert (upright_fill < cfg.min_fill) == (angle == 20)
+    slanted = np.float32([[0, 0], [400, 0], [380, 96], [20, 96]])  # a plate seen from one side
+    assert quad_fill(slanted)[0] > 0.9
+
+
+def test_collapsed_or_crossed_corners_are_still_caught():
+    cfg = Tuning().plates
+    sliver = np.float32([[0, 0], [400, 96], [390, 90], [10, 6]])  # corners nearly on the plate's diagonal
+    crossed = np.float32([[0, 0], [400, 96], [400, 0], [0, 96]])  # a bow tie
+    assert quad_fill(sliver)[0] < cfg.min_fill and quad_fill(crossed)[0] < cfg.min_fill
+
+
+@pytest.mark.parametrize("angle", [0, 12, 20])
+def test_lpd_yunet_keeps_a_turned_plate(reader, angle):
+    """A plate turned in the frame: the box path keeps its own corners and reads it."""
+    car = vehicle(plate(["MH 12 AB 1234"]), plate_width=0.45, tilt=0.0)
+    h, w = car.shape[:2]
+    turned_car = cv2.warpAffine(car, cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0), (w, h),
+                                borderMode=cv2.BORDER_REPLICATE)
+    found = LpdYunet(settings=settings()).find(turned_car)
+    assert found
+    tl, tr = found[0][0][0], found[0][0][1]
+    slope = np.degrees(np.arctan2(-(tr[1] - tl[1]), tr[0] - tl[0]))
+    assert abs(slope - angle) <= 6  # its own turned corners, not the upright box around them
+    assert reader.read_crop(turned_car).text == "MH12AB1234"
+
+
+def test_identical_repeats_do_not_lift_a_costly_read():
+    """The same crop read twice is one opinion: a costly read that one crop alone leaves unread stays unread."""
+    cfg = Tuning().plates
+    cut = parse("MH12AB123")  # the last character cut off, bent into another plate
+    score = crop_confidence(cut, 1.0, 1.0)
+    assert score >= cfg.min_conf > score * cfg.single_read  # sure enough alone, but one crop is not trusted
+    patch = np.full((96, 400, 3), 200, np.uint8)
+    same = CropRead(cut.text, score, "white", patch, "plate box")
+    repeat = CropRead(cut.text, score, "white", patch.copy(), "plate box")
+    assert vote([same]).text is None
+    got = vote([same, repeat])
+    assert got.text is None and got.confidence < cfg.min_conf and got.reads == (cut.text, cut.text)
+    other = CropRead(cut.text, score * 0.99, "white", np.full((96, 400, 3), 190, np.uint8), "plate box")
+    assert vote([same, other]).text == cut.text  # two different crops agreeing still count as two

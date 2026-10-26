@@ -178,6 +178,7 @@ def vote(reads: list[CropRead], cfg: PlateTuning = PlateTuning(), grammar: Gramm
     read of `unread_weight`), times `single_read` when one crop alone read it; under `min_conf` it stays unread."""
     colour = _vote_colour(reads)
     texts = tuple(r.text for r in reads)
+    reads = distinct(reads)
     valid = [r for r in reads if r.text]
     if not valid:
         return PlateRead(None, 0.0, colour, texts)
@@ -208,6 +209,24 @@ def vote(reads: list[CropRead], cfg: PlateTuning = PlateTuning(), grammar: Gramm
     conf = float(np.mean([r.score for r in agreeing])) * share * (cfg.single_read if len(agreeing) == 1 else 1.0)
     conf = round(conf, 3)
     return PlateRead(text if conf >= cfg.min_conf else None, conf, colour, texts)
+
+
+def _same_read(a: CropRead, b: CropRead) -> bool:
+    if a.text != b.text or a.score != b.score or a.via != b.via:
+        return False
+    if a.plate is None or b.plate is None:
+        return a.plate is None and b.plate is None
+    return a.plate.shape == b.plate.shape and np.array_equal(a.plate, b.plate)
+
+
+def distinct(reads: list[CropRead]) -> list[CropRead]:
+    """The reads with identical repeats of a text (the same crop read again) counted once: a repeat is not a second
+    opinion, so it never lifts a costly read over min_conf. Unread crops all count against the text."""
+    out: list[CropRead] = []
+    for r in reads:
+        if r.text is None or not any(_same_read(r, o) for o in out):
+            out.append(r)
+    return out
 
 
 def _vote_colour(reads: list[CropRead]) -> Colour:
@@ -262,6 +281,17 @@ def plate_colour(plate: np.ndarray, frame: np.ndarray, cfg: PlateTuning = PlateT
 
 # finding plates
 
+def quad_fill(corners: np.ndarray) -> np.ndarray:
+    """For quads (n, 4, 2) with corners in order around them: their area over the product of their mean opposite
+    edges. 1 for any rectangle however it is turned, about the cosine of the slant for a trapezoid, near 0 when the
+    corners collapse onto a line or cross."""
+    corners = np.asarray(corners, np.float32).reshape(-1, 4, 2)
+    x, y = corners[..., 0], corners[..., 1]
+    area = 0.5 * np.abs((x * np.roll(y, -1, 1) - np.roll(x, -1, 1) * y).sum(1))
+    edges = np.linalg.norm(np.roll(corners, -1, 1) - corners, axis=2)
+    return area / np.maximum((edges[:, 0] + edges[:, 2]) * (edges[:, 1] + edges[:, 3]) / 4, 1e-6)
+
+
 class PlateDetector(Protocol):
     def find(self, image: np.ndarray) -> list[tuple[np.ndarray, float]]: ...
 
@@ -310,9 +340,7 @@ class LpdYunet:
         corners *= np.float32([w, h])  # back to the crop's own pixels
         lo, hi = corners.min(1), corners.max(1)
         size = hi - lo
-        x, y = corners[..., 0], corners[..., 1]
-        area = 0.5 * np.abs((x * np.roll(y, -1, 1) - np.roll(x, -1, 1) * y).sum(1))  # corners in landmark order
-        sliver = area < self.cfg.min_fill * size.prod(1)
+        sliver = quad_fill(corners) < self.cfg.min_fill
         if sliver.any():  # corners that crossed or collapsed: the box around them still holds the plate
             corners[sliver] = np.stack([lo[sliver], np.c_[hi[sliver, 0], lo[sliver, 1]], hi[sliver],
                                         np.c_[lo[sliver, 0], hi[sliver, 1]]], 1)
@@ -386,6 +414,9 @@ class PlateReader:
 
     def read(self, crops: list[np.ndarray]) -> PlateRead:
         return vote([self.read_crop(c) for c in crops[:self.cfg.max_crops]], self.cfg, self.grammar)
+
+    def vote(self, reads: list[CropRead]) -> PlateRead:
+        return vote(reads, self.cfg, self.grammar)
 
     def read_crop(self, crop: np.ndarray) -> CropRead:
         best: _Candidate | None = None
