@@ -240,6 +240,9 @@ def retention_days(workspace, default: int) -> int:
         return default
 
 
+QR_MODULE_PX = 6
+
+
 def qr_svg(text: str) -> str:
     """A QR code of `text` as SVG, from OpenCV's QRCodeEncoder (medium error correction, quiet zone included)."""
     params = cv2.QRCodeEncoder.Params()
@@ -258,5 +261,7 @@ def qr_svg(text: str) -> str:
             while x < n and dark[x]:
                 x += 1
             path.append(f"M{start} {y}h{x - start}v1h{start - x}z")
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {n} {n}" shape-rendering="crispEdges">'
+    side = n * QR_MODULE_PX  # its own size, so an <img> of it has a natural width wherever it is shown
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{side}" height="{side}" viewBox="0 0 {n} {n}" '
+            f'shape-rendering="crispEdges">'
             f'<rect width="{n}" height="{n}" fill="#fff"/><path fill="#000" d="{"".join(path)}"/></svg>')

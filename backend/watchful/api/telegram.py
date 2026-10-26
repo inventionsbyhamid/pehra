@@ -48,7 +48,9 @@ def make_router(ctx) -> APIRouter:
         return {"ready": ready, "connected": ready and bool(groups), "bot_username": bot_username(),
                 "message": None if ready else "Telegram is not connected. Alerts show here in the app.",
                 "groups": [{"id": g.id, "title": g.title, "connected_at": g.connected_at} for g in groups],
-                "warnings": incidents_.warnings_on(ctx.repo_for(member.workspace.id))}
+                "warnings": incidents_.warnings_on(ctx.repo_for(member.workspace.id)),
+                # an unacknowledged critical is posted in the group again (alerts/incidents.py _queue_escalation)
+                "reminders": {"every_min": ctx.tuning.alerts.escalate_min, "times": ctx.tuning.alerts.escalate_times}}
 
     @router.post("/api/telegram/connect")
     def connect(member: CurrentMember = Depends(require_role("admin"))):

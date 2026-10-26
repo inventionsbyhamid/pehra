@@ -3,6 +3,7 @@ rotatable, closing open sockets at once), the /cam page, the bridge, and the Tas
 and sockets (only user kinds, private stream addresses refused, admin only push, audited edits, removed members
 dropped from open sockets)."""
 import importlib.util
+import io
 import json
 import logging
 import re
@@ -313,7 +314,11 @@ def decode_svg(svg: str) -> str:
 
 def test_qr_codes_read_back():
     for text in ("https://example.com/cam/" + "A" * 32, "http://127.0.0.1:8000/cam/x"):
-        assert decode_svg(qr_svg(text)) == text
+        svg = qr_svg(text)
+        assert decode_svg(svg) == text
+        n = int(re.search(r'viewBox="0 0 (\d+) ', svg).group(1))
+        size = re.search(r'<svg [^>]*width="(\d+)" height="(\d+)"', svg)  # an <img> of it has a natural size
+        assert size and int(size.group(1)) == int(size.group(2)) >= 4 * n
 
 
 # ---- the bridge ----
@@ -705,6 +710,44 @@ def test_the_notice_names_the_purpose_and_a_contact(server):
     server.ctx.repo_for(A).set_meta("notice_contact", "Society office, 98100 00000")
     assert httpx.get(f"http://{server.host}/cam/{issued['token']}/info").json()["contact"] == \
         "Society office, 98100 00000"
+
+
+def test_an_admin_sets_whom_to_ask_and_the_device_page_shows_it(server):
+    a, _ = server.client()
+    _, issued = device_camera(a, "Pool")
+    info = lambda: httpx.get(f"http://{server.host}/cam/{issued['token']}/info").json()["contact"]
+    assert a.get("/api/notice-contact").json() == {"contact": None, "shown": "asha@example.com"}
+    r = a.put("/api/notice-contact", json={"contact": "  Society office,\n 98100 00000 "})
+    assert r.json() == {"contact": "Society office, 98100 00000", "shown": "Society office, 98100 00000"}
+    assert info() == "Society office, 98100 00000"
+    viewer, _ = server.client("vic@example.com", role="viewer")
+    assert viewer.get("/api/notice-contact").json()["shown"] == "Society office, 98100 00000"
+    assert viewer.put("/api/notice-contact", json={"contact": "me"}).status_code == 403
+    assert a.put("/api/notice-contact", json={"contact": "x" * 121}).status_code == 400
+    assert a.put("/api/notice-contact", json={"contact": ""}).json()["shown"] == "asha@example.com"
+    assert info() == "asha@example.com"
+    other, _ = server.client("bo@example.com", workspace_id=B)
+    assert other.get("/api/notice-contact").json()["contact"] is None
+
+
+def test_the_bridge_readme_and_files_are_served_for_the_it_person(server):
+    import zipfile
+    readme = httpx.get(f"http://{server.host}/bridge/README.md")
+    assert readme.status_code == 200 and "Through the bridge" in readme.text
+    assert readme.headers["content-type"].startswith("text/plain")
+    z = zipfile.ZipFile(io.BytesIO(httpx.get(f"http://{server.host}/bridge/camera-bridge.zip").content))
+    assert sorted(z.namelist()) == sorted(f"camera-bridge/{f}" for f in
+                                          ("README.md", "pehra_bridge.py", "Dockerfile", "cameras.example.txt"))
+    assert httpx.get(f"http://{server.host}/bridge/app.py").status_code == 404
+    for bad in ("..%2F.env", "%2E%2E%2Fbrand.json"):  # never a file from outside the bridge folder
+        r = httpx.get(f"http://{server.host}/bridge/{bad}")
+        assert r.status_code == 404 or r.text == "<html>the app shell</html>"
+
+
+def test_the_telegram_page_states_the_reminders_from_tuning(server):
+    a, _ = server.client()
+    t = server.ctx.tuning.alerts
+    assert a.get("/api/telegram").json()["reminders"] == {"every_min": t.escalate_min, "times": t.escalate_times}
 
 
 def test_the_device_page_has_its_own_module(server):

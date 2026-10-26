@@ -34,9 +34,11 @@ def make_router(ctx) -> APIRouter:
 
     def form_words(ws: str) -> dict:
         society = workspace_of(ctx.db, ws)
+        most, count = staff_allowed(society), register.active_count(ctx.repo_for(ws))
         return {"roles": register.words()["roles"], "photos": {"min": cfg.min_photos, "max": cfg.max_photos},
                 "consent_text": register.consent_text("This person"), "adults_only": register.words()["adults_only"],
-                "limit": staff_allowed(society), "count": register.active_count(ctx.repo_for(ws))}
+                "limit": most, "count": count,
+                "notice": staff_refusal(society) if most is not None and count >= most else None}
 
     @router.get("/api/staff")
     def staff(removed: bool = False, member: CurrentMember = Depends(require_role("supervisor"))):

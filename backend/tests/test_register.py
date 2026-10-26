@@ -108,8 +108,13 @@ def test_the_plan_limits_enrolled_staff_in_plain_words(app, photos):
     c = browser(app)
     repo = app.state.ctx.repo_for(SOCIETY)
     rng = np.random.default_rng(0)
-    for i in range(5):  # the free plan names up to 5
+    for i in range(4):  # the free plan names up to 5
         register.enrol(repo, f"Staff {i}", "cleaner", [rng.normal(size=128).tolist()], None)
+    assert c.get("/api/staff").json()["notice"] is None
+    register.enrol(repo, "Staff 4", "cleaner", [rng.normal(size=128).tolist()], None)
+    listed = c.get("/api/staff").json()  # the page says so before anyone fills the form
+    assert (listed["count"], listed["limit"]) == (5, 5)
+    assert listed["notice"].startswith("Your plan names up to 5 staff members.")
     r = c.post("/api/staff", data={"name": "Sunita", "role": "maid", "consent": "true"},
                files=files(photos, "b1", "b1_flip", "b2"))
     assert r.status_code == 403 and r.json()["detail"].startswith("Your plan names up to 5 staff members.")
