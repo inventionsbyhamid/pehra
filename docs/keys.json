@@ -47,12 +47,6 @@
   "unit": "int",
   "means": "frames analysed at this rate"
  },
- "eval.*.fps_*.ms_per_frame": {
-  "from": "eval-{1}",
-  "path": "runs.fps_{2}.ms_per_frame",
-  "unit": "ms",
-  "means": "wall time per analysed frame on the machine that scored it"
- },
  "eval.*.fps_*.person_ids": {
   "from": "eval-{1}",
   "path": "runs.fps_{2}.person_ids",
