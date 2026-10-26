@@ -62,6 +62,7 @@ class CameraJob:
     record: bool = True  # write the timeline; a demo camera records its first loop only
     viewers: int = 0
     health: str | None = None  # the app's judgement, kept across restarts: a problem still going on is not new
+    timezone: str | None = None  # the society's own, for watch hours; else Settings timezone
 
 
 def overlay_tracks(tick) -> list[dict]:
@@ -203,7 +204,7 @@ class CameraRunner:
         states = None
         if any(c.signal == "zone_state" for _, w in watches for c in w.conditions):
             states = load_states(job.examples, blobs.get, cam.zones, t.zones, embedder)
-        self.engine = RuleEngine(watches, cam.zones, t, s.timezone, cam.kind, embedder, states)
+        self.engine = RuleEngine(watches, cam.zones, t, job.timezone or s.timezone, cam.kind, embedder, states)
         if job.health not in (None, "live"):  # still offline or covered after a restart or a watch edit: fired already
             self.engine.health = job.health
             for wid, w in watches:
@@ -655,10 +656,11 @@ class WorkerPool:
 
     def assign(self, camera: Camera, watches: list[tuple[str, Watch]], enrollments: list[Enrollment],
                texts: dict | None = None, examples: list | None = None, record: bool = True,
-               viewers: int = 0, health: str | None = None, demo: bool = False) -> int:
+               viewers: int = 0, health: str | None = None, demo: bool = False, timezone: str | None = None) -> int:
         """Runs the camera (again, with these watches) on its process, or on the least loaded one of its lane (the
-        demo's own processes for a demo sandbox's camera); returns which."""
-        job = CameraJob(camera, watches, enrollments, texts or {}, list(examples or []), record, viewers, health)
+        demo's own processes for a demo sandbox's camera); returns which. `timezone` is the society's."""
+        job = CameraJob(camera, watches, enrollments, texts or {}, list(examples or []), record, viewers, health,
+                        timezone)
         needs = needs_for([w for _, w in watches]) if watches else None
         image_model = bool(needs and (needs.embed or needs.embedder))
         with self._lock:

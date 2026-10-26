@@ -140,11 +140,15 @@ def refund(db, provider, workspace_id: str, grace_days: int, *, confirm: bool, n
             f", and ended subscription {ws.subscription_id}")
 
 
-def _end_of(day: str) -> datetime:
-    """The end of that day in India, where the societies are."""
+def _end_of(day: str, zone: str) -> datetime:
+    """The end of that day in the society's own time zone."""
     from zoneinfo import ZoneInfo
-    return datetime.combine(date.fromisoformat(day) + timedelta(days=1), time(), ZoneInfo("Asia/Kolkata")) \
-        .astimezone(UTC)
+    return datetime.combine(date.fromisoformat(day) + timedelta(days=1), time(), ZoneInfo(zone)).astimezone(UTC)
+
+
+def _zone(db, workspace_id: str) -> str:
+    with db.tx() as s:
+        return _workspace(s, workspace_id).timezone
 
 
 def main(argv: list[str] | None = None, settings=None, provider=None) -> None:
@@ -158,7 +162,7 @@ def main(argv: list[str] | None = None, settings=None, provider=None) -> None:
     comp.add_argument("workspace", help="the society's workspace id (ws_...)")
     comp.add_argument("plan", nargs="?", help="the plan to give")
     comp.add_argument("--cameras", type=int, help="watched cameras it includes")
-    comp.add_argument("--until", help="the last day it is given, YYYY-MM-DD (India time)")
+    comp.add_argument("--until", help="the last day it is given, YYYY-MM-DD (the society's time)")
     comp.add_argument("--days", type=float, help="or how many days from now")
     comp.add_argument("--end", action="store_true", help="stop the society's comp now")
     show = sub.add_parser("show", help="what a society's plan allows now")
@@ -193,7 +197,8 @@ def main(argv: list[str] | None = None, settings=None, provider=None) -> None:
             plan = end(db, opts.workspace)
             print(f"{opts.workspace}: comp of {plan} ended" if plan else f"{opts.workspace} had no comp")
         else:
-            until = _end_of(opts.until) if opts.until else m.utcnow() + timedelta(days=opts.days)
+            until = _end_of(opts.until, _zone(db, opts.workspace)) if opts.until \
+                else m.utcnow() + timedelta(days=opts.days)
             give(db, opts.workspace, opts.plan, opts.cameras, until)
             cams = f", {opts.cameras} cameras" if opts.cameras else ""
             print(f"{opts.workspace}: {opts.plan}{cams} until {until.isoformat()}")

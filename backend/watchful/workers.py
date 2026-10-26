@@ -324,7 +324,7 @@ class WorkerManager:
             self.sandboxes.add(repo.workspace_id)
         process = self.pool.assign(cam, watches, repo.list_enrollments(), self._watch_vectors(repo, watches), examples,
                                    should_record(repo, cam), len(self.subs[camera_id]), self.health.state(cam.id),
-                                   demo=demo)
+                                   demo=demo, timezone=ledger.society_zone(repo).key)
         old = self.cams.get(camera_id)
         kept = old if old is not None and old.status.running else None  # a restart keeps the offline clock
         self.cams[camera_id] = _Cam(cam, WorkerStatus(running=True, source_status="starting", problems=problems,
@@ -689,7 +689,8 @@ class WorkerManager:
                                self.settings, self.tuning,
                                start_epoch=start_epoch, enrollments=repo.list_enrollments,
                                embedder=self._embedder if needs.embed else None,
-                               on_progress=lambda p: info.update(progress=round(p, 3)))
+                               on_progress=lambda p: info.update(progress=round(p, 3)),
+                               timezone=ledger.society_zone(repo).key)
             repo.delete_camera_events(cam.id)  # a rescan replaces the earlier timeline
             repo.add_events(result.events)
             info.update(state="checking", stats=asdict(result.stats))

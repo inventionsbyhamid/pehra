@@ -271,3 +271,82 @@ def test_the_camera_page_counts_only_pictures_that_load(tmp_path):
     repo.add_state_example(cam.id, "z1", "open", gone)
     got = c.get(f"/api/cameras/{cam.id}/examples").json()
     assert [e["state"] for e in got] == ["open"] and len(got) == 1
+
+
+# I5: watch hours run in the society's own time zone
+
+NY = "America/New_York"
+
+
+def _society_in(settings, zone):
+    from watchful.components import make_engine, make_repo
+    from watchful.store.sql import create_workspace
+    return make_repo(settings, create_workspace(make_engine(settings), "Riverside", timezone=zone).id)
+
+
+def test_cameras_and_scans_get_the_society_time_zone(tmp_path, monkeypatch):
+    import watchful.workers as workers_
+    from watchful.components import make_blobs
+    from watchful.config import Settings
+    from watchful.store.db import Camera
+    from watchful.workers import WorkerManager
+    s = Settings(session_secret="y", data_dir=tmp_path, index_embeddings=False, scan_pool_at_start=False,
+                 _env_file=None)
+    repo = _society_in(s, NY)
+    night = Watch(name="Someone at night", conditions=[Condition(signal="present")],
+                  time_window={"start": "22:00", "end": "06:00"})
+    live = repo.add_camera(Camera(None, "Gate", "webcam", None))
+    upload = repo.add_camera(Camera(None, "Upload", "file", str(tmp_path / "x.mp4")))
+    for cam in (live, upload):
+        repo.add_watch(WatchRow(None, cam.id, "someone at night", night.model_dump(), True))
+    m = WorkerManager(s, Tuning(), repo, make_blobs(s), llm=FakeLLM([]), processes=1)
+    try:
+        given = {}
+        monkeypatch.setattr(m.pool, "assign", lambda *a, **kw: given.update(kw) or 0)
+        m.start(live.id)
+        assert given["timezone"] == NY
+
+        def scan(*a, **kw):
+            given["scan"] = kw["timezone"]
+            raise RuntimeError("stop here")
+        monkeypatch.setattr(workers_, "scan_file", scan)
+        monkeypatch.setattr(workers_, "probe_start_time", lambda url: 0.0)
+        m.scans["scn_x"] = {"state": "scanning", "progress": 0.0, "camera_id": upload.id}
+        m._run_scan("scn_x", upload.id)
+        assert given["scan"] == NY
+    finally:
+        m.shutdown()
+
+
+def test_a_camera_process_runs_watch_hours_in_the_society_zone(tmp_path):
+    from watchful.config import Settings
+    from watchful.pool import CameraJob, PoolWorker
+    from watchful.store.db import Camera
+    s = Settings(session_secret="y", data_dir=tmp_path, _env_file=None)
+    night = Watch(name="Someone at night", conditions=[Condition(signal="present")],
+                  time_window={"start": "22:00", "end": "06:00"})
+    worker = PoolWorker(0, s, Tuning(), send=lambda msg: None)
+    try:
+        cam = Camera("cam_ny", "Gate", "webcam", None, workspace_id="ws_ny")
+        worker.assign(CameraJob(cam, [("w1", night)], [], timezone=NY))
+        engine = worker.cameras["cam_ny"].engine
+        assert engine.tz == NY
+        eleven_pm_ny = at(23, tz=NY)
+        assert night.time_window.contains(eleven_pm_ny, engine.tz)
+        assert not night.time_window.contains(eleven_pm_ny, TZ)  # 8:30 in the morning in India
+    finally:
+        worker.close()
+
+
+def test_a_comp_ends_at_the_end_of_the_day_in_the_society_zone(tmp_path, capsys):
+    from datetime import UTC
+    from watchful.billing.comp import main
+    from watchful.config import Settings
+    from watchful.db import models as m
+    s = Settings(session_secret="y", data_dir=tmp_path, _env_file=None)
+    repo = _society_in(s, NY)
+    main(["comp", repo.workspace_id, "society", "--cameras", "4", "--until", "2026-11-01"], settings=s)
+    with repo.tx() as tx:
+        until = tx.get(m.Workspace, repo.workspace_id).comp_until
+    until = until if until.tzinfo else until.replace(tzinfo=UTC)
+    assert until == datetime(2026, 11, 2, tzinfo=ZoneInfo(NY))

@@ -282,9 +282,10 @@ def cut_clip(path: str, pos: float, settings: Settings, tuning: Tuning) -> bytes
 def scan_file(path: str | Path, camera: Camera, watches: list[tuple[str, Watch]], pool: ScanPool, blobs: BlobStore,
               settings: Settings, tuning: Tuning, start_epoch: float | None = None,
               enrollments: list[Enrollment] | Callable[[], list[Enrollment]] | None = None, embedder=None,
-              on_progress: Callable[[float], None] | None = None) -> ScanResult:
+              on_progress: Callable[[float], None] | None = None, timezone: str | None = None) -> ScanResult:
     """`enrollments` may be a function: it is asked again for each chunk started Tuning faces.reload_s or more after
-    the last ask, so someone removed during a long scan is not named in its later chunks."""
+    the last ask, so someone removed during a long scan is not named in its later chunks. `timezone` is the
+    society's, for watch hours (Settings timezone when not given)."""
     t0 = time.perf_counter()
     stages: dict[str, float] = {}
     path = str(path)
@@ -321,7 +322,7 @@ def scan_file(path: str | Path, camera: Camera, watches: list[tuple[str, Watch]]
     if embedder is not None and needs.embed:
         _embed_tracks(merged, blobs, embedder)
     reasoner = Reasoner(camera, tuning, postures=needs.pose or needs.posture)
-    engine = RuleEngine(watches, camera.zones, tuning, settings.timezone, camera.kind, embedder)
+    engine = RuleEngine(watches, camera.zones, tuning, timezone or settings.timezone, camera.kind, embedder)
     events: list[EventRow] = []
     candidates: list[Candidate] = []
     paths: dict[int, list] = {}
