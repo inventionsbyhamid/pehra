@@ -49,6 +49,7 @@ PROBES = {
     "devanagari numbers": ["पाँच साल का", "५ साल की", "बचचा"],
     "obfuscation": ["ｃｈｉｌｄ", "a CH-ILD", "a k-i-d", "c h i l d", "a k i d"],
     "endings": ["குழந்தைகள்", "ಮಕ್ಕಳನ್ನು", "పిల్లలను", "বাচ্চাদের", "a larki", "Someone around eight"],
+    "size": ["someone small", "the person is short", "a tiny swimmer", "a little person"],
 }
 ALL_PROBES = [t for texts in PROBES.values() for t in texts]
 
@@ -111,7 +112,8 @@ ORDINARY = ["teen log gate par", "a baby blue scooter", "the minor gate", "a 2 y
             "the building boy", "an old man with a stick", "an elderly person", "a senior citizen",
             "someone within 2 metres of the pool edge", "a person 2 metres from the gate", "water about 1 metre deep",
             "someone stays under 5 minutes", "looks like 5 people at the gate", "a 7 year warranty",
-            "a car parked for under 5 minutes", "a group of 5 people", "one of 3 guards", "the U12 block"]
+            "a car parked for under 5 minutes", "a group of 5 people", "one of 3 guards", "the U12 block",
+            "a small group of people", "someone with a small bag", "someone stays a short while", "a little dog"]
 
 
 @pytest.mark.parametrize("words", ORDINARY)
