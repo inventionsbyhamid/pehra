@@ -22,6 +22,7 @@ from watchful.demo_rules import in_sandbox
 from watchful.evidence import EvidencePack, evidence_context, file_pack
 from watchful.health import BACK, HealthBook, check as health_check, holds, is_health_watch
 from watchful.logs import ledger, register
+from watchful.logs.readers import entry_camera
 from watchful.notify import ApprovalNotifier
 from watchful.pool import WorkerPool
 from watchful.rules.engine import Candidate, log_row, needs_for
@@ -278,8 +279,10 @@ class WorkerManager:
     def _watches(self, camera_id: str, zones: list | None = None) -> tuple[list[tuple[str, Watch]], list[str]]:
         """The camera's enabled watches that can run, and a plain note for each that can't."""
         repo = self._repo(camera_id)
-        zones = zones if zones is not None else repo.get_camera(camera_id).zones
-        watches, notes = select_watches(repo.list_watches(camera_id), camera_id, zones)
+        cam = repo.get_camera(camera_id)
+        zones = zones if zones is not None else cam.zones
+        watches, notes = select_watches(repo.list_watches(camera_id), camera_id, zones,
+                                        entry=entry_camera(getattr(cam, "purpose", None)))
         return [(i, w) for i, w in watches if not ledger.is_stay_watch(w)], notes  # those run on the gate log
 
     def _camera_lock(self, camera_id: str) -> threading.Lock:
@@ -637,7 +640,8 @@ class WorkerManager:
                                            v.summary or c.watch_name, c.clip_key,
                                            c.keyframe_keys[0] if c.keyframe_keys else None,
                                            [asdict(t) for t in v.trace], None, c.fingerprint, c.track_id))
-        self._publish(c.camera_id, {"type": "alert", "alert": {**asdict(row), "keyframe_url":
+        shown = {k: v for k, v in asdict(row).items() if k != "trace"}  # the AI's trace stays on the server
+        self._publish(c.camera_id, {"type": "alert", "alert": {**shown, "keyframe_url":
                                     self.blobs.url(row.keyframe_key) if row.keyframe_key else None}})
         self.metrics.put("Alerts", 1, {"Status": v.status})
         return row

@@ -12,6 +12,9 @@ class AILimitReached(Exception):
     pass
 
 
+DAY_S = 86400.0
+
+
 class AIError(Exception):
     pass
 
@@ -46,7 +49,8 @@ class OpenRouterLLM:
             else:
                 msgs.append({"role": m.role, "content": m.text})
         body = {"model": self.model, "messages": msgs, "temperature": 0,
-                "max_tokens": self.s.ai_max_tokens, "provider": {"sort": "throughput"},
+                "max_tokens": self.s.ai_max_tokens,
+                "provider": {"sort": "throughput", "data_collection": "deny"},  # only providers that keep nothing
                 "reasoning": {"effort": "none"}}
         if json_schema:
             body["response_format"] = {"type": "json_schema",
@@ -110,13 +114,17 @@ class FakeLLM:
 class LimitedLLM:
     """Counts calls against its society's daily cap (the repository's society), recorded with its task. The cap is a
     number, or a function read at each call (the society's plan, billing/limits.py); `used` says how many of its kind
-    were made today (every AI request of the society when not given). `check()` is one AI check of a flagged moment:
-    it is counted once, at its first request, however many steps the check takes."""
+    were made today (every AI request of the society when not given). `total` caps the AI requests of every society
+    together in the last 24 hours (AI_TOTAL_DAILY; 0 is none), so many societies, or many demos, can't run up the
+    deployment's AI bill. `check()` is one AI check of a flagged moment: it is counted once, at its first request,
+    however many steps the check takes."""
 
-    def __init__(self, inner: LLM, repo, limit, task: str = "ai", used=None):
-        self.inner, self.repo, self.limit, self.task, self.used = inner, repo, limit, task, used
+    def __init__(self, inner: LLM, repo, limit, task: str = "ai", used=None, total: int = 0):
+        self.inner, self.repo, self.limit, self.task, self.used, self.total = inner, repo, limit, task, used, total
 
     def admit(self) -> None:
+        if self.total and self.repo.count_all_ai_calls(DAY_S) >= self.total:
+            raise AILimitReached("the AI limit of the whole service is reached for today")
         made = self.used() if self.used is not None else self.repo.count_ai_calls_today()
         if made >= (self.limit() if callable(self.limit) else self.limit):
             raise AILimitReached("daily AI limit reached")

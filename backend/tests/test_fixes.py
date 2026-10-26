@@ -16,8 +16,8 @@ from watchful.vision.track import Tracker
 from watchful.workers import should_record
 
 
-def app_client(tmp_path):
-    s = Settings(session_secret="s" * 32, data_dir=tmp_path, _env_file=None)
+def app_client(tmp_path, **settings):
+    s = Settings(session_secret="s" * 32, data_dir=tmp_path, _env_file=None, **settings)
     app = create_app(s, llm=FakeLLM([watch_reply()]), manager=StubManager())
     return app, browser(app)
 
@@ -65,7 +65,7 @@ def test_get_and_delete_camera(tmp_path):
 
 
 def test_lookout_from_an_alert(tmp_path):
-    app, c = app_client(tmp_path)
+    app, c = app_client(tmp_path, appearance_lookouts=True)  # off unless set (final fix A)
     repo = app.state.ctx.repo_for(SOCIETY)
     cam = c.post("/api/cameras", json={"name": "Gate", "kind": "stream", "url": "rtsp://x"}).json()
     repo.add_events([EventRow(None, cam["id"], 100.0, "track_start", 5, "person", None, {}, "k.jpg", [0.1] * 4,

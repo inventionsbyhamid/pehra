@@ -372,6 +372,22 @@ def test_payment_goes_to_the_society_named_at_checkout(env):
     assert count(env, m.Audit, m.Audit.action == "billing.unmatched") == 1
 
 
+def test_only_the_payer_changes_the_cameras_on_the_card(env):
+    """Final fix A, I10: another owner of the society can't change how many cameras the payer's card pays for."""
+    asha = owner(env)
+    bina = owner(env, email="bina@example.com")
+    t = datetime.now(UTC) - timedelta(hours=1)
+    assert deliver(env, polar_event("subscription.active", GREEN, t, units=6)).status_code == 200
+    assert workspace(env, GREEN).billing_email == "asha@example.com"
+    calls = len(env.client.calls)
+    res = bina.post("/api/billing/cameras", json={"cameras": 8})
+    assert res.status_code == 403 and res.json()["detail"].startswith("Billing is managed by the person who paid.")
+    assert len(env.client.calls) == calls and workspace(env, GREEN).subscription_units == 6
+    assert bina.get("/api/billing").json()["can_change_cameras"] is False
+    assert asha.get("/api/billing").json()["can_change_cameras"] is True
+    assert asha.post("/api/billing/cameras", json={"cameras": 8}).status_code == 200
+
+
 def test_more_cameras_fewer_cameras_cancel_and_revoke(env):
     a = owner(env)
     t = datetime.now(UTC) - timedelta(hours=1)

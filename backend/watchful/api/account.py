@@ -328,7 +328,13 @@ def make_router(ctx) -> APIRouter:
     def create_workspace(body: WorkspaceIn, response: Response, user: m.User = Depends(current_user)):
         if user.demo:
             raise HTTPException(403, "The demo society is deleted after a day. Sign in to make your own.")
+        most = ctx.tuning.limits.societies_per_user
         with ctx.db.tx() as s:
+            owned = s.scalar(select(func.count()).select_from(m.Member)
+                             .where(m.Member.user_id == user.id, m.Member.role == "owner")) or 0
+            if owned >= most:
+                raise HTTPException(403, f"You already own {most} societies, the most for one person. Email us at "
+                                         f"{BRAND.contact_email} if you need more.")
             ws = add_workspace(s, user.id, body.name, body.timezone or settings.timezone)
         sessions.write(response, user.id, ws.id)
         return {"workspace": workspace_json(ws), "role": "owner"}

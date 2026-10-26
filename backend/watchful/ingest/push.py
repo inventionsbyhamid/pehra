@@ -7,13 +7,16 @@ for that camera at once (PushHub.close). When a camera's watches change, its sen
 (PushHub.poke): a device whose blur no longer matches is closed with CLOSE_CHANGED and shows the new notice. The hub
 also keeps each camera's newest frame, so a live view on another device sees the phone's picture.
 
-Tokens travel in paths (/cam/{token}, /ws/cam/{token}); TokenPaths keeps them out of uvicorn's logs."""
+Tokens travel in paths (/cam/{token}, /ws/cam/{token}, and the sign in, invite and Telegram webhook links) and
+signed media links carry one in the query; TokenPaths keeps both out of uvicorn's logs, with the same prefixes as
+Caddy's access log (deploy/Caddyfile)."""
 import asyncio
 import hashlib
 import logging
 import re
 import secrets
 import threading
+import time
 from dataclasses import dataclass, field
 
 import cv2
@@ -88,10 +91,13 @@ class DeviceTokens:
 @dataclass(eq=False)
 class Sender:
     """One open socket sending frames for a camera; `close` and `nudge` may be called from any thread. Both set
-    `stop`: with a code the socket closes with it, without one it checks itself now."""
+    `stop`: with a code the socket closes with it (and `reason`, plain words a page shows), without one it checks
+    itself now. `since` is when it joined."""
     loop: asyncio.AbstractEventLoop
     stop: asyncio.Event = field(default_factory=asyncio.Event)
     code: int | None = None
+    reason: str = ""
+    since: float = field(default_factory=time.time)
 
     def nudge(self) -> None:
         """Asks the socket to check its token, membership and settings now."""
@@ -100,10 +106,10 @@ class Sender:
         except RuntimeError:
             pass
 
-    def close(self, code: int) -> None:
+    def close(self, code: int, reason: str = "") -> None:
         def _set():
             if self.code is None:
-                self.code = code
+                self.code, self.reason = code, reason
             self.stop.set()
         try:
             self.loop.call_soon_threadsafe(_set)
@@ -160,6 +166,10 @@ class PushHub:
         with self._lock:
             return bool(self._senders.get(camera_id))
 
+    def senders(self, camera_id: str) -> list[Sender]:
+        with self._lock:
+            return list(self._senders.get(camera_id, []))
+
     def put(self, camera_id: str, jpeg: bytes, ts: float) -> None:
         with self._lock:
             self._seq += 1
@@ -181,16 +191,20 @@ def push_parts(ctx) -> tuple[PushHub, DeviceTokens]:
     return ctx.push_hub, ctx.device_tokens
 
 
-TOKEN_PATH = re.compile(r"((?:^|[\s\"'=]|//[^/\s\"']+)/(?:ws/)?cam/)[^/?\s\"']+")  # a path, or a link's path
+TOKEN_PREFIXES = ("auth/link", "cam", "ws/cam", "telegram/webhook", "join", "api/invites")  # as deploy/Caddyfile's log
+TOKEN_PATH = re.compile(r"((?:^|[\s\"'=]|//[^/\s\"']+)/(?:" + "|".join(map(re.escape, TOKEN_PREFIXES))
+                        + r")/)[^/?\s\"']+")  # a path, or a link's path
+QUERY = re.compile(r"((?:^|[\s\"'=]|//[^/\s\"']+)/[^?\s\"']*\?)[^\s\"']+")  # a signed link's query
 
 
 def _hidden(value):
-    return TOKEN_PATH.sub(r"\1-", value) if isinstance(value, str) else value
+    return QUERY.sub(r"\1-", TOKEN_PATH.sub(r"\1-", value)) if isinstance(value, str) else value
 
 
 class TokenPaths(logging.Filter):
-    """Rewrites /cam/{token} and /ws/cam/{token} in a log record to /cam/- and /ws/cam/-: in its message and in each
-    of its arguments, which keep their number and order (uvicorn's AccessFormatter unpacks exactly five)."""
+    """Rewrites a token in a path (/cam/{token} to /cam/-, and every prefix in TOKEN_PREFIXES) and a query string (a
+    signed media link's) to - in a log record: in its message and in each of its arguments, which keep their number
+    and order (uvicorn's AccessFormatter unpacks exactly five)."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.msg = _hidden(record.msg)
@@ -213,21 +227,18 @@ def hide_tokens_in_logs(names=("uvicorn.error", "uvicorn.access", "uvicorn")) ->
 
 
 def needs_faces(repo, camera_id: str) -> bool:
-    """True when this camera names people (the staff register reader, or a watch about enrolled staff): its frames
-    must keep their faces. Every other device camera blurs faces before a frame leaves it."""
-    from watchful.logs.readers import FACES, has
+    """True when this camera names people (the staff register reader, or a watch about enrolled staff) and is an
+    entry camera (main gate, service gate or lobby): its frames must keep their faces. Every other device camera
+    blurs faces before a frame leaves it, whatever its watches say."""
+    from watchful.logs.readers import FACES, entry_camera, has
     from watchful.rules.engine import needs_for
-    from watchful.rules.watch import Watch
+    from watchful.rules.watch import select_watches
     cam = repo.get_camera(camera_id)
-    if cam is not None and has(cam, FACES):
+    if cam is None or not entry_camera(getattr(cam, "purpose", None)):
+        return False
+    if has(cam, FACES):
         return True
-    watches = []
-    for row in repo.list_watches(camera_id):
-        if row.enabled:
-            try:
-                watches.append(Watch.model_validate(row.watch))
-            except ValueError:
-                continue
+    watches = [w for _, w in select_watches(repo.list_watches(camera_id), camera_id, cam.zones)[0]]
     return bool(watches) and needs_for(watches).faces
 
 

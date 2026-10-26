@@ -519,8 +519,6 @@ def test_a_sandbox_takes_only_the_writes_the_demo_needs(tmp_path):
     picture = jpeg(np.zeros((32, 32, 3), np.uint8))
     refused = {
         "uploads": a.post("/api/uploads", files={"file": ("a.mp4", b"x", "video/mp4")}),
-        "photo search": a.post("/api/search", files={"photo": ("a.jpg", picture, "image/jpeg")},
-                               data={"consent": "true"}),
         "person search": a.post("/api/search", json={"person_id": "per_someone"}),
         "stream cameras": a.post("/api/cameras", json={"name": "Gate", "kind": "stream",
                                                        "url": "rtsp://203.0.113.80/live"}),
@@ -539,6 +537,8 @@ def test_a_sandbox_takes_only_the_writes_the_demo_needs(tmp_path):
         "alert feedback": a.post("/api/alerts/alt_x/feedback", json={"feedback": "up"}),
         "joining by invite": a.post("/api/invites/accept", json={"token": "x" * 20}),
     }
+    photo = a.post("/api/search", files={"photo": ("a.jpg", picture, "image/jpeg")}, data={"consent": "true"})
+    assert photo.status_code == 415  # no search by photo anywhere, the demo or not (final fix A)
     for family, res in refused.items():
         assert res.status_code == 403, (family, res.status_code, res.text)
         words = res.json()["detail"]
@@ -562,7 +562,7 @@ def test_a_sandbox_takes_only_the_writes_the_demo_needs(tmp_path):
     with app.state.ctx.db.tx() as s:
         row = s.get(m.Workspace, seen["workspace"]["id"])
     assert demo_rules.refusal(row, "POST", "/api/search") is None
-    assert demo_rules.sandbox_search(row, False, False) is None
+    assert demo_rules.sandbox_search(row, False) is None and demo_rules.sandbox_search(row, True)
     assert a.post("/api/ask", json={"question": "who walked by?"}).status_code != 403
     assert a.delete(f"/api/cameras/{own['id']}").status_code == 200
 

@@ -1,13 +1,15 @@
 """Watches: presets and purposes, a camera's watches, the watch card (preview with its backtest), adding one in plain
 words, switching one on or off, and lookouts. Previewing, adding and switching watches needs an admin; a lookout for a
-person needs a supervisor."""
+person needs a supervisor. A watch or lookout about who someone is runs only on entry cameras (logs/readers.py
+entry_camera). Looking out for a person by a description or a sighting is off unless APPEARANCE_LOOKOUTS is set, so
+nobody is followed by how they look; a lookout for an enrolled staff member stays."""
 import time
 from dataclasses import asdict
 
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from watchful.agent.compiler import Invalid, card, check_age, check_watch, compile_watch, context_for
+from watchful.agent.compiler import Invalid, card, check_age, check_faces, check_watch, compile_watch, context_for
 from watchful.api.blobs import owns
 from watchful.api.common import LIVE_KINDS, alert_or_404, camera_or_404
 from watchful.auth.deps import CurrentMember, current_member, require_role
@@ -29,6 +31,10 @@ class WatchIn(BaseModel):
     cannot: list[dict] = []
     scope: str | None = None  # "camera" or "site", overrides what the words said
     excluded_cameras: list[str] | None = None
+
+
+BY_LOOKS_OFF = "Looking out for someone by how they look is off, so nobody is followed by their clothes or a " \
+               "sighting. Look out for an enrolled staff member instead."
 
 
 class LookoutIn(BaseModel):
@@ -112,9 +118,12 @@ def make_router(ctx) -> APIRouter:
         return row
 
     def no_age(r, cam: Camera, watch: Watch) -> None:
-        """A preset filled in, or a lookout's description, is checked for age like any other watch."""
+        """A preset filled in, or a lookout, is checked like any other watch: for age, and for who someone is off an
+        entry camera."""
         try:
-            check_age(watch.model_dump(), context_for(r, cam))
+            ctx_ = context_for(r, cam)
+            check_age(watch.model_dump(), ctx_)
+            check_faces(watch.model_dump(), ctx_)
         except Invalid as e:
             raise HTTPException(400, f"That watch can't be saved: {e}.")
 
@@ -188,6 +197,9 @@ def make_router(ctx) -> APIRouter:
     def lookout(body: LookoutIn, member: CurrentMember = Depends(require_role("supervisor"))):
         r = repo(member)
         fill: dict = {}
+        if not body.person_id and (body.description or body.event_id or body.alert_id) \
+                and not ctx.settings.appearance_lookouts:
+            raise HTTPException(403, BY_LOOKS_OFF)
         if body.person_id:
             if not any(e.person_id == body.person_id for e in r.list_enrollments()):
                 raise HTTPException(404, "No such person.")
@@ -204,8 +216,8 @@ def make_router(ctx) -> APIRouter:
         else:
             raise HTTPException(400, "Pick a person, a description or a sighting.")
         cams = [camera_or_404(r, cid) for cid in body.camera_ids]
-        if cams:
-            no_age(r, cams[0], preset("lookout", **fill))
+        for cam in cams:  # each camera: a person is looked out for on entry cameras only
+            no_age(r, cam, preset("lookout", **fill))
         return {"watch_ids": [save_watch(member, cam, "lookout", preset("lookout", **fill)).id for cam in cams]}
 
     return router

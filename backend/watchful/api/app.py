@@ -13,6 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from watchful.api import (account, alerts, billing, blobs, cameras, demo, incidents, live, logs, people, search,
                           telegram, watches)
+from watchful.api.bodylimit import BodyLimit
 from watchful.api.common import LIVE_KINDS
 from watchful.api.headers import SecurityHeaders
 from watchful.auth.deps import AuthContext
@@ -178,10 +179,13 @@ def create_app(settings: Settings | None = None, llm=None, manager=None, provide
         if app.state.jobs is not None:
             app.state.jobs.join(30)
 
-    app = FastAPI(title=BRAND.name, lifespan=lifespan)
+    docs = settings.api_docs  # the API's own pages, for development only
+    app = FastAPI(title=BRAND.name, lifespan=lifespan, docs_url="/docs" if docs else None, redoc_url=None,
+                  openapi_url="/openapi.json" if docs else None)
     app.state.ctx = ctx
     app.state.jobs = None
-    app.add_middleware(SecurityHeaders, settings=settings)
+    app.add_middleware(BodyLimit, settings=settings, tuning=ctx.tuning, sessions=ctx.sessions)
+    app.add_middleware(SecurityHeaders, settings=settings)  # outside, so a refused body's answer has them too
 
     @app.get("/healthz")
     def healthz():

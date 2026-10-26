@@ -12,6 +12,8 @@ Group=watchful
 EnvironmentFile=/etc/watchful/watchful.env
 # two malloc arenas instead of 8 per CPU: less memory in processes with many threads, no slower frame
 Environment=MALLOC_ARENA_MAX=2
+# no picture decodes past 40 megapixels, whatever its header says (the app checks first, vision/decode.py)
+Environment=OPENCV_IO_MAX_IMAGE_PIXELS=40000000
 WorkingDirectory=@APP@/current
 # settings and secrets from SSM join the environment first; one process, because sessions, live views and the
 # camera pool live in its memory. The camera processes are its children: stopping the unit stops them too.

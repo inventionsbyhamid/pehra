@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     sns_topic_arn: str | None = None
 
     public_base_url: str = "http://localhost:8000"
+    api_docs: bool = False  # /docs and /openapi.json, for development only
     # Cloudflare's CF-Connecting-IP names the visitor only where every request comes through Cloudflare (the ioflood
     # tunnel); elsewhere a visitor could send it themselves (ratelimit.client_ip)
     trust_cloudflare: bool = False
@@ -112,12 +113,18 @@ class Settings(BaseSettings):
     polar_products: Annotated[dict[str, str], NoDecode] = {}
 
     ai_daily_call_limit: int = 500  # AI requests a day for a plan whose limit is agreed per customer (plans.json)
+    # AI requests of the whole deployment in the last 24 hours, every society and the demo together: past it no AI is
+    # asked (checks are filed as not checked, never dropped) until the oldest requests leave the window; 0 is no cap
+    ai_total_daily: int = 10000
     retention_days: int = 7
     max_upload_mb: int = 200
     max_upload_minutes: int = 10
     # cameras the server pulls may be on private addresses only when the server itself runs inside the society's
     # network; on a cloud server that would let a camera address reach the server's own services (netguard.py)
     allow_private_streams: bool = False
+    # a lookout for a person by a description or a sighting follows someone by how they look; off unless set, so
+    # nobody (a child among them) is followed by their clothes. Lookouts for enrolled staff and vehicles stay
+    appearance_lookouts: bool = False
 
     @field_validator("auth_providers", "data_key_old", mode="before")
     @classmethod

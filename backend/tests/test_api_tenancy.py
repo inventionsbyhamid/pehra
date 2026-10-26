@@ -25,7 +25,7 @@ A, B = "ws_green_park", "ws_lake_view"
 
 @pytest.fixture
 def world(tmp_path):
-    s = Settings(session_secret="s" * 32, data_dir=tmp_path, _env_file=None)
+    s = Settings(session_secret="s" * 32, data_dir=tmp_path, appearance_lookouts=True, _env_file=None)
     manager = StubManager()
     app = create_app(s, llm=FakeLLM([]), manager=manager)
     a, b = browser(app, "asha@example.com", A), browser(app, "bina@example.com", B)
@@ -48,6 +48,7 @@ def world(tmp_path):
         link = m.TelegramLink(workspace_id=B, chat_id="-555", title="Lake guards")
         tx.add(link)
     invite = b.post("/api/invites", json={"role": "viewer"}).json()["invite"]
+    assert b.put("/api/notice-contact", json={"contact": "Lake guard desk 98200"}).status_code == 200
     with ctx.db.tx() as tx:
         bina = tx.scalar(select(m.User.id).where(m.User.email == "bina@example.com"))
     ids = {"camera_id": cam.id, "watch_id": watch.id, "alert_id": alert.id, "scan_id": "scn_lake",
@@ -102,15 +103,15 @@ def test_every_route_is_scoped(world):
         res = a.post(path, json=body)
         assert res.status_code in (403, 404), f"POST {path} answered {res.status_code}: {res.text}"
 
-    secrets = [ids["camera_id"], ids["watch_id"], ids["alert_id"], "per_lake", "Lake", "bina@example.com", B]
+    secrets = [ids["camera_id"], ids["watch_id"], ids["alert_id"], "per_lake", "Lake", "bina@example.com", B, "98200"]
     on_plan(app.state.ctx.db, A)  # the gate log and the staff register come with the Society plan
     for path in ("/api/cameras", "/api/alerts", f"/api/alerts?camera_id={ids['camera_id']}", "/api/metrics",
                  "/api/people", "/api/members", "/api/invites", "/api/me", "/api/incidents", "/api/telegram",
                  "/api/incidents/precision", "/api/billing", "/api/staff", "/api/staff?removed=true",
                  "/api/logs/vehicles", "/api/logs/staff", "/api/logs/vehicles.csv", "/api/logs/staff.csv",
-                 "/api/logs/watches", "/api/logs/watches.csv", "/api/checks/today"):
+                 "/api/logs/watches", "/api/logs/watches.csv", "/api/checks/today", "/api/notice-contact", "/api/demo"):
         res = a.get(path)
-        assert res.status_code == 200, path
+        assert res.status_code == (404 if path == "/api/demo" else 200), path  # not a demo society: nothing to show
         assert not [x for x in secrets if x in res.text], f"{path} shows another society's data"
 
     repo = app.state.ctx.repo_for(B)
@@ -149,7 +150,7 @@ def test_a_watch_never_points_at_another_societys_picture(world):
     staff."""
     app, a, _, ids, event = world
     repo = app.state.ctx.repo_for(A)
-    cam = repo.add_camera(Camera(None, "Green gate", "stream", "rtsp://green"))
+    cam = repo.add_camera(Camera(None, "Green gate", "stream", "rtsp://green", purpose="main gate"))
     mine = EventRow(None, cam.id, time.time(), "enter", 3, "person", None, {}, f"{A}/{cam.id}/kf/3.jpg", [0.2], [0.3],
                     None)
     repo.add_events([mine])

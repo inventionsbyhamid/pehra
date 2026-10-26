@@ -128,8 +128,8 @@ def closed_with(ws, timeout=5.0) -> int:
     raise AssertionError("the socket stayed open")
 
 
-def device_camera(c, name="Pool"):
-    cam = c.post("/api/cameras", json={"name": name, "kind": "webcam", "purpose": "pool"}).json()
+def device_camera(c, name="Pool", purpose="pool"):
+    cam = c.post("/api/cameras", json={"name": name, "kind": "webcam", "purpose": purpose}).json()
     issued = c.post(f"/api/cameras/{cam['id']}/device-token")
     assert issued.status_code == 200, issued.text
     return cam, issued.json()
@@ -277,12 +277,16 @@ def test_unknown_tokens_count_as_guesses(tmp_path):
 
 def test_staff_register_cameras_keep_faces(server):
     a, _ = server.client()
-    pool, issued = device_camera(a, "Service gate")
+    pool, issued = device_camera(a, "Service gate", "service gate")
     repo = server.ctx.repo_for(A)
     watch = {"name": "Staff arrive", "subject": {"classes": ["person"], "who": "enrolled"},
              "conditions": [{"signal": "entered", "zones": []}]}
     repo.add_watch(WatchRow(None, pool["id"], "log staff arriving", watch, True))
     assert httpx.get(f"http://{server.host}/cam/{issued['token']}/info").json()["blur"] is False
+    # the same watch on a pool camera turns no blur off: faces are kept on entry cameras only (final fix A, I5)
+    other, other_issued = device_camera(a, "Pool")
+    repo.add_watch(WatchRow(None, other["id"], "log staff arriving", watch, True))
+    assert httpx.get(f"http://{server.host}/cam/{other_issued['token']}/info").json()["blur"] is True
 
 
 def test_the_device_page_and_its_qr_code(server):
@@ -569,7 +573,7 @@ def test_a_device_stops_when_its_blur_changes(server):
     """A watch that names staff turns blur off for the camera: a device sending with blur is closed at once with
     4411 (the page then shows the new notice), and the reverse too."""
     a, _ = server.client()
-    pool, issued = device_camera(a, "Service gate")
+    pool, issued = device_camera(a, "Service gate", "service gate")
     repo = server.ctx.repo_for(A)
     staff = repo.add_watch(WatchRow(None, pool["id"], "log staff arriving", STAFF_WATCH, False))
     url = f"ws://{server.host}/ws/cam/{issued['token']}"
@@ -590,7 +594,7 @@ def test_a_blur_change_made_elsewhere_is_caught_at_the_recheck(tmp_path):
     srv = Server(tmp_path, recheck_s=0.3)
     try:
         a, _ = srv.client()
-        pool, issued = device_camera(a)
+        pool, issued = device_camera(a, "Lobby", "lobby")
         with connect(f"ws://{srv.host}/ws/cam/{issued['token']}") as ws:
             assert json.loads(ws.recv(timeout=5))["blur"] is True
             srv.ctx.repo_for(A).add_watch(WatchRow(None, pool["id"], "staff", STAFF_WATCH, True))  # no route, no poke

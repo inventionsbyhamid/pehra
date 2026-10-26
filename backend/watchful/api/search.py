@@ -1,18 +1,19 @@
-"""Questions about the footage, a camera's timeline, and finding anything by words or a photo. Any member may read;
-every answer comes from the member's own society only."""
+"""Questions about the footage, a camera's timeline, and finding anything by words. Any member may read; finding an
+enrolled staff member by face needs a supervisor, and looks only at entry cameras. There is no search by photo, by face
+or by appearance: nobody is found from a picture of them. Every answer comes from the member's own society only."""
 import time
 from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from watchful import demo_rules
 from watchful.agent.ask import AskContext, ask, people_groups
 from watchful.api.common import camera_or_404
 from watchful.auth.deps import CurrentMember, current_member
 from watchful.search import SearchQuery, search
-from watchful.vision.faces import ConsentRequired, NoFaceFound
+from watchful.vision.faces import NoFaceFound
 
 TIMELINE_KINDS = ["enter", "exit", "cross", "falling", "fallen", "recovered", "tamper_covered", "tamper_blurred",
                   "tamper_moved", "tamper_restored", "watch_log"]  # watch_log: a row a log watch wrote
@@ -21,6 +22,18 @@ TIMELINE_KINDS = ["enter", "exit", "cross", "falling", "fallen", "recovered", "t
 class AskIn(BaseModel):
     question: str
     camera_id: str | None = None
+
+
+class SearchIn(BaseModel):
+    text: str | None = None
+    person_id: str | None = None  # an enrolled staff member (supervisors and above)
+    camera_id: str | None = None
+    since: float | None = None
+    until: float | None = None
+    classes: list[str] = []
+
+
+BY_WORDS = "Search by words. Finding someone from a photo is not offered."
 
 
 def mount(app: FastAPI, ctx) -> None:
@@ -60,30 +73,28 @@ def make_router(ctx) -> APIRouter:
 
     @router.post("/api/search")
     async def search_route(request: Request, member: CurrentMember = Depends(current_member)):
-        """Find anything: words, or a photo (a photo of a person needs their consent)."""
+        """Find anything by words, or an enrolled staff member (supervisors and above). A photo is refused."""
         ws = member.workspace.id
-        if request.headers.get("content-type", "").startswith("multipart/"):
-            form = await request.form()
-            photo = await form["photo"].read() if "photo" in form else None
-            q = SearchQuery(text=form.get("text") or None, photo=photo, camera_id=form.get("camera_id") or None,
-                            consent=str(form.get("consent", "")).lower() == "true")
-        else:
-            data = await request.json()
-            q = SearchQuery(text=data.get("text"), person_id=data.get("person_id"), camera_id=data.get("camera_id"),
-                            since=data.get("since"), until=data.get("until"), classes=data.get("classes") or [])
-        if q.text is None and q.photo is None and q.person_id is None:
-            raise HTTPException(400, "Type what to look for, or add a photo.")
-        if refused := demo_rules.sandbox_search(member.workspace, q.photo is not None, bool(q.person_id)):
+        if not request.headers.get("content-type", "").startswith("application/json"):
+            raise HTTPException(415, BY_WORDS)
+        try:
+            body = SearchIn.model_validate(await request.json())
+        except (ValueError, ValidationError):
+            raise HTTPException(400, BY_WORDS) from None
+        q = SearchQuery(text=body.text or None, person_id=body.person_id or None, camera_id=body.camera_id,
+                        since=body.since, until=body.until, classes=body.classes)
+        if q.text is None and q.person_id is None:
+            raise HTTPException(400, "Type what to look for.")
+        if q.person_id and not member.can("supervisor"):
+            raise HTTPException(403, "Finding a staff member needs a supervisor or above.")
+        if refused := demo_rules.sandbox_search(member.workspace, bool(q.person_id)):
             raise HTTPException(403, refused)
         await run_in_threadpool(own_camera, member, q.camera_id)
-        faces = await run_in_threadpool(ctx.faces_for, ws) if q.photo is not None or q.person_id else None
+        faces = await run_in_threadpool(ctx.faces_for, ws) if q.person_id else None
         try:
             r = await run_in_threadpool(search, q, ctx.repo_for(ws), ctx.blobs, ctx.embedder,
                                         ctx.llm_for(ws, "search"), faces, ctx.tuning.signals, None,
-                                        member.workspace.timezone,
-                                        ctx.person_detector if q.photo is not None else None)
-        except ConsentRequired:
-            raise HTTPException(400, "Searching with a photo of a person needs their consent.")
+                                        member.workspace.timezone)
         except (NoFaceFound, ValueError) as e:
             raise HTTPException(400, str(e))
         return {"query": r.query, "problem": r.problem, "results": [asdict(h) for h in r.results]}

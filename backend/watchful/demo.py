@@ -321,9 +321,9 @@ class SandboxLLM(LimitedLLM):
     sandbox together within limits.demo_ai_total in the last day, counted from Audit rows the demo reset keeps. The
     demo's budget is its own, so judges never use up a society's AI_DAILY_CALL_LIMIT or theirs."""
 
-    def __init__(self, inner, repo, limit: int, task: str, used, total: int, per_network: int):
-        super().__init__(inner, repo, limit, task, used=used)
-        self.total, self.per_network = total, per_network
+    def __init__(self, inner, repo, limit: int, task: str, used, total: int, per_network: int, everyone: int = 0):
+        super().__init__(inner, repo, limit, task, used=used, total=everyone)
+        self.demo_total, self.per_network = total, per_network
         with repo.tx() as s:
             started = s.scalar(select(m.Audit.data).where(m.Audit.workspace_id == repo.workspace_id,
                                                           m.Audit.action == "demo.start").limit(1))
@@ -336,7 +336,7 @@ class SandboxLLM(LimitedLLM):
             spent = s.scalar(select(func.count()).select_from(m.Audit).where(*recent)) or 0
             mine = s.scalar(select(func.count()).select_from(m.Audit).where(
                 *recent, m.Audit.data["network"].as_string() == self.network)) or 0 if self.network else 0
-        if spent >= self.total or mine >= self.per_network:
+        if spent >= self.demo_total or mine >= self.per_network:
             raise AILimitReached("the demo's daily AI limit is reached")
         super().admit()  # this sandbox's own cap for its kind; records the call
         with self.repo.tx() as s:
@@ -353,7 +353,8 @@ def sandbox_llm(inner, repo, settings, task: str, tuning: Tuning | None = None) 
     t = (tuning or load_tuning(settings.tuning_file)).limits
     kind = CHECKS if task in CHECK_TASKS else ASSIST
     cap = t.demo_ai_checks if kind == CHECKS else t.demo_ai_assist
-    return SandboxLLM(inner, repo, cap, task, lambda: ai_used(repo, kind), t.demo_ai_total, t.demo_ai_per_network)
+    return SandboxLLM(inner, repo, cap, task, lambda: ai_used(repo, kind), t.demo_ai_total, t.demo_ai_per_network,
+                      settings.ai_total_daily)
 
 
 def ai_limit(repo, settings, tuning: Tuning | None = None) -> int | None:

@@ -15,6 +15,7 @@ from watchful.auth.deps import CurrentMember, require_role
 from watchful.billing.limits import staff_allowed, staff_refusal, workspace_of
 from watchful.logs import register
 from watchful.store.blobs import in_society
+from watchful.vision.decode import TooManyPixels, decode_image
 from watchful.vision.faces import ManyFaces, NoFaceFound
 
 
@@ -50,8 +51,13 @@ def make_router(ctx) -> APIRouter:
         """One face template per photo, each photo showing exactly one face, all of the same person."""
         faces = ctx.faces_for(ws)
         out = []
+        most = ctx.tuning.limits.image_max_pixels
         for i, data in enumerate(photos, 1):
-            image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            try:
+                image = decode_image(data, most)
+            except TooManyPixels:
+                raise register.Refused(f"Photo {i} has too many pixels. Use a photo under {most // 1_000_000} "
+                                       "megapixels.")
             if image is None:
                 raise register.Refused(f"Photo {i} can't be read. Use a JPEG or PNG photo.")
             try:

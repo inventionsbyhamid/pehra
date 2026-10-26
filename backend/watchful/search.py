@@ -1,6 +1,8 @@
-"""Find anything in recorded footage, by words or a photo. One semantic index covers whole scenes (a frame every
-few seconds while something moves) and every tracked object's best crop; words become a caption plus filters,
-the index ranks by image and text embeddings, and the AI confirms the best matches."""
+"""Find anything in recorded footage by words, or an enrolled staff member by their face on entry cameras. One
+semantic index covers whole scenes (a frame every few seconds while something moves) and every tracked object's best
+crop; words become a caption plus filters, the index ranks by image and text embeddings, and the AI confirms the best
+matches. There is no search by photo: nobody is found from a picture of them. A search about age or children is
+refused, by the question's words and by the caption's words and meaning."""
 import json
 import time
 from dataclasses import dataclass, field
@@ -11,13 +13,15 @@ from zoneinfo import ZoneInfo
 import cv2
 import numpy as np
 
+from watchful.agent.compiler import Names, about_age, age_reason, mentions_age
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
 from watchful.agent.prompting import parse_json, render
+from watchful.logs.readers import entry_camera
 from watchful.rules.vocab import resolve_classes
 from watchful.store.blobs import in_society
 from watchful.tuning import SignalTuning
 from watchful.vision.detect import COCO
-from watchful.vision.faces import ConsentRequired, FaceIndex
+from watchful.vision.faces import FaceIndex
 
 SEARCH_KINDS = ["scene", "track_end"]
 INTERPRET_SCHEMA = {"type": "object", "properties": {
@@ -28,12 +32,14 @@ INTERPRET_SCHEMA = {"type": "object", "properties": {
 CONFIRM_SCHEMA = {"type": "object", "properties": {"matches": {"type": "array", "items": {"type": "integer"}}}}
 
 
+class AgeRefused(ValueError):
+    """A search about age or children: refused with the plain words every age refusal uses."""
+
+
 @dataclass
 class SearchQuery:
     text: str | None = None
-    photo: bytes | None = None
     person_id: str | None = None  # an enrolled person, who consented when enrolled
-    consent: bool = False
     camera_id: str | None = None
     since: float | None = None
     until: float | None = None
@@ -121,11 +127,8 @@ def _hit(e, blobs, score: float, method: str, confirmed: bool = False) -> Search
                      e.id, e.track_id, e.cls)
 
 
-def _faces(rows, blobs, faces: FaceIndex, image=None, person_id: str | None = None,
-           workspace_id: str | None = None) -> list[SearchHit]:
-    probe = faces.share([e for e in faces.people() if e.person_id == person_id] if person_id else [])
-    if not person_id:
-        probe.enroll("query", "photo", image, consent=True)
+def _faces(rows, blobs, faces: FaceIndex, person_id: str, workspace_id: str | None = None) -> list[SearchHit]:
+    probe = faces.share([e for e in faces.people() if e.person_id == person_id])
     hits = []
     for e in rows:
         if e.kind != "track_end" or e.cls != "person" or not e.keyframe_key:
@@ -159,7 +162,7 @@ def _confirm(hits: list[SearchHit], caption: str, blobs, llm: LLM, keys: dict[st
     prompt = (f"These {len(images)} pictures from home cameras are numbered from 1 in order. Which of them show "
               f"{caption}? Reply with JSON {{\"matches\": [numbers]}}.")
     try:
-        reply = parse_json(llm.complete("You check pictures from security cameras.", [Msg("user", prompt)],
+        reply = parse_json(llm.complete(CONFIRM_SYSTEM, [Msg("user", prompt)],
                                         images=images, json_schema=CONFIRM_SCHEMA))
         keep = {int(i) for i in reply.get("matches", []) if str(i).lstrip("-").isdigit()}
     except (TimeoutError, AIError, AILimitReached, ValueError, json.JSONDecodeError):
@@ -169,43 +172,46 @@ def _confirm(hits: list[SearchHit], caption: str, blobs, llm: LLM, keys: dict[st
     return [h for h in hits if h.confirmed] + [h for h in hits if not h.confirmed]
 
 
+CONFIRM_SYSTEM = ("You check pictures from security cameras. Never judge or state anyone's age, and never pick a "
+                  "picture because of anyone's age, size or height.")
+
+
+def _names(repo) -> Names:
+    """The society's zone and line names and its staff names: places and names, never read as an age."""
+    try:
+        places = sorted({z.name for c in repo.list_cameras() for z in c.zones})
+        people = [e.name for e in repo.list_enrollments()]
+    except Exception:
+        return Names()
+    return Names(places, people)
+
+
 def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces: FaceIndex | None = None,
            cfg: SignalTuning = SignalTuning(), now: float | None = None, tz: str = "Asia/Kolkata",
-           detector=None) -> SearchResult:
-    if q.text is None and q.photo is None and q.person_id is None:
-        raise ValueError("search with words, a photo or an enrolled person")
+           meaning=None) -> SearchResult:
+    """`meaning` is the age guard's meaning check on the caption; None is the process's own."""
+    if q.text is None and q.person_id is None:
+        raise ValueError("search with words or an enrolled person")
     ws = getattr(repo, "workspace_id", None)  # pictures of this society only
     if q.person_id is not None:
         if faces is None or not any(e.person_id == q.person_id for e in faces.people()):
             raise ValueError("that person is not enrolled")
-        rows = repo.query_events(camera_id=q.camera_id, kinds=["track_end"], cls="person", since=q.since,
-                                 until=q.until, limit=20000)
+        entries = {c.id for c in repo.list_cameras() if entry_camera(getattr(c, "purpose", None))}
+        rows = [e for e in repo.query_events(camera_id=q.camera_id, kinds=["track_end"], cls="person", since=q.since,
+                                             until=q.until, limit=20000)
+                if e.camera_id in entries]  # faces are matched on entry cameras only, never at a pool
         query = {"person_id": q.person_id, "camera_id": q.camera_id, "since": q.since, "until": q.until}
-        hits = _faces(rows, blobs, faces, person_id=q.person_id, workspace_id=ws)
+        hits = _faces(rows, blobs, faces, q.person_id, workspace_id=ws)
         return SearchResult(query, hits[:cfg.search_top_n * 2])
     now = time.time() if now is None else now
-    image = _decode(q.photo) if q.photo is not None else None
-    if q.photo is not None and image is None:
-        raise ValueError("that photo can't be read")
-
-    if image is not None and faces is not None and faces.has_face(image):
-        if not q.consent:
-            raise ConsentRequired("searching with a photo of a person needs their consent")
-        query = {"photo": "face", "camera_id": q.camera_id, "since": q.since, "until": q.until, "classes": ["person"]}
-        rows = repo.query_events(camera_id=q.camera_id, kinds=["track_end"], cls="person", since=q.since,
-                                 until=q.until, limit=20000)
-        return SearchResult(query, _faces(rows, blobs, faces, image, workspace_id=ws)[:cfg.search_top_n * 2])
-
-    if image is not None:
-        if not q.consent and detector is not None and any(d.cls == "person" for d in detector.detect(image)):
-            raise ConsentRequired("searching with a photo of a person needs their consent")
-        query = {"photo": "appearance", "looks_like": q.text, "not_like": None, "camera_id": q.camera_id,
-                 "since": q.since, "until": q.until, "classes": list(q.classes)}
-        target, against = embedder.image(image), None
-    else:
-        query = interpret(q, repo, llm, now, tz)
-        target = embedder.text(query["looks_like"])
-        against = embedder.text(query["not_like"]) if query["not_like"] else None
+    names = _names(repo)
+    if mentions_age(q.text, names):
+        raise AgeRefused(age_reason())
+    query = interpret(q, repo, llm, now, tz)
+    if any(about_age(query[k], names, meaning) for k in ("looks_like", "not_like") if query.get(k)):
+        raise AgeRefused(age_reason())
+    target = embedder.text(query["looks_like"])
+    against = embedder.text(query["not_like"]) if query["not_like"] else None
 
     rows = repo.query_events(camera_id=query["camera_id"], kinds=SEARCH_KINDS, since=query["since"],
                              until=query["until"], limit=20000)
@@ -215,8 +221,6 @@ def search(q: SearchQuery, repo, blobs, embedder, llm: LLM | None = None, faces:
 
     def score(v: np.ndarray) -> float | None:
         cos = float(np.dot(v, target))
-        if image is not None:
-            return cos
         if against is not None:  # "without a helmet" against "with a helmet": the closer caption wins
             diff = cos - float(np.dot(v, against))
             return diff if diff >= cfg.contrast_margin else None

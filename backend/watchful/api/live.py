@@ -23,11 +23,13 @@ from starlette.websockets import WebSocketDisconnect
 from watchful.api import device as device_page
 from watchful.auth.deps import CurrentMember, session_member
 from watchful.auth.sessions import origin_of
+from watchful.demo_rules import is_sandbox
 from watchful.ingest.push import (CLOSE_BAD_KIND, CLOSE_BUSY, CLOSE_CHANGED, CLOSE_GONE, CLOSE_OFF, CLOSE_ROLE,
                                   CLOSE_SIGN_IN, CLOSE_UNKNOWN, Sender, needs_faces, push_parts)
 
 CLOSE_NOT_FOUND = CLOSE_UNKNOWN
 BUSY = device_page.BUSY
+IDLE = "No picture came from this camera for a while, so it stopped to let others try the demo. Start it again."
 JPEG = b"\xff\xd8"
 NORMAL_CLOSE = 1000  # a device's own Stop; a closed tab (1001) or a lost connection (1006) is not one
 
@@ -135,14 +137,19 @@ def mount(app: FastAPI, ctx) -> None:
                 await run_in_threadpool(manager.start, cam.id, cam.workspace_id)
             limit, gap, last = tune.max_frame_kb * 1024, 1.0 / tune.max_fps, 0.0
             next_check = loop.time() + tune.recheck_s
+            # a visitor's own camera in the demo that sends no picture for a while gives its place back
+            idle_s = ctx.tuning.limits.demo_idle_sender_s if await run_in_threadpool(
+                is_sandbox, ctx.db, cam.workspace_id) else None
+            last_frame = loop.time()
             if (code := await check()) is not None:  # a link replaced between the lookup and joining the hub
                 await ws.close(code=code)
                 return
             while True:
-                done, _ = await asyncio.wait({incoming, stopping}, timeout=max(0.0, next_check - loop.time()),
+                wake = next_check if idle_s is None else min(next_check, last_frame + idle_s)
+                done, _ = await asyncio.wait({incoming, stopping}, timeout=max(0.0, wake - loop.time()),
                                              return_when=asyncio.FIRST_COMPLETED)
                 if stopping in done and sender.code is not None:
-                    await ws.close(code=sender.code)
+                    await ws.close(code=sender.code, reason=sender.reason)
                     break
                 if stopping in done:  # poked: check now
                     sender.stop.clear()
@@ -156,10 +163,13 @@ def mount(app: FastAPI, ctx) -> None:
                     data = msg.get("bytes")
                     now = time.time()
                     if data and len(data) <= limit and data[:2] == JPEG and now - last >= gap:
-                        last = now
+                        last, last_frame = now, loop.time()
                         manager.push_frame(cam.id, data, now)
                         hub.put(cam.id, data, now)
                     incoming = asyncio.create_task(ws.receive())
+                if idle_s is not None and loop.time() - last_frame >= idle_s:
+                    await ws.close(code=CLOSE_BUSY, reason=IDLE)
+                    break
                 if loop.time() >= next_check:
                     next_check = loop.time() + tune.recheck_s
                     if (code := await check()) is not None:

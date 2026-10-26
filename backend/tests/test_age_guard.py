@@ -174,14 +174,16 @@ def test_c_summaries_keep_place_names(tmp_path):
     c.repo.add_camera(Camera(None, "Play", "stream", None, [Zone("z1", "kids play area", square),
                                                             Zone("z2", "kids pool", square)]))
     c.repo.add_camera(Camera(None, "Block B", "stream", None, [Zone("z3", "girls toilet corridor", square)]))
-    for said, shown in (("Someone is in the kids play area after 10 PM.", None),
-                        ("Someone is still in the kids pool.", None),
-                        ("Someone is waiting in the girls toilet corridor.", None),
-                        ("A child is alone in the kids pool.", "Someone is alone in the kids pool."),
-                        ("A girl of 6 is in the kids play area.", "Someone is in the kids play area.")):
-        v = verify(cand(), c, FakeLLM([step("raise_alert", summary=said, severity="warning",
-                                            reason="a little girl alone")]))
+    safe = "Car enters: the AI check agreed it is real."  # final fix A: a summary about age is replaced whole
+    for said, reason, shown in (("Someone is in the kids play area after 10 PM.", "alone after hours", None),
+                                ("Someone is still in the kids pool.", "still for long", None),
+                                ("Someone is waiting in the girls toilet corridor.", "waiting", None),
+                                ("Someone is in the kids play area after 10 PM.", "a little girl alone", safe),
+                                ("A child is alone in the kids pool.", "alone", safe),
+                                ("A girl of 6 is in the kids play area.", "alone", safe)):
+        v = verify(cand(), c, FakeLLM([step("raise_alert", summary=said, severity="warning", reason=reason)]))
         assert v.summary == (shown or said) and not mentions_age(v.reason), (said, v.summary, v.reason)
+        assert v.reason == ("" if shown else reason)
         c.images.clear()
 
 
@@ -260,7 +262,7 @@ def test_the_four_age_agnostic_watches_compile_and_save(tmp_path):
     from accounts import browser
     from test_api import StubManager
     from watchful.api import create_app
-    app = create_app(Settings(session_secret="s" * 32, data_dir=tmp_path, _env_file=None),
+    app = create_app(Settings(session_secret="s" * 32, data_dir=tmp_path, appearance_lookouts=True, _env_file=None),
                      llm=FakeLLM([reply(w) for _, w in AGNOSTIC.values()]), manager=StubManager())
     c = browser(app)
     square = [[0, 0], [1, 0], [1, 1], [0, 1]]

@@ -69,9 +69,10 @@ class Watch(_Model):
         return camera_id == home_camera_id
 
 
-def select_watches(rows, camera_id: str, zones) -> tuple[list[tuple[str, Watch]], list[str]]:
+def select_watches(rows, camera_id: str, zones, entry: bool = True) -> tuple[list[tuple[str, Watch]], list[str]]:
     """The enabled watches that can run on a camera (its own and every site watch that does not exclude it), and
-    a plain note for each that applies but can't run there (a zone or line this camera doesn't have)."""
+    a plain note for each that applies but can't run there (a zone or line this camera doesn't have, or who someone
+    is on a camera that is not an entry: `entry` is False there, logs/readers.py entry_camera)."""
     from watchful.rules.engine import validate
     kinds = {z.name: z.kind for z in zones}
     ok, notes = [], []
@@ -84,6 +85,9 @@ def select_watches(rows, camera_id: str, zones) -> tuple[list[tuple[str, Watch]]
             notes.append(f"{row.text}: {str(e).splitlines()[0]}")
             continue
         if not w.applies_to(camera_id, row.camera_id):
+            continue
+        if w.subject.who != "anyone" and not entry:
+            notes.append(f"{w.name}: who someone is is only told on entry cameras, so it does not run here")
             continue
         issues = validate(w, kinds)
         if issues:

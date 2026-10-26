@@ -397,9 +397,16 @@ class LimitsTuning(_Section):
     demo_check_s: float = 60.0  # how often the app stops the cameras of sandboxes that ended
     demo_processes: int = 1  # camera processes of their own for sandbox cameras, so the demo never slows a society
     demo_live_cameras: int = 6  # visitors' own cameras analysed at once across every sandbox
+    demo_live_per_sandbox: int = 1  # and at once in one sandbox
+    demo_live_per_network: int = 2  # and at once from the sandboxes of one network (IPv4 /24, IPv6 /48)
+    demo_live_max_min: float = 10.0  # at the cap, a visitor's camera live this long makes way for a newcomer
+    demo_idle_sender_s: float = 60.0  # a visitor's camera that sends no picture this long is closed
     demo_loop_idle_s: float = 2.0  # a shared demo clip rests when no camera has read it for this long
     telegram_previews_kept: int = 64  # Telegram stills made for incident pages, kept in memory
     example_kb: int = 8192  # largest picture of a zone's state a member may upload
+    societies_per_user: int = 3  # societies one person may make (each has its own AI allowance a day)
+    body_kb: int = 1024  # largest request body, except the routes that take pictures or a video (api/bodylimit.py)
+    image_max_pixels: int = 40_000_000  # an uploaded picture with more pixels is refused before it is decoded
 
 
 class PushTuning(_Section):
@@ -408,6 +415,7 @@ class PushTuning(_Section):
     width: int = 960  # a device sends frames at most this wide
     quality: float = 0.72  # JPEG quality a device encodes with, 0 to 1
     max_frame_kb: int = 1024  # a bigger frame is dropped
+    max_frame_pixels: int = 3840 * 2160  # and one whose header says more pixels than this, before it is decoded
     max_fps: float = 12.0  # frames arriving faster than this are dropped
     recheck_s: float = 15.0  # an open socket checks its device token or membership again this often
     face_width: int = 320  # the browser looks for faces (YuNet in OpenCV.js) on a copy this wide

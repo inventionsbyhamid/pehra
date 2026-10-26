@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Literal
 
-from watchful.agent.compiler import mentions_age, neutral_text
+from watchful.agent.compiler import Names, about_age, age_left_out, age_safe_summary
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
 from watchful.agent.prompting import parse_json, plain, render
 from watchful.agent.tools import TERMINAL, TOOLS, ToolContext, describe_tools, run_tool
@@ -65,15 +65,53 @@ def _opening(c: Candidate, ctx: ToolContext) -> tuple[str, list[str]]:
     return "\n".join(lines), refs
 
 
-def _places(ctx: ToolContext) -> list[str]:
-    """The society's zone and line names (this camera's among them): places, never read as an age in a summary."""
+def _places(ctx: ToolContext) -> Names:
+    """The society's zone and line names (this camera's among them) and its staff names: places and names, never
+    read as an age in a summary."""
     try:
-        return sorted({z.name for cam in ctx.repo.list_cameras() for z in cam.zones})
-    except Exception:  # a summary is still made safe without them; place names may then be changed
-        return []
+        places = sorted({z.name for cam in ctx.repo.list_cameras() for z in cam.zones})
+    except Exception:  # a summary is still checked without them; it may then be replaced when it names a place
+        places = []
+    try:
+        people = [e.name for e in ctx.repo.list_enrollments()]
+    except Exception:
+        people = []
+    return Names(places, people)
 
 
-def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadline_s: float = 45) -> Verdict:
+def scrub(trace: list[TraceStep], about) -> None:
+    """The stored trace says nothing about anyone's age either: each text in it that is about age is left out."""
+    def clean(value):
+        if isinstance(value, str):
+            return age_left_out() if about(value) else value
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [clean(v) for v in value]
+        return value
+    for t in trace:
+        t.why, t.args = clean(t.why), clean(t.args)
+
+
+def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadline_s: float = 45,
+           meaning=None) -> Verdict:
+    """The AI checks one flagged moment. What it says about anyone's age never reaches a person: a summary or reason
+    about age (by the words, or by the meaning check with place names taken out) becomes the plain verdict, and the
+    trace's texts about age are left out. `meaning` is the meaning check; None is the process's own."""
+    places: Names | None = None
+
+    def about(words: str) -> bool:
+        nonlocal places
+        if places is None:
+            places = _places(ctx)
+        return about_age(words, places, meaning)
+
+    v = _verify(c, ctx, llm, max_steps, deadline_s, about)
+    scrub(v.trace, about)
+    return v
+
+
+def _verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int, deadline_s: float, about) -> Verdict:
     if c.evidence.get("method") == "face":
         return Verdict("measured", f"{c.watch_name}: recognised by face.")
     if c.evidence.get("method") == "camera":
@@ -116,15 +154,13 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
                 # it needs an age, which is never judged: a person sees the moment, unchecked, and no age is stated
                 return Verdict("unverified", plain(f"{c.watch_name}: the AI can't judge this, it would need an age."),
                                trace)
-            places = _places(ctx)
-
-            def safe(words: str) -> str:  # the agent never states anyone's age or calls anyone a child
-                return neutral_text(words, places) if mentions_age(words, places) else words
-            summary = safe(summary)
             status = {"raise_alert": "alert", "dismiss": "dismissed", "ask_human": "awaiting_human"}[tool]
             grade = str(args.get("severity") or "").strip().lower()
-            if tool == "raise_alert" and grade in GRADES:
-                return Verdict(status, summary, trace, grade, safe(plain(str(args.get("reason") or ""))))
+            reason = plain(str(args.get("reason") or "")) if tool == "raise_alert" and grade in GRADES else ""
+            if about(summary) or about(reason):  # fail closed: the verdict stands, the words about anyone go
+                summary, reason = age_safe_summary(status, c.watch_name), ""
+            if reason or (tool == "raise_alert" and grade in GRADES):
+                return Verdict(status, summary, trace, grade, reason)
             return Verdict(status, summary, trace)
         result = run_tool(ctx, tool, args)
         trace.append(TraceStep(n, tool, args, why, result.text, int((time.monotonic() - t0) * 1000)))

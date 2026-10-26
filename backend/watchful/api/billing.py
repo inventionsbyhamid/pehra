@@ -104,7 +104,7 @@ def summary(ctx, ws_id: str, provider, user=None, now: datetime | None = None) -
         "staff": {"enrolled": len(repo.list_enrollments()), "allowed": plan.limits.enrolled_staff},
         "can_checkout": not live and provider.payments and not ws.demo,
         "can_change_cameras": paid and paying(ws, now) and not ws.subscription_ends_at and plan.per_camera and
-        provider.payments and not ws.demo,
+        provider.payments and not ws.demo and payer,
         "can_manage": bool(ws.polar_customer_id or ws.subscription_id) and provider.payments and not ws.demo and payer,
         "payer": payer,
         "payments": provider.payments,
@@ -274,6 +274,7 @@ def make_router(ctx, provider, plans: PlanWatch) -> APIRouter:
     @router.post("/api/billing/cameras")
     def change_cameras(body: CamerasIn, member: CurrentMember = Depends(billing_member("owner"))):
         ws = workspace(member)
+        payer_only(ws, member)  # the card charged is the payer's: no other owner changes what it pays
         ent = entitlement(ws)
         if ent.source != "paid" or not ent.plan.per_camera or not subscription_live(ws):
             raise HTTPException(409, "There is no paid plan to change. Choose a plan first.")

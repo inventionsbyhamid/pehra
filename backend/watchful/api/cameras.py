@@ -7,12 +7,12 @@ device link, or the bridge, whose address on the society's network is kept only 
 Demo cameras come only from scripts/seed_demo.py, and the server opens local clips only inside their own folders."""
 import json
 import subprocess
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import cv2
-import numpy as np
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
@@ -33,10 +33,12 @@ from watchful.rules.watch import Watch
 from watchful.rules.zonestate import example_key, is_night, picture_loads
 from watchful.store.db import Camera, new_id
 from watchful.tuning import load_tuning
+from watchful.vision.decode import TooManyPixels, decode_image
 from watchful.vision.zones import Zone
 
 
 USER_KINDS = {"stream", "webcam"}  # what a member may add; demo cameras come only from the seed script
+STILLS_KEPT = 64  # clip stills kept in memory: the demo's clips and recent uploads
 
 
 class NvrIn(BaseModel):
@@ -161,8 +163,9 @@ def make_router(ctx) -> APIRouter:
     def patch_camera(camera_id: str, body: CameraPatch, member: CurrentMember = Depends(require_role("admin"))):
         r = repo(member)
         cam = camera_or_404(r, camera_id)
+        readers_change = body.readers is not None and set(body.readers) != set(cam.readers or [])
         if refused := demo_rules.sandbox_patch(member.workspace, cam.kind, body.zones is not None,
-                                               body.tuning is not None):
+                                               body.tuning is not None, readers_change):
             raise HTTPException(403, refused)
         purpose = _purpose(body.purpose)  # every check before anything is written
         if body.zones is not None:
@@ -235,33 +238,48 @@ def make_router(ctx) -> APIRouter:
     def camera_frame(camera_id: str, member: CurrentMember = Depends(current_member)):
         return Response(frame(camera_or_404(repo(member), camera_id)), media_type="image/jpeg")
 
+    stills: dict[tuple[str, float], bytes] = {}  # a clip's still, made once per clip (and again if the file changes)
+    stills_lock = threading.Lock()
+
+    def clip_still(url: str) -> bytes | None:
+        try:
+            key = (url, Path(url).stat().st_mtime)
+        except OSError:
+            return None
+        with stills_lock:
+            if key in stills:
+                return stills[key]
+            cap = cv2.VideoCapture(url)
+            cap.set(cv2.CAP_PROP_POS_MSEC, 1000)
+            ok, image = cap.read()
+            cap.release()
+            if not ok or image is None:
+                return None
+            if len(stills) >= STILLS_KEPT:
+                stills.pop(next(iter(stills)))
+            stills[key] = cv2.imencode(".jpg", image)[1].tobytes()
+            return stills[key]
+
     def frame(cam: Camera) -> bytes:
-        image = None
         if cam.kind == "webcam":
             latest = hub.latest(cam.id)
             if latest is None:
                 raise HTTPException(404, "No picture from this camera yet.")
             return latest[1]
         if cam.kind in ("file", "demo") and cam.url:
-            if not inside(cam.url, clip_roots(ctx.settings.data_dir)):
+            if not inside(cam.url, clip_roots(ctx.settings.data_dir)) or (still := clip_still(cam.url)) is None:
                 raise HTTPException(404, "No picture from this camera yet.")
-            cap = cv2.VideoCapture(cam.url)
-            cap.set(cv2.CAP_PROP_POS_MSEC, 1000)
-            ok, image = cap.read()
-            cap.release()
-        else:
-            sub = manager.subscribe(cam.id)
-            try:
-                deadline = time.time() + 5
-                while time.time() < deadline:
-                    msg = sub.get(1.0)
-                    if msg and msg.get("type") == "frame":
-                        return msg["jpeg"]
-            finally:
-                manager.unsubscribe(cam.id, sub)
-        if image is None:
-            raise HTTPException(404, "No picture from this camera yet.")
-        return cv2.imencode(".jpg", image)[1].tobytes()
+            return still
+        sub = manager.subscribe(cam.id)
+        try:
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                msg = sub.get(1.0)
+                if msg and msg.get("type") == "frame":
+                    return msg["jpeg"]
+        finally:
+            manager.unsubscribe(cam.id, sub)
+        raise HTTPException(404, "No picture from this camera yet.")
 
     @router.post("/api/cameras/{camera_id}/zones/{zone_id}/examples")
     def add_state_example(camera_id: str, zone_id: str, state: str = Form(...), file: UploadFile | None = File(None),
@@ -277,9 +295,12 @@ def make_router(ctx) -> APIRouter:
         data = file.file.read(limit + 1) if file is not None else frame(cam)
         if len(data) > limit:
             raise HTTPException(413, f"That picture is larger than {ctx.tuning.limits.example_kb // 1024} MB.")
-        image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+        try:
+            image = decode_image(data, ctx.tuning.limits.image_max_pixels)
+        except TooManyPixels:
+            raise HTTPException(400, "That picture has too many pixels. Use a smaller one.") from None
         if image is None:
-            raise HTTPException(400, "That picture can't be read.")
+            raise HTTPException(400, "That picture can't be read. Use a JPEG or PNG picture.")
         period = "night" if is_night(image, ctx.tuning.zones) else "day"
         key = example_key(member.workspace.id, cam.id, zone_id, period, time.time())
         ctx.blobs.put(key, cv2.imencode(".jpg", image)[1].tobytes(), "image/jpeg")

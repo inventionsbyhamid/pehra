@@ -54,3 +54,21 @@ def needed(watch, camera) -> list[dict]:
     have = set(attributes_of(camera))
     return [{"reader": name, "label": r["label"]} for name, r in readers().items()
             if any(a in r["attributes"] and a not in have for a in wanted)]
+
+
+def entry_purposes() -> list[str]:
+    """The camera purposes where anyone is told apart by face (the staff register's, readers.json): entries only."""
+    return list(readers()[FACES].get("purposes") or [])
+
+
+def entry_camera(purpose: str | None) -> bool:
+    """Whether a camera with this purpose may match faces at all: a watch about who someone is (known, unknown or one
+    staff member), a person lookout, or a device sending with faces. Anywhere else (a pool, a play area) faces stay
+    blurred and nobody is matched."""
+    return (purpose or "") in entry_purposes()
+
+
+def entry_words() -> str:
+    """The entry purposes in plain words: main gate, service gate or lobby."""
+    names = entry_purposes()
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]

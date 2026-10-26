@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
 from watchful.agent.meaning import default_meaning
 from watchful.agent.prompting import parse_json, render
+from watchful.logs.readers import entry_camera, entry_words
 from watchful.rules.engine import STAY_PROBLEM, validate
 from watchful.rules.presets import describe
 from watchful.rules.signals import REGISTRY, TIERS, catalog, worse
@@ -72,9 +73,18 @@ class CompileContext:
         return list(self.zones) + list(self.lines)
 
     @property
-    def place_names(self) -> list[str]:
-        """Names that are only places, whatever words they hold (a kids play area)."""
-        return self.names + list(self.places)
+    def place_names(self) -> "Names":
+        """Names that are only places, whatever words they hold (a kids play area), and the enrolled staff's names,
+        which are only names (Munna, Kishore)."""
+        return Names(self.names + list(self.places), self.people.values())
+
+
+class Names(list):
+    """Zone and line names, which are only places; `people` are enrolled staff names, which are only names."""
+
+    def __init__(self, places=(), people=()):
+        super().__init__(places)
+        self.people = [str(p) for p in people if str(p or "").strip()]
 
 
 @dataclass
@@ -99,29 +109,76 @@ def _words() -> dict:
     return json.loads((DATA / "compile.json").read_text())
 
 
-def _nfc(text) -> str:
-    return unicodedata.normalize("NFC", str(text))
+_INDIC = "\u0900-\u0dff"  # Devanagari to Malayalam: letters and the vowel signs and marks words are made of
+_ARABIC = "\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff"
+_WORDCH = rf"[\w{_INDIC}{_ARABIC}]"  # a character that can be part of a word in any script the guard reads
+_FOLD = {**dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00ad"), None),  # zero width, soft hyphen
+         **dict.fromkeys(map(ord, "\u094d\u09cd\u0a4d\u0acd\u0b4d\u0bcd\u0c4d\u0ccd\u0d4d"), None),  # viramas
+         **dict.fromkeys(map(ord, "\u093c\u09bc\u0a3c\u0abc\u0b3c\u0cbc"), None),  # nuktas
+         **{ord(a): b for a, b in zip("\u0901\u0981\u0a01\u0a81\u0c01", "\u0902\u0982\u0a02\u0a82\u0c02")},
+         **{ord(a): b for a, b in zip("\u064a\u0649\u0643\u0647\u0629\u06c0", "\u06cc\u06cc\u06a9\u06c1\u06c1\u06c1")},
+         **{ord(c): str(unicodedata.digit(c))  # digits of the Indic and Arabic scripts
+            for zero in (0x660, 0x6f0, 0x966, 0x9e6, 0xa66, 0xae6, 0xb66, 0xbe6, 0xc66, 0xce6, 0xd66)
+            for c in map(chr, range(zero, zero + 10))}}
+_SEPARATED = re.compile(r"(?<=[^\W\d_])[-\u2010-\u2015_.\u00b7\u2022*~/\\|]+(?=[^\W\d_])")  # a CH-ILD, a k.i.d
+_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][ \t]){2,}[^\W\d_](?![^\W\d_])")  # c h i l d
+
+
+def _fold(text) -> str:
+    """One form for every way the same word can be written: NFKC (fullwidth ｃｈｉｌｄ), digits of any script as 0 to 9,
+    Indic viramas and nuktas dropped and chandrabindu read as anusvara (बचचा is बच्चा, लडकी is लड़की), one form of the
+    Arabic script letters Urdu is typed with, and no zero width characters."""
+    return unicodedata.normalize("NFKC", str(text)).translate(_FOLD)
+
+
+def _join(m: re.Match) -> str:
+    letters = m.group(0).split()
+    if len(letters) > 3 and letters[0].lower() in ("a", "i"):  # "a k i d" is the article and a word
+        return letters[0] + " " + "".join(letters[1:])
+    return "".join(letters)
+
+
+def _norm(text) -> str:
+    """Text as the age check reads it: folded, separators inside a word dropped (a CH-ILD, a k-i-d) and spaced out
+    single letters joined (c h i l d)."""
+    return _SPACED.sub(_join, _SEPARATED.sub("", _fold(text)))
+
+
+_nfc = _norm  # the name earlier rounds used
 
 
 def _alternation(words) -> str:
-    return "|".join(re.escape(_nfc(w)) for w in sorted(words, key=len, reverse=True))
+    return "|".join(re.escape(w) for w in sorted({_norm(w) for w in words}, key=len, reverse=True))
+
+
+def _parts(pattern: str) -> str:
+    """An age pattern with its <NAME> parts (data age_pattern_parts, and <PLACE>) written out."""
+    parts = {**_words()["age_pattern_parts"], "PLACE": "(?:" + _alternation(_words()["place_words"]) + ")"}
+    return _fold(re.sub(r"<([A-Z]+)>", lambda m: parts[m.group(1)], pattern))
 
 
 @lru_cache
 def _age_pattern() -> re.Pattern:
-    """Age words and phrases (child, a minor, bachcha in Latin script or Devanagari, school uniform), explicit ages
-    written with numbers or number words (7-year-old, seven year-old, 8 yrs) and heights standing in for age (shorter
-    than 4 feet)."""
-    return re.compile(r"\b(?:(?:a|an|the|some|any)\s+)?(" + "|".join(_words()["age_patterns"]) + "|"
-                      + _alternation(_words()["age_terms"]) + r")(?!\w)", re.I)
+    """Age words and phrases (child, a minor, bachcha in Latin script or Devanagari, मुलगी, குழந்தைகள், school
+    uniform), ages written out with numbers or number words (7-year-old, 8 yrs, someone under 18, a person about 7,
+    पाँच साल का) and heights standing in for age (shorter than 4 feet, a person 110cm, shorter than the railing).
+    Words in age_stems also match with any ending."""
+    words = _words()
+    edge = rf"(?<!{_WORDCH})"
+    return re.compile(edge + r"(?:(?:a|an|the|some|any)\s+)?((?:" + "|".join(_parts(p) for p in words["age_patterns"])
+                      + "|" + _alternation(words["age_terms"]) + rf")(?!{_WORDCH})|" + _alternation(words["age_stems"])
+                      + ")", re.I)
 
 
 @lru_cache
 def _place_name() -> re.Pattern:
     """A name that is only a place: an age word directly before place words and nothing else (kids play area, toddler
-    pool, girls toilet, children's park)."""
-    return re.compile(r"(?:the\s+)?(?:" + _alternation(_words()["age_terms"]) + r")(?:['\u2019]s|s?['\u2019])?"
-                      r"(?:\s+(?:" + _alternation(_words()["place_words"]) + r"))+", re.I)
+    pool, girls toilet, children's park, बच्चों का पार्क), with perhaps a number or letter after (kids play area 2)."""
+    words = _words()
+    return re.compile(r"(?:the\s+)?(?:" + _alternation(words["age_terms"]) + r")(?:['\u2019]?s|s?['\u2019])?"
+                      r"(?:\s+(?:" + _alternation(words["possessives"]) + r"))?"
+                      r"(?:\s+(?:" + _alternation(words["place_words"]) + r"))+"
+                      r"(?:\s*[-#]?\s*(?:no\.?\s*)?(?:\d{1,3}[a-z]?|[a-z]))?", re.I)
 
 
 def place_phrases(names) -> list[str]:
@@ -131,8 +188,8 @@ def place_phrases(names) -> list[str]:
     and can't hide an age."""
     out = []
     for name in names:
-        name = _nfc(name or "").strip()
-        if name and _age_pattern().search(name) and _place_name().fullmatch(re.sub(r"\s+", " ", name)):
+        name = re.sub(r"\s+", " ", _norm(name or "")).strip()
+        if name and _age_pattern().search(name) and _place_name().fullmatch(name):
             out.append(name)
     return out
 
@@ -151,10 +208,24 @@ def _mask(text: str, names=()) -> tuple[str, list[str]]:
         found.append(m.group(0))
         return f"\x00{len(found) - 1}\x00"
 
-    text = _nfc(text)
-    for phrase in sorted({*place_phrases(names), *_words()["not_age_phrases"]}, key=len, reverse=True):
-        text = re.sub(r"(?<!\w)" + re.escape(phrase).replace(r"\ ", r"\s+") + r"(?!\w)", keep, text, flags=re.I)
+    text = _norm(text)
+    people = {_norm(p) for p in getattr(names, "people", ())}
+    for phrase in sorted({*place_phrases(names), *people, *map(_norm, _words()["not_age_phrases"])}, key=len,
+                         reverse=True):
+        text = re.sub(rf"(?<!{_WORDCH})" + re.escape(phrase).replace(r"\ ", r"\s+") + rf"(?!{_WORDCH})", keep, text,
+                      flags=re.I)
     return text, found
+
+
+def without_places(text: str, names=()) -> str:
+    """Text with every zone and line name, and every staff name, swapped for a plain stand in, so the meaning check
+    reads what is said about people, not what a place is called (the kids pool)."""
+    out = _norm(text)
+    for name in sorted({_norm(n) for n in [*names, *getattr(names, "people", ())] if str(n or "").strip()}, key=len,
+                       reverse=True):
+        out = re.sub(rf"(?<!{_WORDCH})" + re.escape(name).replace(r"\ ", r"\s+") + rf"(?!{_WORDCH})", "the place", out,
+                     flags=re.I)
+    return out
 
 
 def _unmask(text: str, found: list[str]) -> str:
@@ -222,6 +293,36 @@ def looks_check(ctx: CompileContext) -> Callable[[str], bool]:
             log.warning("the meaning check could not run, so a look text was refused", exc_info=True)
             return True
     return about_age
+
+
+def about_age(text, names=(), meaning: Callable[[str], bool] | None = None) -> bool:
+    """Whether words people will read (an AI summary, an answer, a search caption) are about age or children: the
+    words, then the meaning check on them with the society's place and staff names taken out (the kids pool is a
+    place). Fails closed: if the meaning check can't run, they are."""
+    if not str(text or "").strip():
+        return False
+    if mentions_age(text, names):
+        return True
+    try:
+        return bool((meaning or default_meaning())(without_places(str(text), names)))
+    except Exception:
+        log.warning("the meaning check could not run, so a text was taken as about age", exc_info=True)
+        return True
+
+
+def age_safe_summary(status: str, watch_name: str) -> str:
+    """What an AI check's summary becomes when it was about age: what the check decided, and nothing about anyone."""
+    said = _words()["age_safe_summaries"]
+    return said.get(status, said["alert"]).format(watch=watch_name or "This watch")
+
+
+def age_left_out() -> str:
+    return _words()["age_left_out"]
+
+
+def age_reason() -> str:
+    """The plain words every refusal about age uses."""
+    return _words()["age_reason"]
 
 
 def _strip_age(w: dict, names=(), looks: Callable[[str], bool] = mentions_age) -> tuple[dict | None, list[str]]:
@@ -329,6 +430,7 @@ def _coverage(w: Watch, given, ctx: CompileContext) -> list[Coverage]:
         tier = tier if tier in TIERS else "B"
         spec = REGISTRY.get(signal)
         caveat = str(item.get("caveat") or "")
+        caveat = "" if mentions_age(caveat, ctx.place_names) else caveat
         if spec is not None:
             tier, caveat = worse(tier, spec.tier), caveat or spec.caveat
         out.append(Coverage(str(item.get("clause") or signal), signal, tier, caveat))
@@ -392,9 +494,15 @@ def _finish(cannot: list[Cannot], text: str, age: bool, removed: list[str], name
         phrase = _age_phrase(text, names) or next((p for r in removed if (p := _age_phrase(r, names))), None)
         cannot.append(Cannot(phrase or "age", words["age_reason"], words["age_alternative"]))
     for c in cannot:
-        if mentions_age(c.clause, names):
+        if mentions_age(c.clause, names) or mentions_age(c.reason, names):
             c.reason = words["age_reason"]
     return cannot
+
+
+def is_age_cannot(c, names=()) -> bool:
+    """A Cannot (or one as a card sends it back) about age: a watch with one is never saved."""
+    get = c.get if isinstance(c, dict) else lambda k: getattr(c, k, "")
+    return str(get("reason") or "") == _words()["age_reason"] or mentions_age(get("clause"), names)
 
 
 def context_for(repo, cam, night_ir: bool = True, attributes: list[str] = ()) -> CompileContext:
@@ -455,6 +563,13 @@ def _build(data: dict, text: str, ctx: CompileContext, from_ai: bool = True) -> 
     who = watch.subject.who
     if who not in ("anyone", "unknown", "known") and who not in ctx.people:
         raise Invalid([f"who must be anyone, unknown, known or one of {sorted(ctx.people)}, not {who}"])
+    if who != "anyone" and not entry_camera(ctx.purpose):  # faces are matched on entry cameras only
+        if not from_ai:
+            raise Invalid([words["faces_entry_problem"].format(entries=entry_words())])
+        clause = ctx.people.get(who) or {"known": "staff", "unknown": "people not on the staff list"}[who]
+        cannot.append(Cannot(clause, words["faces_entry_reason"].format(entries=entry_words()),
+                             words["faces_entry_alternative"]))
+        watch.subject.who = "anyone"
     missing = _fix_names(watch, ctx)
     problems = validate(watch, {**_kinds(ctx), **dict.fromkeys(missing)}) + _contradictions(watch)
     if problems:
@@ -481,7 +596,18 @@ def check_age(spec: dict, ctx: CompileContext) -> None:
     rest = {k: v for k, v in spec.items() if k not in ("name", "verify", "conditions", "subject")}
     subject = {k: v for k, v in (spec.get("subject") or {}).items() if k not in ("looks_like", "same_as")}
     if removed or mentions_age(json.dumps([rest, subject], ensure_ascii=False), names):
-        raise Invalid(["no watch may be about anyone's age"])
+        raise Invalid([AGE_PROBLEM])
+
+
+AGE_PROBLEM = "no watch may be about anyone's age"
+
+
+def check_faces(spec: dict, ctx: CompileContext) -> None:
+    """Raises Invalid when a watch about to be saved is about who someone is (known, unknown or one staff member) on
+    a camera that is not an entry: a preset filled in, a lookout for a person."""
+    who = str((spec.get("subject") or {}).get("who") or "anyone")
+    if who != "anyone" and not entry_camera(ctx.purpose):
+        raise Invalid([_words()["faces_entry_problem"].format(entries=entry_words())])
 
 
 def check_watch(spec: dict, text: str, ctx: CompileContext, coverage=(), cannot=(), setup=()) -> CompileResult:
@@ -490,13 +616,19 @@ def check_watch(spec: dict, text: str, ctx: CompileContext, coverage=(), cannot=
     again rather than trusted (the card's own setup tasks pass the same filter as the AI's). Raises Invalid with
     plain problems."""
     check_age(spec, ctx)
+    names = ctx.place_names
+    if mentions_age(text, names) or any(is_age_cannot(c, names) for c in cannot or []):
+        raise Invalid([AGE_PROBLEM])  # the card showed a Cannot about age: never saved, whatever the client sends
     try:
-        return _build({"watch": spec, "coverage": list(coverage), "cannot": list(cannot), "setup": list(setup)}, text,
-                      ctx, from_ai=False)
+        result = _build({"watch": spec, "coverage": list(coverage), "cannot": list(cannot), "setup": list(setup)},
+                        text, ctx, from_ai=False)
     except Invalid:
         raise
     except (ValueError, KeyError, TypeError, ValidationError) as e:
         raise Invalid([_explain(e)]) from e
+    if any(is_age_cannot(c, names) for c in result.cannot):
+        raise Invalid([AGE_PROBLEM])
+    return result
 
 
 def compile_watch(text: str, ctx: CompileContext | list[str], llm: LLM,

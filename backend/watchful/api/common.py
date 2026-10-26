@@ -38,8 +38,10 @@ def redact_url(url: str | None) -> str | None:
 
 
 def alert_json(blobs, a) -> dict:
-    """An alert with a picture link that works on any storage (signed local links or presigned S3)."""
-    return {**asdict(a), "keyframe_url": blobs.url(a.keyframe_key) if a.keyframe_key else None}
+    """An alert with a picture link that works on any storage (signed local links or presigned S3). The AI's trace
+    stays on the server: no page shows it."""
+    return {**{k: v for k, v in asdict(a).items() if k != "trace"},
+            "keyframe_url": blobs.url(a.keyframe_key) if a.keyframe_key else None}
 
 
 def camera_json(manager, cam: Camera) -> dict:

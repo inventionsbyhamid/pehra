@@ -15,7 +15,11 @@ GET /api/incidents/{id}/telegram is the message the society's Telegram group get
 
 SandboxWatch stops the cameras of sandboxes that ended (and of ones the reset deleted), closes their devices,
 forgets the parts the app kept of deleted ones, and makes the demo clips' timelines once in the background.
-live_refusal caps the visitors' own cameras analysed at once across the demo (limits.demo_live_cameras)."""
+live_refusal caps the visitors' own cameras analysed at once: limits.demo_live_per_sandbox per sandbox,
+limits.demo_live_per_network per network the sandboxes were started from, and limits.demo_live_cameras across the demo.
+At that cap the sender live longest, once past limits.demo_live_max_min, makes way for the newcomer, and api/live.py
+closes a visitor's sender that sends no picture for limits.demo_idle_sender_s, so nobody holds the demo's camera
+slots for a day."""
 import base64
 import logging
 import threading
@@ -36,7 +40,7 @@ from watchful.alerts import telegram
 from watchful.api.common import LIVE_KINDS
 from watchful.auth.deps import CurrentMember, current_member, current_user
 from watchful.db import models as m
-from watchful.ingest.push import CLOSE_OFF, push_parts
+from watchful.ingest.push import CLOSE_BUSY, CLOSE_OFF, push_parts
 from watchful.ratelimit import TooManyTries, client_ip, client_key, network_key
 
 log = logging.getLogger(__name__)
@@ -78,21 +82,49 @@ def sandbox_cameras(db, workspace_ids: list[str]) -> list[tuple[str, str, bool]]
                               .where(m.Camera.workspace_id.in_(workspace_ids))))
 
 
+MADE_WAY = "Another visitor is trying the demo, so this camera stopped after its turn. Start it again in a few minutes."
+
+
+def networks(db, workspace_ids) -> dict[str, str | None]:
+    """The network each sandbox was started from (its demo.start audit row), by society id."""
+    with db.tx() as s:
+        rows = s.execute(select(m.Audit.workspace_id, m.Audit.data).where(m.Audit.action == "demo.start",
+                                                                         m.Audit.workspace_id.in_(list(workspace_ids))))
+        return {ws: (data or {}).get("network") for ws, data in rows}
+
+
 def live_refusal(ctx, camera) -> str | None:
-    """Words refusing a visitor's own camera when limits.demo_live_cameras of them are already sending across every
-    sandbox (each is analysed live), else None; a real society's camera is never refused here."""
+    """Words refusing a visitor's own camera, else None; a real society's camera is never refused here. Refused when
+    the visitor's sandbox already has limits.demo_live_per_sandbox cameras sending, or their network
+    limits.demo_live_per_network, or the whole demo limits.demo_live_cameras and nobody has been live for
+    limits.demo_live_max_min yet. Past that, the sender live longest is closed (MADE_WAY) and the newcomer goes in."""
     if camera.kind != "webcam" or not demo_rules.is_sandbox(ctx.db, camera.workspace_id):
         return None
     hub, _ = push_parts(ctx)
+    t = ctx.tuning.limits
     with ctx.db.tx() as s:
-        own = list(s.scalars(select(m.Camera.id).join(m.Workspace, m.Workspace.id == m.Camera.workspace_id)
+        own = list(s.execute(select(m.Camera.id, m.Camera.workspace_id)
+                             .join(m.Workspace, m.Workspace.id == m.Camera.workspace_id)
                              .where(m.Workspace.demo == demo_rules.SANDBOX, m.Camera.kind == "push",
                                     m.Camera.id != camera.id)))
-    live = sum(1 for cid in own if hub.sending(cid))
-    cap = ctx.tuning.limits.demo_live_cameras
-    if live >= cap:
-        return f"The demo is busy: {cap} visitors' cameras are live now. Try again in a few minutes."
-    return None
+    live = [(cid, ws) for cid, ws in own if hub.sending(cid)]
+    if sum(1 for _, ws in live if ws == camera.workspace_id) >= t.demo_live_per_sandbox:
+        return "The demo shows one of your cameras at a time. Stop the other one first, then start this one."
+    nets = networks(ctx.db, {ws for _, ws in live} | {camera.workspace_id})
+    here = nets.get(camera.workspace_id)
+    if here and sum(1 for _, ws in live if nets.get(ws) == here) >= t.demo_live_per_network:
+        return (f"Your network already has {t.demo_live_per_network} cameras live in the demo. Stop one of them "
+                "first, then start this one.")
+    if len(live) < t.demo_live_cameras:
+        return None
+    now, turn = time.time(), t.demo_live_max_min * 60
+    senders = [(getattr(x, "since", now), x) for cid, _ in live for x in hub.senders(cid)]
+    done = [(since, x) for since, x in senders if now - since >= turn and hasattr(x, "close")]
+    if done:
+        min(done, key=lambda d: d[0])[1].close(CLOSE_BUSY, MADE_WAY)  # the longest live makes way
+        return None
+    return (f"The demo is busy: {t.demo_live_cameras} visitors' cameras are live now. Try again in a few "
+            "minutes.")
 
 
 class Stills:

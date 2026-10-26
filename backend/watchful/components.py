@@ -73,7 +73,7 @@ def make_llm(settings: Settings, repo, task: str = "verify"):
     inner = build("llm", settings.ai_provider, settings=settings, model=model)
     return sandbox_llm(inner, repo, settings, task) or \
         LimitedLLM(inner, repo, lambda: daily_ai_cap(repo, settings.ai_daily_call_limit, kind), task,
-                   used=lambda: ai_used(repo, kind))
+                   used=lambda: ai_used(repo, kind), total=settings.ai_total_daily)
 
 
 def make_billing(settings: Settings, tuning: Tuning | None = None):

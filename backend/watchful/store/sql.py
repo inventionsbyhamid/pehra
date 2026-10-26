@@ -7,7 +7,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import fields
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -509,6 +509,13 @@ class SqlRepository:
     def record_ai_call(self, task: str = "ai") -> None:
         with self.tx() as s:
             s.add(m.AiCall(workspace_id=self.workspace_id, task=task))
+
+    def count_all_ai_calls(self, within_s: float) -> int:
+        """AI requests of every society together in the last within_s seconds (the deployment's cap,
+        AI_TOTAL_DAILY)."""
+        since = m.utcnow() - timedelta(seconds=within_s)
+        with self.tx() as s:
+            return s.scalar(select(func.count()).select_from(m.AiCall).where(m.AiCall.ts >= since)) or 0
 
     def count_ai_calls_today(self) -> int:
         """AI requests since midnight in the society's time zone."""

@@ -11,6 +11,8 @@ User=watchful
 Group=watchful
 EnvironmentFile=/etc/watchful/watchful.env
 Environment=MALLOC_ARENA_MAX=2
+# no picture decodes past 40 megapixels, whatever its header says (the app checks first, vision/decode.py)
+Environment=OPENCV_IO_MAX_IMAGE_PIXELS=40000000
 WorkingDirectory=@APP@/current
 ExecStart=@PYTHON@ @APP@/current/deploy/ssm_env.py -- @PYTHON@ -m watchful.worker
 Restart=always

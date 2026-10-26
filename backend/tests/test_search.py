@@ -11,7 +11,7 @@ from watchful.indexer import index_once
 from watchful.search import SearchQuery, search
 from watchful.store.blobs import LocalBlobStore
 from watchful.store.db import Camera, EventRow, SqliteRepository
-from watchful.vision.faces import ConsentRequired, FaceIndex
+from watchful.vision.faces import FaceIndex
 from watchful.vision.models import sample_path
 
 TZ = "Asia/Kolkata"
@@ -50,7 +50,7 @@ def ev(kind, ts, emb, cam="cam1", tid=None, cls=None, key=f"{WS}/k.jpg"):
 def world(tmp_path):
     repo, blobs = SqliteRepository(tmp_path / "w.db", WS), LocalBlobStore(tmp_path)
     blobs.put(f"{WS}/k.jpg", jpg(np.full((40, 40, 3), 120, np.uint8)), "image/jpeg")
-    repo.add_camera(Camera("cam1", "Gate", "stream", "rtsp://x"))
+    repo.add_camera(Camera("cam1", "Gate", "stream", "rtsp://x", purpose="main gate"))
     repo.add_camera(Camera("cam2", "Kitchen", "stream", "rtsp://y"))
     return repo, blobs
 
@@ -96,22 +96,12 @@ def test_missing_embeddings_are_filled_by_the_indexer(world):
     assert [r.embedding is not None for r in rows] == [True, True, False]
 
 
-def test_photo_with_a_face_needs_consent(world):
-    repo, blobs = world
-    photo = jpg(cv2.imread(str(sample_path("basketball1.png"))))
-    with pytest.raises(ConsentRequired):
-        search(SearchQuery(photo=photo), repo, blobs, Stub(), faces=FaceIndex())
-
-
-def test_photo_finds_the_same_face(world):
-    repo, blobs = world
-    player = cv2.imread(str(sample_path("basketball2.png")))[60:300, 30:150]
-    blobs.put(f"{WS}/p.jpg", jpg(player), "image/jpeg")
-    repo.add_events([ev("track_end", 500, None, tid=9, cls="person", key=f"{WS}/p.jpg"),
-                     ev("track_end", 600, None, tid=10, cls="person")])
-    photo = jpg(cv2.imread(str(sample_path("basketball1.png"))))
-    r = search(SearchQuery(photo=photo, consent=True), repo, blobs, Stub(), faces=FaceIndex())
-    assert [(x.track_id, x.method) for x in r.results] == [(9, "face")]
+def test_there_is_no_search_by_photo():
+    """Nobody is found from a picture of them (final fix A, I4): a query takes words or an enrolled person only."""
+    with pytest.raises(TypeError):
+        SearchQuery(photo=b"\xff\xd8")
+    with pytest.raises(TypeError):
+        SearchQuery(text="x", consent=True)
 
 
 def test_enrolled_person_search(world):
@@ -132,14 +122,6 @@ def test_unindexed_moments_are_reported_not_waited_for(world):
     repo.add_events([ev("scene", 100 + i * 20, None) for i in range(5)])
     r = search(SearchQuery(text="a red car"), repo, blobs, Stub(), cfg=SignalTuning(search_embed_on_demand=2))
     assert "still indexing 3" in (r.problem or "").lower()
-
-
-def test_a_photo_with_a_person_needs_consent_even_without_a_face(world):
-    from watchful.vision.detect import YoloxDetector
-    repo, blobs = world
-    crowd = jpg(cv2.VideoCapture(str(sample_path("vtest.avi"))).read()[1])
-    with pytest.raises(ConsentRequired):
-        search(SearchQuery(photo=crowd), repo, blobs, Stub(), faces=FaceIndex(), detector=YoloxDetector())
 
 
 def test_search_reads_no_other_societys_pictures(world):

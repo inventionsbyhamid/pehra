@@ -6,9 +6,10 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 
+from watchful.agent.compiler import Names, about_age, age_reason, mentions_age
 from watchful.agent.llm import LLM, AIError, AILimitReached, Msg
 from watchful.agent.prompting import parse_json, plain, render
-from watchful.agent.verifier import TraceStep
+from watchful.agent.verifier import TraceStep, scrub
 from watchful.tuning import AppearanceTuning
 from watchful.vision.appearance import TrackSighting, link_tracks
 
@@ -176,8 +177,23 @@ def _ground(a: dict, ctx: AskContext) -> Answer:
     return Answer(text, items[:MAX_ITEMS], confidence)
 
 
+def _names(ctx: AskContext) -> Names:
+    """The society's zone and line names and its staff names: places and names, never read as an age."""
+    try:
+        return Names(sorted({z.name for c in ctx.repo.list_cameras() for z in c.zones}),
+                     [e.name for e in ctx.repo.list_enrollments()])
+    except Exception:
+        return Names()
+
+
 def ask(question: str, camera_id: str | None, ctx: AskContext, llm: LLM, now: float, max_steps: int = 6,
-        deadline_s: float = 45) -> Answer:
+        deadline_s: float = 45, meaning=None) -> Answer:
+    """A question about age or children is refused in plain words before the AI sees it, and an answer about anyone's
+    age is never shown: it becomes the same words, with no moments. `meaning` is the age guard's meaning check on the
+    answer; None is the process's own."""
+    names = _names(ctx)
+    if mentions_age(question, names):
+        return Answer(age_reason(), [], "low")
     start = time.monotonic()
     tools = "\n".join(f"* {d}" for d, _ in TOOLS.values()) + "\n* answer(text, items, confidence): finish"
     stamp = datetime.fromtimestamp(now, ZoneInfo(ctx.tz)).strftime("%A %Y-%m-%d %H:%M:%S")
@@ -199,6 +215,9 @@ def ask(question: str, camera_id: str | None, ctx: AskContext, llm: LLM, now: fl
         if tool == "answer":
             trace.append(TraceStep(n, tool, args, step.get("why", ""), "", int((time.monotonic() - t0) * 1000)))
             answer = _ground(args, ctx)
+            if about_age(answer.text, names, meaning) or any(mentions_age(i.label, names) for i in answer.items):
+                answer = Answer(age_reason(), [], "low")
+            scrub(trace, lambda words: mentions_age(words, names))
             answer.trace = trace
             return answer
         if tool not in TOOLS:
@@ -210,4 +229,5 @@ def ask(question: str, camera_id: str | None, ctx: AskContext, llm: LLM, now: fl
                 result = f"tool failed: {e}"
         trace.append(TraceStep(n, tool, args, step.get("why", ""), result[:2000], int((time.monotonic() - t0) * 1000)))
         messages += [Msg("assistant", raw), Msg("user", f"Result:\n{result[:6000]}")]
+    scrub(trace, lambda words: mentions_age(words, names))
     return Answer("I couldn't answer that right now. Try again in a moment.", [], "low", trace)

@@ -674,4 +674,5 @@ def test_the_verifier_never_judges_age(tmp_path):
     assert v.status == "dismissed"  # only the cannot_judge tool means it needs an age (privacy fix round, B)
     v = verify(cand(), ctx(tmp_path / "c"), FakeLLM([step("raise_alert", summary="A child of about 7 is in the pool.",
                                                          severity="critical", reason="alone")]))
-    assert v.status == "alert" and not mentions_age(v.summary) and v.summary == "Someone is in the pool."
+    assert v.status == "alert" and not mentions_age(v.summary)
+    assert v.summary == "Car enters: the AI check agreed it is real."  # replaced whole (final fix A, I3)

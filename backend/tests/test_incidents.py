@@ -143,11 +143,17 @@ def test_the_agent_grades_severity_with_a_reason(tmp_path, env):
                   "fp", "Gate open late")
     v = verify(c, ctx(tmp_path), FakeLLM([step("raise_alert", summary="The gate is wide open with nobody near.",
                                               severity="Critical", reason="a child is walking towards the road")]))
-    # the reason is read by people too, so it never calls anyone a child either (privacy fix round)
-    assert (v.status, v.severity, v.reason) == ("alert", "critical", "Someone is walking towards the road")
+    # the reason is read by people too, so a reason about a child fails closed: the verdict and grade stand, the
+    # words go (privacy fix round, then final fix A I3)
+    assert (v.status, v.severity, v.reason) == ("alert", "critical", "")
+    assert v.summary == "Gate open late: the AI check agreed it is real."
     inc = inc_.after_check(env.a, c, v, "alt_9", now=at(0))
-    assert inc.severity == "critical" and inc.reason.startswith("The gate is wide open")
-    assert inc.agent_json["why"] == "Someone is walking towards the road"
+    assert inc.severity == "critical" and inc.reason.startswith("Gate open late: the AI check agreed it is real.")
+    assert not inc.agent_json.get("why")
+    v = verify(c, ctx(tmp_path), FakeLLM([step("raise_alert", summary="The gate is wide open with nobody near.",
+                                              severity="Critical", reason="a car is driving out")]))
+    inc = inc_.after_check(env.a, c, v, "alt_10", now=at(700))
+    assert inc.reason.startswith("The gate is wide open") and inc.agent_json["why"] == "a car is driving out"
 
     plain = verify(c, ctx(tmp_path), FakeLLM([step("raise_alert", summary="Open.", severity="loud")]))
     assert plain.severity is None

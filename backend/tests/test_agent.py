@@ -99,7 +99,7 @@ def test_invalid_twice_falls_back(tmp_path):
 
 
 def test_ask_human(tmp_path):
-    v = verify(cand("critical"), ctx(tmp_path), FakeLLM([step("ask_human", question="Call Sana's son?")]))
+    v = verify(cand("critical"), ctx(tmp_path), FakeLLM([step("ask_human", question="Call Sana's husband?")]))
     assert v.status == "awaiting_human" and "Call" in v.summary
 
 

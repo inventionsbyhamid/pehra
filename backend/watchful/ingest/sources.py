@@ -8,6 +8,8 @@ from typing import Literal, Protocol
 import cv2
 import numpy as np
 
+from watchful.vision.decode import TooManyPixels, decode_image
+
 Status = Literal["live", "reconnecting", "refused", "ended"]
 BACKOFF_S = (1, 2, 4, 8, 16, 30)
 
@@ -183,9 +185,11 @@ class StreamSource:
 
 
 class PushSource:
-    """Webcam frames pushed from the browser as JPEG; keeps only the newest."""
+    """Webcam frames pushed from the browser as JPEG; keeps only the newest. A frame whose header says more than
+    max_pixels (Tuning push.max_frame_pixels) is dropped undecoded."""
 
-    def __init__(self, fps: float, width: int = 960):
+    def __init__(self, fps: float, width: int = 960, max_pixels: int = 3840 * 2160):
+        self.max_pixels = max_pixels
         self.step = 1.0 / fps
         self.width = width
         self.status: Status = "live"
@@ -203,7 +207,10 @@ class PushSource:
             f = self._latest.take(left)
             if f is None:
                 return None
-            image = cv2.imdecode(np.frombuffer(f.image, np.uint8), cv2.IMREAD_COLOR)
+            try:
+                image = decode_image(f.image, self.max_pixels)
+            except TooManyPixels:
+                continue
             if image is not None:
                 return Frame(fit_width(image, self.width), f.ts, f.index)
         return None

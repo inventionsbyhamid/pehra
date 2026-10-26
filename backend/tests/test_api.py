@@ -98,7 +98,9 @@ def test_upload_rejects_non_video_and_big_files(app_and_client):
     r = c.post("/api/uploads", files={"file": ("notes.txt", b"hello", "text/plain")})
     assert r.status_code == 400 and "not a video" in r.json()["detail"]
     r = c.post("/api/uploads", files={"file": ("big.mp4", b"0" * (2 * 1024 * 1024), "video/mp4")})
-    assert r.status_code == 400 and "200 MB" not in r.json()["detail"] and "1 MB" in r.json()["detail"]
+    assert r.status_code in (400, 413) and "200 MB" not in r.json()["detail"] and "1 MB" in r.json()["detail"]
+    r = c.post("/api/uploads", files={"file": ("big.mp4", b"0" * (3 * 1024 * 1024), "video/mp4")})
+    assert r.status_code == 413 and r.json()["detail"] == "Videos can be up to 1 MB."  # refused before it is read
 
 
 def test_upload_valid_starts_scan(app_and_client, tmp_path):

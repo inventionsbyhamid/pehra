@@ -10,3 +10,6 @@ object: {"looks_like": "...", "not_like": null, "camera": null, "since": null, "
 * since and until: ts numbers (seconds since 1970) when the search names a time ("this morning", "yesterday after
   6 pm", "last hour"), else null. Today starts at local midnight of the date above.
 * classes: detector classes only when the search is clearly about them ({{classes}}), else [].
+* Age rule: never put anyone's age, size or height in looks_like or not_like, and never describe anyone as a child,
+  a teenager, an adult or an old person. A search for children or an age group can't be done: copy the words as they
+  are into looks_like.

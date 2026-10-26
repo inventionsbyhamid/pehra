@@ -6,8 +6,8 @@ sandbox   one demo visitor's society until its `expires_at`; after that every re
           takes only the writes the demo needs (SANDBOX_ALLOWED, matched by the route's own path, so a prefix in
           front of the app changes nothing) and refuses every other write in plain words. Some allowed routes check
           their body too (the handlers call the helpers below): a camera is this device or a phone, never an address
-          the server would read; no camera tuning; zones and lines only on the visitor's own cameras; search by
-          words, not by a photo or a person."""
+          the server would read; no camera tuning and no readers (plate reading, the staff register); zones and lines
+          only on the visitor's own cameras; search by words, not for a person."""
 import time
 from datetime import datetime
 
@@ -58,8 +58,8 @@ STREAM_OFF = "The demo takes this device or a phone as a camera. Sign in to add 
 TUNING_OFF = "Camera tuning is off in the demo. Sign in to tune your own cameras."
 DEMO_ZONES = "The demo cameras keep their zones. Add your camera to draw your own."
 DEMO_CAMERA_KEPT = "The demo cameras stay. You can remove the cameras you added."
-PHOTO_OFF = "Searching with a photo or for a person is off in the demo, as nobody here has given consent. Search by " \
-            "words instead."
+PHOTO_OFF = "Searching for a person is off in the demo, as nobody here has given consent. Search by words instead."
+READERS_OFF = "Plate reading and the staff register are off in the demo. Sign in to use them with your own cameras."
 
 
 def ended(ws: m.Workspace, now: datetime | None = None) -> bool:
@@ -101,11 +101,13 @@ def sandbox_camera(ws, kind: str) -> str | None:
     return STREAM_OFF if in_demo(ws) and kind != "webcam" else None
 
 
-def sandbox_patch(ws, camera_kind: str, zones: bool, tuning: bool) -> str | None:
+def sandbox_patch(ws, camera_kind: str, zones: bool, tuning: bool, readers: bool = False) -> str | None:
     if not in_demo(ws):
         return None
     if tuning:
         return TUNING_OFF
+    if readers:
+        return READERS_OFF
     if zones and camera_kind != "webcam":
         return DEMO_ZONES
     return None
@@ -115,8 +117,8 @@ def sandbox_delete(ws, camera_kind: str) -> str | None:
     return DEMO_CAMERA_KEPT if in_demo(ws) and camera_kind != "webcam" else None
 
 
-def sandbox_search(ws, photo: bool, person: bool) -> str | None:
-    return PHOTO_OFF if in_demo(ws) and (photo or person) else None
+def sandbox_search(ws, person: bool) -> str | None:
+    return PHOTO_OFF if in_demo(ws) and person else None
 
 
 _KIND: dict[str, bool] = {}  # whether a society is a sandbox, which never changes for its id

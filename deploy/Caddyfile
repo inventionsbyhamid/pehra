@@ -5,6 +5,10 @@
 }
 
 @DOMAIN@ {
+	# no request body larger than an uploaded video (MAX_UPLOAD_MB 200, and its form); the app caps each route itself
+	request_body {
+		max_size 210MB
+	}
 	# live views and camera pushes: WebSockets, not compressed, kept open for a while when Caddy reloads
 	handle /ws/* {
 		reverse_proxy 127.0.0.1:8000 {

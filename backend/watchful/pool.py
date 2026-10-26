@@ -166,7 +166,7 @@ def make_source(camera: Camera, settings: Settings, tuning: Tuning | None = None
     if camera.kind == "file":
         return FileSource(camera.url, fps, realtime=settings.demo_realtime, width=width)
     if camera.kind == "webcam":
-        return PushSource(fps, width)
+        return PushSource(fps, width, (tuning or Tuning()).push.max_frame_pixels)
     return StreamSource(camera.url, fps, width, guard=netguard.guard(settings.allow_private_streams))
 
 
