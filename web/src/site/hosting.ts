@@ -17,5 +17,5 @@ export const storageSecurity = onAws
   : "Traffic to the test server is encrypted, but its files are not yet encrypted at rest.";
 
 export const lockWords = onAws
-  ? "On AWS incident clips are locked with S3 Object Lock until their date."
+  ? "On AWS clips are kept in a private S3 bucket until their date, then deleted."
   : "On the test server the app keeps clips until their date.";
