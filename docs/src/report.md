@@ -911,7 +911,11 @@ when.
   plate is seen again, so a yellow plate can get a false overstay; two overstays at one gate within ten minutes fold
   into one incident naming the first; Telegram stills refresh the enrolled faces every minute, so a deleted person's
   face may stay sharp in a still for up to a minute; a deployment wide AI cap is not built (the caps per society and
-  for the demo are).
+  for the demo are); uploaded recordings get no plate reading; the saved zone state pictures are deleted with footage
+  after the plan's days, though they are settings; the camera pool does not rebalance after cameras are removed; on
+  the test server, which has no egress rule, a pulled camera's RTSP redirect can still send blind requests inside its
+  own network; the Caddy file is validated only on the instance at deploy; the plan limits for AI checks and staff
+  are our call, not measured against cost; the demo's Cloudflare Turnstile check is a hook, off without keys.
 
 ## 12. Limitations
 
