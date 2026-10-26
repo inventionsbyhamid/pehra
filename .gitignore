@@ -9,3 +9,4 @@ __pycache__/
 .superpowers/
 deploy/params.env
 !.env.example
+/eval/clips/
