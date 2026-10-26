@@ -341,7 +341,10 @@ def main(argv: list[str] | None = None) -> None:
     if argv is None and os.environ.get("MALLOC_ARENA_MAX") is None:  # as the systemd units run the app
         os.execve(sys.executable, [sys.executable, *sys.argv], {**os.environ, "MALLOC_ARENA_MAX": "2"})
     import logging
+    import signal
     logging.basicConfig(level=logging.WARNING)
+    # stopped from outside (timeout, kill): unwind, so the camera processes stop with the run and are not left behind
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     os.chdir(ROOT)
     cores = pin_cpus(a.cpus) if hasattr(os, "sched_setaffinity") else []
     cpus = len(cores) or a.cpus or os.cpu_count() or 1
