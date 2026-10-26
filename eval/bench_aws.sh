@@ -3,7 +3,8 @@
 # COOL's Python and then, on the same instance, with stock opencv-python-headless 5.0.0.93 for arm64
 # (deploy/baseline_venv.sh); and c7i.large (x86, Ubuntu 24.04) with stock OpenCV. Both run at once, each benchmark for
 # at most BENCH_MINUTES, and the JSONs come back into eval/results as bench-<setup>.json (c8g_cool, c8g_stock,
-# c7i_stock). It spends money, so it prints the expected cost and starts nothing without --yes-spend. Every instance,
+# c7i_stock) for the app's defaults with a description watch on every camera, and bench-<setup>_no_text.json without
+# that watch (indexing still on), which the dev box showed is the case that fits in 4 GiB. It spends money, so it prints the expected cost and starts nothing without --yes-spend. Every instance,
 # the temporary IAM role and the bucket it makes are deleted when it exits (trap); each instance also powers off, and
 # so terminates, after its hard cap by itself, in case this laptop goes away first.
 #   eval/bench_aws.sh                           the plan and the expected cost; starts nothing
@@ -15,7 +16,7 @@
 # and committed code: git archive HEAD is what runs. (from packsure e97a509 eval/bench_aws.sh)
 set -euo pipefail
 
-BENCH_MINUTES=20  # one setup at most: the run and its --confirm run, warm ups included
+BENCH_MINUTES=25  # one setup at most: both variants, each with its --confirm run, warm ups included
 SETUP_MINUTES=25  # packages, the Python requirements and the models before the first benchmark
 SPARE_MINUTES=10  # booting, uploads and powering off
 VOLUME_GB=40
@@ -99,14 +100,18 @@ PY
       echo "== $setup: deploy/cv2_info.py --require-cool"
       "$PY" "$SRC/deploy/cv2_info.py" --require-cool || { echo "== $setup: the COOL check failed with $?"; status=1; }
     fi
-    echo "== $setup: benchmark, at most $BENCH_MINUTES minutes"
-    # the app's settings need a session secret and a data key; bench.py makes throwaway ones for its own runs
-    (cd "$SRC" && env DATA_DIR=/opt/bench/data PYTHONPATH="$SRC/backend" GIT_SHA="$BENCH_CODE" \
-      ENGINE_SHA="$BENCH_ENGINE" SESSION_SECRET="$(head -c 32 /dev/urandom | base64)" \
-      DATA_KEY="$(head -c 48 /dev/urandom | base64)" AI_PROVIDER=none \
-      timeout -s INT -k 120 "${BENCH_MINUTES}m" "$PY" eval/bench.py --setup "$setup" --instance "$BENCH_INSTANCE" \
-      --cameras "$BENCH_CAMERAS" --seconds "$BENCH_SECONDS" --confirm --out "$OUT") \
-      || { echo "== $setup: the benchmark ended with $?"; status=1; }
+    echo "== $setup: benchmarks, at most $BENCH_MINUTES minutes"
+    for variant in no_text default; do  # the one that fits first
+      local name="$setup" extra=""
+      [ "$variant" = no_text ] && { name="${setup}_no_text"; extra="--no-text"; }
+      # the app's settings need a session secret and a data key; bench.py makes throwaway ones for its own runs
+      (cd "$SRC" && env DATA_DIR=/opt/bench/data PYTHONPATH="$SRC/backend" GIT_SHA="$BENCH_CODE" \
+        ENGINE_SHA="$BENCH_ENGINE" SESSION_SECRET="$(head -c 32 /dev/urandom | base64)" \
+        DATA_KEY="$(head -c 48 /dev/urandom | base64)" AI_PROVIDER=none \
+        timeout -s INT -k 120 "$((BENCH_MINUTES / 2))m" "$PY" eval/bench.py --setup "$name" $extra \
+        --instance "$BENCH_INSTANCE" --cameras "$BENCH_CAMERAS" --seconds "$BENCH_SECONDS" --confirm --out "$OUT") \
+        || { echo "== $name: the benchmark ended with $?"; status=1; }
+    done
   done
   return "$status"
 }
@@ -165,7 +170,8 @@ for h in $HOSTS; do
     echo "  c7i.large from Ubuntu 24.04 x86 ($UBUNTU_X86): c7i_stock; at most $(cap c7i) minutes"
   fi
 done
-echo "  each: $CAMERAS cameras for $SECONDS_MEASURED s, then the cameras that fit at 2 frames a second (--confirm)"
+echo "  each: without and with a description watch, $CAMERAS cameras for $SECONDS_MEASURED s, then the cameras that fit"
+echo "  at 2 frames a second (--confirm)"
 echo "  each benchmark at most $BENCH_MINUTES minutes; setup at most $SETUP_MINUTES; $VOLUME_GB GB gp3 each"
 python3 -I - "$ROOT/eval/prices.json" "$VOLUME_GB" $(for h in $HOSTS; do echo "$(itype "$h"):$(cap "$h")"; done) <<'PY'
 import json, math, sys

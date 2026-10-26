@@ -238,8 +238,8 @@ def test_aws_bench_spends_only_when_told_and_terminates_what_it_started(tmp_path
     assert [r["args"][r["args"].index("--image-id") + 1] for r in runs] == [
         "ami-05a336eb12c47d427", "ami-05a336eb12c47d427", "ami-0ubuntux86"]  # c8g tried a second subnet
     c8g, c7i = runs[1]["user_data"], runs[2]["user_data"]
-    assert "shutdown -h +75" in c8g and "BENCH_SETUPS='c8g_cool c8g_stock'" in c8g
-    assert "shutdown -h +55" in c7i and "BENCH_SETUPS='c7i_stock'" in c7i
+    assert "shutdown -h +85" in c8g and "BENCH_SETUPS='c8g_cool c8g_stock'" in c8g
+    assert "shutdown -h +60" in c7i and "BENCH_SETUPS='c7i_stock'" in c7i
     assert "BENCH_INSTANCE='c8g.large'" in c8g and "BENCH_CAMERAS='10'" in c8g and "BENCH_SECONDS='120'" in c8g
     assert "X-Amz-Signature=abc&X-Amz-Expires=14400'" in c8g and c8g.rstrip().endswith("shutdown -h now")
     assert all("terminate" in r["args"][r["args"].index("--instance-initiated-shutdown-behavior") + 1] for r in runs)

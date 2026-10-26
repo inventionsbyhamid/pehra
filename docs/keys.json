@@ -637,5 +637,21 @@
   ],
   "unit": "usd_about",
   "means": "the society plan a month in dollars, about"
+ },
+ "bench.speedup.cool_over_stock_no_text": {
+  "ratio": [
+   "bench.c8g_cool_no_text.fps_total",
+   "bench.c8g_stock_no_text.fps_total"
+  ],
+  "unit": "times",
+  "means": "COOL over stock OpenCV on the same Graviton instance, without the description watch"
+ },
+ "bench.speedup.graviton_over_x86_no_text": {
+  "ratio": [
+   "bench.c8g_cool_no_text.fps_total",
+   "bench.c7i_stock_no_text.fps_total"
+  ],
+  "unit": "times",
+  "means": "c8g with COOL over c7i with stock OpenCV, same size, without the description watch"
  }
 }
