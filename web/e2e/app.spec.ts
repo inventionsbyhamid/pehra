@@ -270,7 +270,7 @@ test("settings, people and the printable notice", async ({ page }) => {
 
   await sub.getByRole("link", { name: "Privacy" }).click();
   await expect(page.getByText(/kept for \d+ days/)).toBeVisible();
-  const contact = page.getByLabel("Whom to ask about the cameras");
+  const contact = page.getByRole("textbox", { name: "Whom to ask about the cameras" });
   await expect(page.getByText(/Until you set it, they show owner.*@example.com/)).toBeVisible();
   await contact.fill("The society office, 98200 00000");
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -358,7 +358,7 @@ test("the other ways in: a phone by QR, a recorder, the bridge with its line onc
   await page.getByLabel("Name").fill("Pool phone");
   await page.getByRole("radio", { name: "Pool" }).check();
   await page.getByRole("button", { name: "Add camera" }).click();
-  await expect(page.getByRole("heading", { name: "Open it on the phone", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect the phone", level: 1 })).toBeVisible();
   const qr = page.getByRole("img", { name: /QR code/ });
   await expect.poll(() => qr.evaluate((img: HTMLImageElement) => (img.complete ? img.naturalWidth : 0)), { timeout: 30_000 }).toBeGreaterThan(0);
   await expect(page.getByLabel("The phone's camera page")).toHaveValue(/\/cam\//);
@@ -389,7 +389,7 @@ test("the other ways in: a phone by QR, a recorder, the bridge with its line onc
   await page.getByLabel("User").fill("admin");
   await page.getByLabel("Password").fill("pw");
   await page.getByRole("button", { name: "Add camera" }).click();
-  await expect(page.getByRole("heading", { name: "Set up the bridge", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect the bridge", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Line for cameras.txt")).toHaveValue(/^[\w-]+=rtsp:\/\/admin:pw@192\.168\.1\.64:554\/cam\/realmonitor\?channel=1&subtype=1$/);
   await expect(page.getByLabel("Control room address for the bridge")).toHaveValue(/^--server http/);
   const readme = await page.request.get(await page.getByRole("link", { name: "the bridge steps" }).getAttribute("href") ?? "");

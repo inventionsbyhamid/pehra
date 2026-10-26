@@ -37,7 +37,8 @@ function Stage({ cam, liveRef, webcam }: {
       </LiveView>
     );
   }
-  const idle = cam.kind === "webcam" ? "Waiting for this camera's device. Use this device below, or open the camera on the device it belongs to."
+  const idle = cam.status.source === "refused" ? "Not connected. This server won't read this camera's address."
+    : cam.kind === "webcam" ? "Waiting for this camera's device. Use this device below, or open the camera on the device it belongs to."
     : cam.kind === "demo" ? "Starting the demo camera. The first picture takes a few seconds."
     : `Connecting to the camera. ${brand.name} keeps trying if it can't reach it.`;
   return <LiveView ref={liveRef} cameraId={cam.id} zones={cam.zones} mode="frames" idle={idle} />;
@@ -268,7 +269,7 @@ function EditCamera({ cam, dialog, onSaved, onZones, onLink }: {
           </label>
           {cam.kind !== "file" && (
             <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 10 }}>
-              <legend className="label" style={{ marginBottom: 8 }}>Reads on this camera</legend>
+              <legend className="label" style={{ marginBottom: 8 }}>What it reads</legend>
               {Object.entries(READERS).map(([id, r]) => {
                 const not = readerAllowed(id, purpose);
                 const on = reading.includes(id);
@@ -468,7 +469,11 @@ export default function CameraPage() {
       <PageHead
         back={{ to: "/app", label: "Control room" }}
         title={cam.name}
-        sub={<><Health camera={cam} /><span>{purposeLabel(purposes, cam.purpose)}</span></>}
+        sub={<>
+          <Health camera={cam} />
+          <span>{purposeLabel(purposes, cam.purpose)}</span>
+          {(cam.readers ?? []).filter((r) => READERS[r]).map((r) => <span key={r}>{READERS[r]!.label} on</span>)}
+        </>}
         actions={admin && <button className="btn" onClick={edit.open}>Edit</button>}
       />
       {notice && <p className="notice" role="status">{notice}</p>}

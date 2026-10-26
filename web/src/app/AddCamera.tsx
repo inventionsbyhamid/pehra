@@ -49,7 +49,6 @@ function RecorderFields({ value, onChange, bridge }: { value: Recorder; onChange
         <div>
           <Choices legend="Recorder brand" value={value.brand} options={list.map((b) => ({ value: b.id, label: b.label }))}
             onChange={(b) => set({ brand: b })} />
-          {picked?.hint && <p className="hint" style={{ marginTop: 8 }}>{picked.hint}</p>}
         </div>
       )}
       <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
@@ -58,7 +57,9 @@ function RecorderFields({ value, onChange, bridge }: { value: Recorder; onChange
             placeholder={bridge ? "For example: 192.168.1.64" : "For example: gate.example.com"} autoComplete="off" spellCheck={false} />
         </label>
         <label className="field" style={{ flex: "1 1 7rem" }}><span>Camera number</span>
-          <input className="input" type="number" min={1} max={256} value={value.channel} onChange={(e) => set({ channel: e.target.value })} required />
+          <input className="input" type="number" min={1} max={256} value={value.channel} onChange={(e) => set({ channel: e.target.value })} required
+            aria-describedby="channel-hint" />
+          <span className="hint" id="channel-hint">Its place on the recorder, 1 for the first</span>
         </label>
       </div>
       <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
@@ -71,6 +72,7 @@ function RecorderFields({ value, onChange, bridge }: { value: Recorder; onChange
       </div>
       <details>
         <summary>Another port</summary>
+        <p className="hint" style={{ marginTop: 8 }}>{picked?.label ?? "Most"} recorders use port {picked?.port ?? 554}. Change it only if yours uses another.</p>
         <label className="field" style={{ marginTop: 10, maxWidth: "12rem" }}><span>Port</span>
           <input className="input" type="number" min={1} max={65535} value={value.port} placeholder={String(picked?.port ?? 554)}
             onChange={(e) => set({ port: e.target.value })} />
@@ -112,13 +114,17 @@ function BridgeLink({ link }: { link: DeviceLink }) {
           <a href="/bridge/camera-bridge.zip" download>Download the bridge</a>, then follow{" "}
           <a href="/bridge/README.md" target="_blank" rel="noreferrer">the bridge steps</a>.
         </li>
-        <li className="stack" style={{ gap: 8 }}>
-          <span>Put this line in its cameras.txt file. It holds the recorder's password, so it is shown only now.</span>
-          {link.bridge_camera ? <Copy value={link.bridge_camera} label="Line for cameras.txt" /> : <Copy value={link.url} label="Camera link" />}
+        <li>
+          <div className="stack" style={{ gap: 8 }}>
+            <span>Put this line in its cameras.txt file. It holds the recorder's password, so it is shown only now.</span>
+            {link.bridge_camera ? <Copy value={link.bridge_camera} label="Line for cameras.txt" /> : <Copy value={link.url} label="Camera link" />}
+          </div>
         </li>
-        <li className="stack" style={{ gap: 8 }}>
-          <span>Start the bridge with this control room's address.</span>
-          <Copy value={`--server ${server}`} label="Control room address for the bridge" />
+        <li>
+          <div className="stack" style={{ gap: 8 }}>
+            <span>Start the bridge with this control room's address.</span>
+            <Copy value={`--server ${server}`} label="Control room address for the bridge" />
+          </div>
         </li>
       </ol>
       <p className="hint">Lost the line? Choose Edit on the camera's page to make a new one. The old line then stops.</p>
@@ -277,7 +283,7 @@ export default function AddCamera() {
   const done = kept?.every((k) => k.state !== "waiting" && k.state !== "saving");
   const ready = recording ? !!file
     : !!name.trim() && !!purpose && (how !== "address" || !!url.trim()) && ((how !== "recorder" && how !== "bridge") || !!recorder.host.trim());
-  const title3 = how === "phone" ? "Open it on the phone" : how === "bridge" ? "Set up the bridge" : recording ? "Scanning the recording" : "Keep the suggested watches";
+  const title3 = how === "phone" ? "Connect the phone" : how === "bridge" ? "Connect the bridge" : recording ? "Scanning the recording" : "Keep the suggested watches";
 
   return (
     <Page narrow>

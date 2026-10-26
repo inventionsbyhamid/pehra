@@ -45,8 +45,9 @@ export function Telegram() {
           <li>Anyone in a connected group can press Acknowledge or False alarm, even if they are not in this app. The app shows who pressed it.</li>
           {reminders && reminders.times > 0 && (
             <li>
-              A critical alert nobody acknowledges is posted in the group again {minutes(reminders.every_min)} later, and
-              every {minutes(reminders.every_min)} after that, up to {reminders.times === 1 ? "once" : `${reminders.times} times`}.
+              {reminders.times === 1
+                ? `A critical alert nobody acknowledges is posted in the group once more, ${minutes(reminders.every_min)} later.`
+                : `A critical alert nobody acknowledges is posted in the group again ${minutes(reminders.every_min)} later, and every ${minutes(reminders.every_min)} after that, up to ${reminders.times} times.`}
             </li>
           )}
           <li>Pictures sent to the group have the faces of people who are not enrolled staff blurred. Clips stay in the app.</li>

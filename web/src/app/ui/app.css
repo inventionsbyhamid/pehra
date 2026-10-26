@@ -357,3 +357,4 @@ button.log-card:hover { border-color: var(--ink-3); }
 .file-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .file-pick label.btn { cursor: pointer; }
 .file-pick input:focus-visible + label { outline: 3px solid var(--brand); outline-offset: 2px; }
+fieldset.card { margin: 0; min-width: 0; }
