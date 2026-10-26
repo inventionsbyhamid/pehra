@@ -53,6 +53,37 @@ def test_bedrock_request_shape():
     assert content[0] == {"text": "hi"} and content[1]["image"]["source"]["bytes"] == b"img"
 
 
+def test_bedrock_converse_with_amazon_nova_through_its_global_profile():
+    """Amazon Nova 2 Lite needs no Marketplace offer: the same Converse request (system, an image, a JSON answer)
+    passes botocore's own check of the Converse API for its global profile, and a Nova reply (a reasoning block,
+    JSON in a code fence) reads as the JSON the agent expects."""
+    import boto3
+    from botocore.stub import Stubber
+
+    from watchful.agent.prompting import parse_json
+
+    client = boto3.client("bedrock-runtime", region_name="ap-south-1", aws_access_key_id="x",
+                          aws_secret_access_key="x")
+    model = "global.amazon.nova-2-lite-v1:0"
+    reply = {"output": {"message": {"role": "assistant", "content": [
+        {"reasoningContent": {"reasoningText": {"text": "looking"}}},
+        {"text": '```json\n{"match": true, "why": "a person at the gate"}\n```'}]}},
+        "stopReason": "end_turn", "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+        "metrics": {"latencyMs": 1}}
+    stub = Stubber(client)
+    stub.add_response("converse", reply, {
+        "modelId": model, "system": [{"text": "judge\nReply with one JSON object only."}],
+        "messages": [{"role": "user", "content": [{"text": "is it a person?"},
+                                                  {"image": {"format": "jpeg", "source": {"bytes": b"\xff\xd8jpeg"}}}]}],
+        "inferenceConfig": {"maxTokens": 1500, "temperature": 0}})
+    with stub:
+        llm = BedrockLLM(settings(bedrock_model=model), client=client)
+        out = llm.complete("judge", [Msg("user", "is it a person?")], images=[b"\xff\xd8jpeg"],
+                           json_schema={"type": "object"})
+    stub.assert_no_pending_responses()
+    assert parse_json(out) == {"match": True, "why": "a person at the gate"}
+
+
 def test_limiter_blocks_after_cap(tmp_path):
     repo = SqliteRepository(tmp_path / "w.db")
     llm = LimitedLLM(FakeLLM(["a", "b", "c"]), repo, limit=2)
