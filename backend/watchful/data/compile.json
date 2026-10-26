@@ -557,7 +557,9 @@
     "<QTY>\\s*-?\\s*<LEN>\\s+(?:tall\\s+|high\\s+|short\\s+)?<PERSON>\\b",
     "minor(?!\\s+(?:<PLACE>|<OBJECT>|injury|injuries|damage|issues?|problems?|accidents?|fire|fires|leaks?|repairs?|changes?|scratch|scratches|dents?|roads?|delays?|faults?|incidents?|cracks?|spills?|flooding|work|works)\\b)",
     "(?:a|the|any|every|some|that|this)\\s+teen\\b(?!\\s*(?:log|logon|logo|aadmi|admi|bande|baje|saal|sal|minute|minutes|ghante|ghanta|din|gaadi|gaadiyan|gadi|cars?|people|times|baar|bar|ladke|ladkiyan|log)\\b)",
-    "teen\\s*-?\\s*(?:boys?|girls?|kids?|child|children|aged?|agers?|students?|swimmers?)\\b"
+    "teen\\s*-?\\s*(?:boys?|girls?|kids?|child|children|aged?|agers?|students?|swimmers?)\\b",
+    "(?:tiny|little|small|short|wee)\\s+<PERSON>\\b",
+    "<PERSON>\\s+(?:who\\s+is\\s+|is\\s+|looks\\s+|seems\\s+)?(?:very\\s+|quite\\s+|so\\s+)?(?:tiny|little|small|short)\\b(?!\\s+(?:distance|while|time|walk|way|bags?|box|boxes|groups?|of\\s+breath|on\\s+time|cut))"
   ],
   "place_words": [
     "area",
