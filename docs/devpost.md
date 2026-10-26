@@ -135,7 +135,8 @@ memory (its preprocessing is OpenCV, and OpenCV DNN is one setting away):
 * **Still in moving water.** Optical flow inside a body's box moves with the water. Comparing it with the flow in a
   ring around the box separated still bodies from swimmers on rendered water.
 * **Never about children.** Word lists keep missing spellings and languages, so the age guard has layers: words in
-  English and Hindi (both scripts), explicit age patterns, a SigLIP 2 meaning check, and the compiler's own flag.
+  English and ten Indian languages (their scripts and Latin spellings), age and height patterns, a SigLIP 2 meaning
+  check, and the compiler's own flag. It reads watches, look back search, questions and the AI's own summaries.
 * **Camera addresses are an attack surface.** FFmpeg follows HTTP redirects, so pulled cameras are RTSP only and, on
   AWS, the app's user cannot reach private addresses at all.
 

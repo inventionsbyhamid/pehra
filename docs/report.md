@@ -926,8 +926,10 @@ when.
 * **The age guard's limits.** The meaning check refuses "a person pushing a stroller" (and, on the default model, "a
   person with a school bag"). Bare fragments such as "of about eight" and "an under 14" pass every layer; their
   realistic forms ("a person of about eight") are refused. SigLIP's text tower does not read numbers or heights; the
-  word patterns do. Look back search and questions about footage have no age guard yet. A lookout that follows one
-  person by appearance for a day could follow a child; no check can tell without judging age.
+  word patterns do. Ages written with a number and a "years" word in a language other than English, Hindi or Urdu
+  are left to the meaning check. Look back search, questions about footage and the AI's own summaries go through the
+  same guard; a summary about age is replaced whole. Lookouts that follow a person by a description or a sighting
+  are off unless APPEARANCE_LOOKOUTS is set, because no check can tell a child without judging age.
 * **The demo's sharing per clip was not done.** Decoding a demo clip is shared, but each sandbox's camera analyses the
   same frames again: many judges watching at once each get fewer frames a second (section 8.7). They run on the demo's
   own camera process, so a society is never slowed.
