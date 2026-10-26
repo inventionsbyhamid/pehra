@@ -354,4 +354,4 @@ def test_watch_texts_are_made_once_not_at_every_start(tmp_path, monkeypatch):
             m.restart(cam.id)
         finally:
             m.shutdown()
-    assert sorted(made) == ["a person not wearing a helmet", "a person wearing a helmet"]
+    assert sorted(made) == ["a person", "a person wearing a helmet"]  # the preset's "not" side is the plain subject

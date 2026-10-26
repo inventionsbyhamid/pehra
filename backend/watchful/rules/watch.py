@@ -1,8 +1,11 @@
+import re
 from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+NEGATION = re.compile(r"\b(not|no|without|never)\b|n['’]t\b", re.I)
 
 
 class _Model(BaseModel):
@@ -63,10 +66,33 @@ class Watch(_Model):
     excluded_cameras: list[str] = []
     output: Literal["alert", "log"] = "alert"  # a log writes a row (time, camera, reasons) and never alerts
 
+    @model_validator(mode="after")
+    def _plain_looks(self):
+        """The image and text model reads "a person not wearing glasses" almost like "a person wearing glasses", so
+        a look's side written with not, no or without compares with the plain subject instead ("a person"), and the
+        other side alone decides. A pair that would become the same words stays as written."""
+        plain = plain_subject(self.subject.classes)
+        for c in self.conditions:
+            text, other = c.params.get("text"), c.params.get("not_text")
+            if c.signal != "looks_like" or not text or not other:
+                continue
+            new = [plain if NEGATION.search(str(t)) else t for t in (text, other)]
+            if new[0] != new[1]:
+                c.params = {**c.params, "text": new[0], "not_text": new[1]}
+        return self
+
     def applies_to(self, camera_id: str, home_camera_id: str | None) -> bool:
         if self.scope == "site":
             return camera_id not in self.excluded_cameras
         return camera_id == home_camera_id
+
+
+def plain_subject(classes: list[str]) -> str:
+    """A watch's subject in plain words: "a person", "an umbrella", "something" for several kinds."""
+    if len(classes) != 1:
+        return "something"
+    name = classes[0].replace("_", " ")
+    return f"{'an' if name[:1] in 'aeiou' else 'a'} {name}"
 
 
 def select_watches(rows, camera_id: str, zones, entry: bool = True) -> tuple[list[tuple[str, Watch]], list[str]]:

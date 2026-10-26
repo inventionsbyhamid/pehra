@@ -127,12 +127,15 @@ def test_zone_looks_like_needs_hold():
 
 def test_looks_like_contrast_for_people_without_glasses():
     w = preset("looks_like_check", text="a person not wearing glasses", not_text="a person wearing glasses")
-    emb = StubEmbedder({"a person not wearing glasses": [1.0, 0.0], "a person wearing glasses": [0.0, 1.0]})
+    # the texts the model compares carry no "not": the plain subject against the glasses (test_negated_looks.py)
+    emb = StubEmbedder({"a person": [1.0, 0.0], "a person wearing glasses": [0.0, 1.0]})
     t0 = at(12)
     without = person(1, {}, t0, embedding=np.array([0.9, 0.1], np.float32) / np.linalg.norm([0.9, 0.1]))
     with_glasses = person(2, {}, t0, embedding=np.array([0.1, 0.9], np.float32) / np.linalg.norm([0.1, 0.9]))
     got = run(w, [(t0, [without, with_glasses])], embedder=emb)
-    assert [c.track_id for c in got] == [1] and any("not wearing glasses" in r for r in got[0].evidence["reasons"])
+    assert [c.track_id for c in got] == [1]
+    # what OpenCV saw stays neutral: told "not a person wearing glasses", the AI check raised a man in glasses 6 of 6
+    assert got[0].evidence["reasons"] == ["looks like a person for 0 s"]
 
 
 def test_compiler_prompt_offers_appearance_checks():

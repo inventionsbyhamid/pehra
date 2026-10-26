@@ -151,7 +151,7 @@ def test_watch_texts_are_precomputed_for_camera_processes():
     ws = [preset("looks_like_check", text="a person not wearing glasses", not_text="a person wearing glasses"),
           Watch(name="red", subject=Subject(looks_like="a man in red"), verify="?", conditions=[Condition(signal="present")]),
           preset("gate_left_open", zone="gate")]
-    assert watch_texts(ws) == {"a person not wearing glasses", "a person wearing glasses", "a man in red",
+    assert watch_texts(ws) == {"a person", "a person wearing glasses", "a man in red",  # never "not" (test_negated_looks)
                                "an open gate", "a closed gate"}
 
     class Inner:
