@@ -422,6 +422,10 @@ class ResourcesTuning(_Section):
     report_every_s: float = 1.0  # camera status to the app
     push_queue: int = 16  # pushed frames waiting for a camera process; more are dropped
     model_variants: int = 3  # models of each kind a camera process keeps for cameras with their own model settings
+    # cameras whose watches need the image model (about 400 MB in each process that loads it) share a process up to
+    # this many, so the model loads in as few processes as can hold them; more on one process would starve them of
+    # CPU (each person crop is about half a second on one thread) while another process idles
+    image_cameras_per_process: int = 4
 
 
 class Tuning(_Section):

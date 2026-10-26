@@ -299,3 +299,59 @@ def test_a_pushed_frame_is_decoded_only_when_read(monkeypatch):
     frame = source.read(0.5)
     assert frame is not None and frame.ts == 109.0 and frame.image.shape == (48, 64, 3)
     assert len(decoded) == 1
+
+
+def test_cameras_that_need_the_image_model_share_a_process():
+    """The image model is the largest thing a camera process loads: cameras that need it go where it is loaded
+    already, while that process has room, instead of loading it in every process."""
+    from watchful.tuning import ResourcesTuning
+
+    def pool(room: int) -> WorkerPool:
+        p = WorkerPool(Settings(session_secret="y", _env_file=None), processes=3,
+                       tuning=Tuning(resources=ResourcesTuning(image_cameras_per_process=room)))
+        p._send = lambda i, cmd: None  # no processes: only the bookkeeping
+        return p
+
+    def cam(name):
+        return Camera(name, name, "webcam", None, workspace_id="ws_a")
+
+    text = [("w", preset("looks_like_check"))]
+    plain = [("w", preset("enters", zone="left"))]
+    p = pool(2)
+    where = {name: p.assign(cam(name), watches, [])
+             for name, watches in [("a", plain), ("t1", text), ("b", plain), ("t2", text), ("c", plain), ("t3", text)]}
+    assert where["t1"] == where["t2"]  # one process holds the model for both
+    assert where["t3"] != where["t1"] and len(set(where.values())) == 3  # that one is full, so a second opens
+    p = pool(8)
+    plain_at, text_at = p.assign(cam("a"), plain, []), p.assign(cam("t1"), text, [])
+    assert plain_at != text_at
+    assert p.assign(cam("a"), text, []) == text_at  # its watches need the model now: it moves to where it is
+    assert p.assign(cam("a"), text, []) == text_at and p.assign(cam("b"), plain, []) != text_at
+
+
+def test_watch_texts_are_made_once_not_at_every_start(tmp_path, monkeypatch):
+    """The app loads the text tower for a text it has never seen (a watch just saved); the vector is kept with the
+    society, so a restart of the app or the camera starts without the tower."""
+    import watchful.workers as workers
+    made = []
+
+    class Texts:
+        def text(self, t):
+            made.append(t)
+            return np.full(4, 0.5, np.float32)
+
+    monkeypatch.setattr(workers, "make_embedder", lambda settings: Texts())
+    s = Settings(session_secret="y", data_dir=tmp_path, index_embeddings=False, scan_pool_at_start=False,
+                 _env_file=None)
+    repo = society_repo(s)
+    cam = repo.add_camera(Camera(None, "Gate", "webcam", None))
+    repo.add_watch(WatchRow(None, cam.id, "a helmet check", preset("looks_like_check").model_dump(), True))
+    for _ in range(2):  # the app, then the app started again
+        m = WorkerManager(s, Tuning(), repo, make_blobs(s), llm=FakeLLM([]), processes=1)
+        m.pool.assign = lambda *a, **k: 0
+        try:
+            m.start(cam.id)
+            m.restart(cam.id)
+        finally:
+            m.shutdown()
+    assert sorted(made) == ["a person not wearing a helmet", "a person wearing a helmet"]

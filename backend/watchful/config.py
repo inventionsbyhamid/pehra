@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     pose_model: str = "mediapipe"
     face_model: str = "yunet_sface"
     embedder: str = "siglip2_b32"
+    # the image model's runtime: ONNX Runtime with no memory arena and no packed weight copy holds the image tower in
+    # about 400 MB against OpenCV DNN's 830 MB, with the same vectors; "opencv" stays selectable
+    embedder_runtime: Literal["onnxruntime", "opencv"] = "onnxruntime"
     ocr: str = "ppocr_v3det_v5rec"  # Zoo PP-OCRv3 detection, PP-OCRv5 recognition; ppocr_v3_crnn stays selectable
     plate_detector: str = "lpd_yunet"  # "none" reads plates from PP-OCR text boxes only
 

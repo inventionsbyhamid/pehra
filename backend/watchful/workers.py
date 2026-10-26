@@ -2,6 +2,7 @@
 parallel. Rows, candidates and health come back from the processes; the app writes them through each camera's own
 society, checks candidates with the AI and stores alerts, and judges each camera's health."""
 import hashlib
+import json
 import logging
 import multiprocessing as mp
 import queue
@@ -278,15 +279,21 @@ class WorkerManager:
         with self._camera_lock(camera_id):
             self._start(camera_id)
 
-    def _watch_vectors(self, watches: list[tuple[str, Watch]]) -> dict[str, list[float]]:
-        """Watch texts as vectors, made here once so camera processes never load the text tower."""
-        wanted = watch_texts([w for _, w in watches])
-        missing = wanted - self._texts.keys()
-        if missing:
-            emb = make_embedder(self.settings)
-            for t in missing:
-                self._texts[t] = emb.text(t).tolist()
-        return {t: self._texts[t] for t in wanted}
+    def _watch_vectors(self, repo, watches: list[tuple[str, Watch]]) -> dict[str, list[float]]:
+        """Watch texts as vectors for the camera processes, which never load the text tower. Each is kept in the
+        society's Meta once made, so the app loads the tower only for a text it has never seen (a watch just saved),
+        not at every start; it drops the tower again after Tuning resources.text_tower_idle_s."""
+        out = {}
+        for text in sorted(watch_texts([w for _, w in watches])):
+            key = f"text_vector:{self.settings.embedder}:{hashlib.sha1(text.encode()).hexdigest()}"
+            vector = self._texts.get(key)
+            if vector is None and (stored := repo.get_meta(key)):
+                vector = json.loads(stored)
+            if vector is None:
+                vector = [round(float(x), 6) for x in make_embedder(self.settings).text(text)]
+                repo.set_meta(key, json.dumps(vector))
+            self._texts[key] = out[text] = vector
+        return out
 
     def _start(self, camera_id: str) -> None:
         repo = self._repo(camera_id)
@@ -302,7 +309,7 @@ class WorkerManager:
         demo = in_sandbox(repo)  # a demo sandbox's camera runs on the demo's own processes, and writes its log rows
         if demo:
             self.sandboxes.add(repo.workspace_id)
-        process = self.pool.assign(cam, watches, repo.list_enrollments(), self._watch_vectors(watches), examples,
+        process = self.pool.assign(cam, watches, repo.list_enrollments(), self._watch_vectors(repo, watches), examples,
                                    should_record(repo, cam), len(self.subs[camera_id]), self.health.state(cam.id),
                                    demo=demo)
         old = self.cams.get(camera_id)

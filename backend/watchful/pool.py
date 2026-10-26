@@ -601,6 +601,7 @@ class WorkerPool:
         self.demo_slots = set(range(n, len(self.slots)))
         self.where: dict[str, int] = {}
         self.jobs: dict[str, CameraJob] = {}
+        self.image_model: dict[str, bool] = {}  # cameras whose watches need the image model (SigLIP's image tower)
         self._next = 0
         self._lock = threading.RLock()
 
@@ -608,11 +609,18 @@ class WorkerPool:
     def processes(self) -> int:
         return len(self.slots)
 
-    def _pick(self, demo: bool = False) -> int:
+    def _pick(self, demo: bool = False, image_model: bool = False) -> int:
+        """The least loaded process of the camera's lane, in round robin order. A camera that needs the image model
+        goes where that model is loaded already, while that process has room (Tuning
+        resources.image_cameras_per_process), so the model is loaded in as few processes as can hold those cameras."""
         load = Counter(self.where.values())
         n = len(self.slots)
         lane = [j for j in range(n) if (j in self.demo_slots) == demo] or list(range(n))
         order = [j for j in ((self._next + k) % n for k in range(n)) if j in lane]
+        if image_model:
+            towers = Counter(self.where[c] for c, needs in self.image_model.items() if needs and c in self.where)
+            room = [j for j in order if 0 < towers[j] < self.tuning.resources.image_cameras_per_process]
+            order = room or order
         i = min(order, key=lambda j: load[j])
         self._next = (i + 1) % n
         return i
@@ -642,10 +650,20 @@ class WorkerPool:
         """Runs the camera (again, with these watches) on its process, or on the least loaded one of its lane (the
         demo's own processes for a demo sandbox's camera); returns which."""
         job = CameraJob(camera, watches, enrollments, texts or {}, list(examples or []), record, viewers, health)
+        needs = needs_for([w for _, w in watches]) if watches else None
+        image_model = bool(needs and (needs.embed or needs.embedder))
         with self._lock:
             i = self.where.get(camera.id)
+            if i is not None and image_model and not self.image_model.get(camera.id):
+                towers = {self.where[c] for c, has in self.image_model.items() if has and c in self.where
+                          and (self.where[c] in self.demo_slots) == demo}  # in its own lane
+                if towers and i not in towers:  # it needs the image model now: it moves to where that is loaded
+                    self._send(i, ("remove", camera.id))
+                    del self.where[camera.id]
+                    i = None
+            self.image_model[camera.id] = image_model
             if i is None:
-                i = self.where[camera.id] = self._pick(demo)
+                i = self.where[camera.id] = self._pick(demo, image_model)
             self.jobs[camera.id] = job
             self._send(i, ("assign", job))
             return i
@@ -654,6 +672,7 @@ class WorkerPool:
         with self._lock:
             i = self.where.pop(camera_id, None)
             self.jobs.pop(camera_id, None)
+            self.image_model.pop(camera_id, None)
             if i is not None and self.slots[i].process is not None:
                 self._send(i, ("remove", camera_id))
 

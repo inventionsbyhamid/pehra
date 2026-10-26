@@ -23,14 +23,43 @@ class Embedder(Protocol):
     def text(self, query: str) -> np.ndarray: ...
 
 
+class _Tower:
+    """One ONNX model on the chosen runtime. ONNX Runtime runs without its memory arena (memory goes back after each
+    run) and without a packed second copy of the weights; measured on SigLIP 2 B/32's image tower, 400 MB against
+    OpenCV DNN's 830 MB, with the same vectors."""
+
+    def __init__(self, path, runtime: str, threads: int):
+        self.runtime = runtime
+        if runtime == "opencv":
+            self.net = cv2.dnn.readNetFromONNX(str(path), cv2.dnn.ENGINE_AUTO)
+            return
+        import onnxruntime as ort
+        o = ort.SessionOptions()
+        o.enable_cpu_mem_arena = False
+        o.enable_mem_pattern = False
+        o.add_session_config_entry("session.disable_prepacking", "1")
+        o.intra_op_num_threads, o.inter_op_num_threads = max(1, threads), 1
+        self.net = ort.InferenceSession(str(path), o, providers=["CPUExecutionProvider"])
+        self.input = self.net.get_inputs()[0].name
+
+    def run(self, x: np.ndarray, output: str, input_name: str | None = None) -> np.ndarray:
+        if self.runtime == "opencv":
+            self.net.setInput(x, input_name or "")
+            return self.net.forward(output)
+        return self.net.run([output], {input_name or self.input: x})[0]
+
+
 @register("embedder", *EMBEDDERS)
 class OnnxEmbedder:
-    """Images and text in one embedding space, both towers on the OpenCV DNN engine. Each tower loads on first use:
-    the app making watch texts needs only the text tower, a camera process only the image tower."""
+    """Images and text in one embedding space (Settings embedder_runtime: ONNX Runtime by default, or OpenCV DNN).
+    Each tower loads on first use: the app making watch texts or answering a text search needs only the text tower,
+    and drops it when idle; a camera process only the image tower."""
 
     def __init__(self, name: str = "siglip2", settings: Settings | None = None):
         self.spec = EMBEDDERS[name]
         self.name, self.settings = name, settings
+        self.runtime = settings.embedder_runtime if settings else "onnxruntime"
+        self.threads = settings.camera_threads if settings else 1
         self._vision = None
         self._text_net = None
         self._tokenizer = None
@@ -38,7 +67,7 @@ class OnnxEmbedder:
         self._lock = threading.Lock()  # one network, shared by the indexer, searches and scans
 
     def release_text(self, idle_s: float = 0.0) -> bool:
-        """Drops the text tower (about 1.5 GB once run) when unused for idle_s; the next text loads it again."""
+        """Drops the text tower (about 1.1 GB on ONNX Runtime) when unused for idle_s; the next text loads it again."""
         with self._lock:
             if self._text_net is None or time.monotonic() - self._text_used < idle_s:
                 return False
@@ -56,10 +85,9 @@ class OnnxEmbedder:
         x = (x - s.mean) / s.std
         with self._lock:
             if self._vision is None:
-                self._vision = cv2.dnn.readNetFromONNX(str(embedder_path(self.name, "vision.onnx", self.settings)),
-                                                       cv2.dnn.ENGINE_AUTO)
-            self._vision.setInput(x.transpose(2, 0, 1)[None])
-            return _unit(self._vision.forward(s.output))
+                self._vision = _Tower(embedder_path(self.name, "vision.onnx", self.settings), self.runtime,
+                                      self.threads)
+            return _unit(self._vision.run(np.ascontiguousarray(x.transpose(2, 0, 1)[None]), s.output))
 
     def text(self, query: str) -> np.ndarray:
         s = self.spec
@@ -69,13 +97,14 @@ class OnnxEmbedder:
     def _text(self, query: str, s) -> np.ndarray:
         self._text_used = time.monotonic()
         if self._text_net is None:
-            self._text_net = cv2.dnn.readNetFromONNX(str(embedder_path(self.name, "text.onnx", self.settings)),
-                                                     cv2.dnn.ENGINE_AUTO)
+            self._text_net = _Tower(embedder_path(self.name, "text.onnx", self.settings), self.runtime, self.threads)
             self._tokenizer = Tokenizer.from_file(str(embedder_path(self.name, "tokenizer.json", self.settings)))
         ids = self._tokenizer.encode(query.lower() if s.lowercase else query).ids[:s.max_tokens]
         ids = ids + [s.pad_id] * (s.max_tokens - len(ids))
-        self._text_net.setInput(np.array([ids], np.int64), "input_ids")
-        return _unit(self._text_net.forward(s.output))
+        return _unit(self._text_net.run(np.array([ids], np.int64), s.output, "input_ids"))
+
+    def loaded(self) -> dict[str, bool]:
+        return {"image": self._vision is not None, "text": self._text_net is not None}
 
     @staticmethod
     def similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -122,3 +151,4 @@ class TextCache:
 
     def __getattr__(self, name):
         return getattr(self.inner, name)
+

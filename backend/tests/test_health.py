@@ -109,7 +109,7 @@ def test_offline_opens_once_and_resolves(tmp_path):
         assert wait(lambda: list_incidents(repo, camera_id=cam.id), 15)
         # the camera process ticks the watch from its own clock; the app's judgement follows within a status report
         assert wait(lambda: m.status(cam.id).health == "offline", 5)
-        assert repo.get_camera(cam.id).status == "offline"
+        assert wait(lambda: repo.get_camera(cam.id).status == "offline", 5)  # the row follows the judgement
         assert camera_json(m, repo.get_camera(cam.id))["health"] == "offline"
         time.sleep(4)  # still offline: offline ticks go on, but the watch fired when it became true, once
         (inc,) = list_incidents(repo, camera_id=cam.id)
