@@ -109,7 +109,8 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
 
     v = _verify(c, ctx, llm, max_steps, deadline_s, about)
     # the trace by the words (the meaning check costs a text tower run each); its final words follow the verdict's
-    scrub(v.trace, lambda words: mentions_age(words, places if places is not None else _places(ctx)))
+    names = places if places is not None else _places(ctx)
+    scrub(v.trace, lambda words: mentions_age(words, names))
     if v.trace and v.trace[-1].tool in TERMINAL and v.summary == age_safe_summary(v.status, c.watch_name):
         last = v.trace[-1]
         last.args = {k: age_left_out() if k in ("summary", "reason", "question") else a for k, a in last.args.items()}
