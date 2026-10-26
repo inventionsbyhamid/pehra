@@ -1,0 +1,28 @@
+# Self hosting: docker compose up -d --build, then open PUBLIC_BASE_URL. Settings come from .env (cp .env.example .env,
+# then set at least SESSION_SECRET and DATA_KEY). Everything the app keeps is in the pehra-data volume.
+services:
+  pehra:
+    build: .
+    image: pehra:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"  # this machine only; put https in front (a tunnel below, or your own proxy)
+    volumes:
+      - pehra-data:/app/data
+
+  # A Cloudflare tunnel gives https without opening a port. Make a tunnel in the Cloudflare dashboard with a public
+  # hostname pointing at http://pehra:8000, save its token in tunnel.token next to this file
+  # (sudo chown 65532 tunnel.token && sudo chmod 400 tunnel.token), set PUBLIC_BASE_URL and TRUST_CLOUDFLARE=true in
+  # .env, then uncomment:
+  # tunnel:
+  #   image: cloudflare/cloudflared:2026.10.3@sha256:faa8e0a1475f137c910be6025f43c8e4092fdd35461b31e19fd1390657a1ff39
+  #   restart: unless-stopped
+  #   command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
+  #   volumes:
+  #     - ./tunnel.token:/etc/cloudflared/token:ro
+  #   depends_on:
+  #     - pehra
+
+volumes:
+  pehra-data:

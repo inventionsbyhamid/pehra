@@ -1,0 +1,13 @@
+.git
+.superpowers
+.env*
+!.env.example
+deploy/params.env
+tunnel.token
+data
+eval/clips
+**/node_modules
+web/dist
+**/__pycache__
+.pytest_cache
+models/*.part
