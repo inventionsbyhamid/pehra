@@ -113,14 +113,14 @@ edits the message.
 The checker (`agent/verifier.py`) sees the watch, what OpenCV saw and a few pictures, and answers with one tool call
 a step. Each result goes back to it with any new picture, for at most {{say:6}} steps and {{say:45 s}}.
 
-| Tool | The OpenCV behind it |
+| Tool | What it runs |
 | --- | --- |
-| `get_frames` | Frames around the moment with the zones and box drawn (`polylines`) |
-| `crop_zoom` | The object enlarged with `INTER_CUBIC` and an unsharp mask (`GaussianBlur`, `addWeighted`) |
-| `enhance` | CLAHE, `fastNlMeansDenoisingColored` or sharpening |
-| `motion_trail` | The path walked, drawn on the latest frame |
-| `flow` | DIS optical flow in the box between frames at most {{say:0.6 s}} apart |
-| `pose_history` | The torso angle over time from MediaPipe pose |
+| `get_frames(from_s, to_s, n)` | Frames around the moment with the zones and box drawn (`polylines`) |
+| `crop_zoom(at_s)` | The object enlarged with `INTER_CUBIC` and an unsharp mask (`GaussianBlur`, `addWeighted`) |
+| `enhance(image, kind)` | CLAHE, `fastNlMeansDenoisingColored` or sharpening |
+| `motion_trail()` | The path walked, drawn on the latest frame |
+| `flow(from_s, to_s)` | DIS optical flow in the box between frames at most {{say:0.6 s}} apart |
+| `pose_history(seconds)` | The torso angle over time from MediaPipe pose |
 
 It finishes by raising the alert with a grade and a reason, dismissing it, asking a person, or saying it cannot judge
 because the question needs an age. If the AI is down, a reply is broken or the day's limit is used up, the moment is
