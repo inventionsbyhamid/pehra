@@ -217,20 +217,20 @@ def test_i3_an_ai_summary_about_age_is_replaced_whole(tmp_path, said):
 
 
 def test_i3_the_meaning_check_catches_what_no_word_says(tmp_path):
-    """"A tiny swimmer" holds no age word; the meaning check (here a stand in) still replaces it, after the society's
+    """"Pigtails" is no age word; the meaning check (here a stand in) still replaces the summary, after the society's
     place names are taken out (so "the kids pool" is not what it reads)."""
     seen = []
 
     def meaning(text):
         seen.append(text)
-        return "tiny" in text
+        return "pigtails" in text
     c = tool_ctx(tmp_path)
     c.repo.add_camera(Camera(None, "Pool", "stream", None, [Zone("z", "kids pool", [(0, 0), (1, 0), (1, 1)])]))
-    said = FakeLLM([step("raise_alert", summary="A tiny swimmer is in the kids pool.")])
+    said = FakeLLM([step("raise_alert", summary="A swimmer with pigtails is in the kids pool.")])
     v = verify(cand(), c, said, meaning=meaning)
     assert v.summary == "Car enters: the AI check agreed it is real."
-    assert "A tiny swimmer is in the the place." in seen
-    v = verify(cand(), tool_ctx(tmp_path / "b"), FakeLLM([step("dismiss", reason="Just a tiny swimmer.")]),
+    assert "A swimmer with pigtails is in the the place." in seen
+    v = verify(cand(), tool_ctx(tmp_path / "b"), FakeLLM([step("dismiss", reason="Just a swimmer with pigtails.")]),
                meaning=meaning)
     assert (v.status, v.summary) == ("dismissed", "Car enters: the AI check found nothing to worry about.")
 
