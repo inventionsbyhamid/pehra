@@ -18,10 +18,9 @@
       "name": "Pool",
       "purpose": "pool",
       "clip": "demo/pool.mp4",
-      "source": "Recorded for this demo with the consent of everyone in it.",
+      "source": "Stock video from Pexels by Vitalis Nwenyi, free to use under the Pexels licence, cropped to one end of the pool.",
       "zones": [
-        {"name": "water", "kind": "water", "polygon": [[0.05, 0.4], [0.95, 0.4], [0.95, 0.95], [0.05, 0.95]]},
-        {"name": "lifeguard chair", "polygon": [[0.8, 0.1], [0.98, 0.1], [0.98, 0.38], [0.8, 0.38]]}
+        {"name": "water", "kind": "water", "polygon": [[0, 0.2], [0.93, 0.2], [0.93, 0.84], [0, 0.84]]}
       ],
       "watches": [
         {"text": "someone still in the water for 20 seconds",
@@ -35,8 +34,10 @@
                    "severity": "critical", "verify": "Is someone in the pool after it closed?", "cooldown_s": 300}}
       ],
       "incidents": [
-        {"watch": 1, "hours_ago": 9.5, "clip_s": 4, "status": "acknowledged", "by": "Suresh", "via": "telegram",
-         "count": 2, "reason": "A person in the water after the pool closed."}
+        {"watch": 1, "hours_ago": 9.5, "clip_s": 0.8, "status": "acknowledged", "by": "Suresh", "via": "telegram",
+         "count": 2, "reason": "Someone floating on their back in the water after the pool closed."},
+        {"watch": 1, "hours_ago": 20.5, "clip_s": 16.8, "status": "resolved", "count": 1,
+         "reason": "A person in the water after the pool closed.", "closed_by": "Cleared on its own"}
       ],
       "log_rows": []
     },

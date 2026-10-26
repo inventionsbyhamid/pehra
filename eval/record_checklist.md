@@ -18,7 +18,8 @@ What to film for the demo cameras and for the evaluation, with a laptop and a ph
 | `demo/service_gate.mp4` | A side entrance or a door where staff come in; you walking in and out as the "staff" (enrol yourself in People first) | Each arrival and leaving |
 | `demo/pool.mp4` | Only if you have a pool with adult volunteers and a spotter: a swimmer, then someone floating still for 20 s, then the pool empty after hours | Swim start, still float start and end, last person out |
 
-If there is no pool, skip it; the demo leaves the Pool camera out rather than fake it.
+If there is no pool, skip it: `python scripts/fetch_assets.py --demo` puts a Pexels stock video of adults in a pool
+there instead (credited in the app), and a recording of your own replaces it.
 
 ## Evaluation clips (same rules)
 

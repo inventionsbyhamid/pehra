@@ -221,8 +221,19 @@ def test_dropping_a_recorded_clip_adds_its_camera(tmp_path):
     assert a.post("/api/demo/login").status_code == 201
     cams = {c["name"]: c for c in a.get("/api/cameras").json()}
     assert set(cams) == {"Pool", "Plaza"} and cams["Pool"]["url"].endswith("demo/pool.mp4")
-    assert [z["name"] for z in cams["Pool"]["zones"]] == ["water", "lifeguard chair"]
-    assert len([i for i in a.get("/api/incidents").json() if i["camera_id"] == cams["Pool"]["id"]]) == 1
+    assert [z["name"] for z in cams["Pool"]["zones"]] == ["water"]
+    assert len([i for i in a.get("/api/incidents").json() if i["camera_id"] == cams["Pool"]["id"]]) == 2
+
+
+def test_the_pool_clip_is_pexels_stock_with_its_credit():
+    from watchful.vision.models import DEMO_CLIPS
+    pool = next(c for c in demo.spec()["cameras"] if c["key"] == "pool")
+    clip = DEMO_CLIPS[pool["clip"]]
+    assert clip.url.startswith("https://videos.pexels.com/") and clip.page.startswith("https://www.pexels.com/video/")
+    assert len(clip.sha256) == 64 and "Pexels" in clip.license
+    assert "Stock video from Pexels" in pool["source"] and clip.creator in pool["source"]
+    # examples only of what this clip really shows: nobody stays still 20 s, so no still in the water example
+    assert {pool["watches"][i["watch"]]["watch"]["name"] for i in pool["incidents"]} == {"In the water after pool hours"}
 
 
 def test_demo_json_is_honest_and_every_watch_can_run():

@@ -11,8 +11,9 @@ demo's clips are not watched cameras, billing/limits.py), and the plan sweep lea
 have caps of their own (SandboxLLM). When it ends its cameras stop (api/demo.py SandboxWatch), every request in it is
 refused (demo_rules.py), and the daily `demo_reset` job deletes it with its visitor, device links and pictures.
 
-A demo camera with no clip file is left out, never shown with another clip: today only OpenCV's sample vtest.avi
-(Apache 2.0) is known to be safe to show, so Plaza runs on it, and Pool and the gates appear when the owner's consented
+A demo camera with no clip file is left out, never shown with another clip: Plaza runs on OpenCV's sample vtest.avi
+(Apache 2.0), Pool on a Pexels stock video that `scripts/fetch_assets.py --demo` fetches, checks and crops into
+samples/demo/ (never committed; vision/models.py DEMO_CLIPS), and the gates appear when the owner's consented
 recordings land in samples/demo/.
 
     python -m watchful.demo cameras    which demo cameras new sandboxes get, and which clips are missing

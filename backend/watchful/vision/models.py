@@ -125,6 +125,32 @@ EMBEDDERS: dict[str, EmbedderSpec] = {
 SAMPLE_BASE = "https://raw.githubusercontent.com/opencv/opencv/5.x/samples/data/"
 SAMPLES = {name: SAMPLE_BASE + name for name in ("vtest.avi", "basketball1.png", "basketball2.png", "messi5.jpg")}
 
+PEXELS_LICENSE = ("Pexels licence (pexels.com/license): free to use and modify, no attribution required; "
+                  "not to be sold or redistributed unaltered")
+
+
+@dataclass(frozen=True)
+class StockClip:
+    """A demo camera's clip from a stock site. Never committed: fetched from a pinned file, checked by SHA 256, then
+    cropped and scaled with ffmpeg to the camera's view (`vf`)."""
+    url: str
+    sha256: str
+    page: str
+    creator: str
+    license: str
+    vf: str
+
+
+# python scripts/fetch_assets.py --demo
+DEMO_CLIPS: dict[str, StockClip] = {
+    # a drone held still above an outdoor pool, adults only, 24.6 s; the camera keeps the busy right three fifths
+    "demo/pool.mp4": StockClip(
+        "https://videos.pexels.com/video-files/28559383/12420637_2560_1440_30fps.mp4",
+        "ab44b514692f04baa4c1881df3814c1bf0789ac09e47922f60f5c8d18c2cc2b2",
+        "https://www.pexels.com/video/aerial-view-of-people-enjoying-a-pool-28559383/",
+        "Vitalis Nwenyi", PEXELS_LICENSE, "crop=iw*3/5:ih:iw*2/5:0,scale=768:720"),
+}
+
 
 def model_path(name: str, settings: Settings | None = None) -> Path:
     base = settings.models_dir if settings else Path("models")
