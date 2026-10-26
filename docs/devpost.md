@@ -23,8 +23,8 @@ top of the feed (3:2, JPG or PNG under 5 MB). Only the demo's sample clip or con
 
 ## Try it out
 
-* Live demo: https://arising-draw-database-kelkoo.trycloudflare.com (press Try the demo)
-* Code: not set yet
+* Live demo: https://pehra.dijmo.com (press Try the demo)
+* Code: https://github.com/inventionsbyhamid/pehra
 * Technical report: `docs/report.md` in the code repository
 
 ## Video demo link
@@ -56,7 +56,7 @@ playwright, axe-core, pytest, docker
 
 ### What is live today, and what waits
 
-* **Live today on our test server** (https://arising-draw-database-kelkoo.trycloudflare.com): the public site, Try the demo with a private sandbox society per
+* **Live today on our test server** (https://pehra.dijmo.com): the public site, Try the demo with a private sandbox society per
   visitor, the control room, camera pages, the watch editor with its coverage card and backtest, incidents with the
   exact Telegram message, the gate log and staff register, adding a laptop or phone as a camera, settings and the
   billing panel. It is one x86 container with stock OpenCV 5.0.0.93; files stay on its disk, and the AI runs on
@@ -95,8 +95,8 @@ group, without anyone watching a wall of screens.
   blurred cameras.
 * **Plug in what exists:** RTSP from Hikvision, CP Plus and Dahua recorders, a small bridge for recorders behind the
   society's router, any laptop or phone as a camera by link or QR code, and uploaded recordings.
-* **Pricing:** [₹699](../backend/watchful/data/plans.json "plans.society.price_month_inr") per watched camera a month (about [$7](../backend/watchful/data/plans.json "plans.society.price_month_inr in plans.json over usd_inr.rate in plans.json")), with a free plan
-  of [2](../backend/watchful/data/plans.json "plans.free.limits.watched_cameras") cameras; prices exclude GST and are charged in rupees through Polar.
+* **Pricing:** [₹699](https://github.com/inventionsbyhamid/pehra/blob/main/backend/watchful/data/plans.json "plans.society.price_month_inr") per watched camera a month (about [$7](https://github.com/inventionsbyhamid/pehra/blob/main/backend/watchful/data/plans.json "plans.society.price_month_inr in plans.json over usd_inr.rate in plans.json")), with a free plan
+  of [2](https://github.com/inventionsbyhamid/pehra/blob/main/backend/watchful/data/plans.json "plans.free.limits.watched_cameras") cameras; prices exclude GST and are charged in rupees through Polar.
 
 ### How we built it
 
@@ -127,10 +127,10 @@ memory (its preprocessing is OpenCV, and OpenCV DNN is one setting away):
 
 * **Tracking at the frame rate a shared server delivers.** Our first shared camera pool gave each camera about one
   analysed frame a second, and IoU tracking fell apart: at 1 fps line crossings going in dropped to
-  [0%](../eval/results/eval-plaza_before_fix.json "runs.fps_1.watches.cross_in.recall.value") recall on the Plaza clip. A third association pass by distance over
-  time, size and clothes brought it to [83%](../eval/results/eval-plaza.json "runs.fps_1.watches.cross_in.recall.value").
+  [0%](https://github.com/inventionsbyhamid/pehra/blob/main/eval/results/eval-plaza_before_fix.json "runs.fps_1.watches.cross_in.recall.value") recall on the Plaza clip. A third association pass by distance over
+  time, size and clothes brought it to [83%](https://github.com/inventionsbyhamid/pehra/blob/main/eval/results/eval-plaza.json "runs.fps_1.watches.cross_in.recall.value").
 * **Plates that lie.** A plate box that cuts characters can still read as a valid plate. We fold the grammar cost, the
-  box score and agreement across frames into the confidence; in [20,000](../eval/results/build_measurements.json "plates.fuzzed") fuzzed cut plates no wrong
+  box score and agreement across frames into the confidence; in [20,000](https://github.com/inventionsbyhamid/pehra/blob/main/eval/results/build_measurements.json "plates.fuzzed") fuzzed cut plates no wrong
   read reached the confidence needed to keep a text.
 * **Still in moving water.** Optical flow inside a body's box moves with the water. Comparing it with the flow in a
   ring around the box separated still bodies from swimmers on rendered water.
@@ -144,9 +144,9 @@ memory (its preprocessing is OpenCV, and OpenCV DNN is one setting away):
 
 * A request never seen before ("someone carrying a ladder near the terrace door after 8 PM") compiles into general
   OpenCV signals with no new code, and the card says honestly what it cannot watch.
-* On a crowded clip at 2 fps, the three watches together reached [86%](../eval/results/eval-plaza.json "runs.fps_2.all.precision.value") precision
-  and [73%](../eval/results/eval-plaza.json "runs.fps_2.all.recall.value") recall, from [43](../eval/results/eval-plaza.json "runs.fps_2.ai.candidates") candidates that became
-  [3](../eval/results/eval-plaza.json "runs.fps_2.ai.checks") AI checks.
+* On a crowded clip at 2 fps, the three watches together reached [86%](https://github.com/inventionsbyhamid/pehra/blob/main/eval/results/eval-plaza.json "runs.fps_2.all.precision.value") precision
+  and [73%](https://github.com/inventionsbyhamid/pehra/blob/main/eval/results/eval-plaza.json "runs.fps_2.all.recall.value") recall, from [43](https://github.com/inventionsbyhamid/pehra/blob/main/eval/results/eval-plaza.json "runs.fps_2.ai.candidates") candidates that became
+  [3](https://github.com/inventionsbyhamid/pehra/blob/main/eval/results/eval-plaza.json "runs.fps_2.ai.checks") AI checks.
 * Privacy built into the pixels, not a policy page: blurred stills, blur on the device before sending, consent for
   every face template, and no photos kept.
 * A judge can press Try the demo and, in their own sandbox, add their phone by QR code, type a watch and see it fire.

@@ -5,9 +5,9 @@
 An AI control room for the CCTV cameras Indian housing societies already have, built on OpenCV 5 and AWS.
 OpenCV AI Competition 2026 entry by Hamid Mahmood Siddiqui (solo, India).
 
-* Live demo: https://arising-draw-database-kelkoo.trycloudflare.com (press Try the demo)
+* Live demo: https://pehra.dijmo.com (press Try the demo)
 * Video: not set yet
-* Code: not set yet
+* Code: https://github.com/inventionsbyhamid/pehra
 * Diagrams: [architecture](architecture.svg) and [agent workflow](agent-workflow.svg)
 
 Every measured number in this report is filled in by `docs/fill.py` from a file in `eval/results/` (or the plans
@@ -19,7 +19,7 @@ link to their sources, listed again at the end.
 
 | Part | State today |
 | --- | --- |
-| Public site, Try the demo, control room, camera pages, watch editor with its coverage card and backtest, incidents with the Telegram preview, gate log and staff register, add a camera (this device, a phone by QR, a recorder, the bridge, an address, an upload), settings, billing panel | Live on our test server at https://arising-draw-database-kelkoo.trycloudflare.com, a temporary Cloudflare tunnel address until the `pehra.dijmo.com` tunnel is set. The test server is one x86 container (an ioflood server, not AWS): stock OpenCV 5.0.0.93, not COOL; files on its own disk, not S3; the AI checks run on DeepSeek V4.1 Flash through OpenRouter, not Bedrock |
+| Public site, Try the demo, control room, camera pages, watch editor with its coverage card and backtest, incidents with the Telegram preview, gate log and staff register, add a camera (this device, a phone by QR, a recorder, the bridge, an address, an upload), settings, billing panel | Live on our test server at https://pehra.dijmo.com, a temporary Cloudflare tunnel address until the `pehra.dijmo.com` tunnel is set. The test server is one x86 container (an ioflood server, not AWS): stock OpenCV 5.0.0.93, not COOL; files on its own disk, not S3; the AI checks run on DeepSeek V4.1 Flash through OpenRouter, not Bedrock |
 | Demo cameras | Only Plaza, OpenCV's sample clip `vtest.avi`. The Pool, Main gate and Service gate cameras appear by themselves when the owner's consented recordings are dropped into `data/samples/demo/`; until then a sandbox's gate log is empty, and its staff register lists six made up staff with seeded attendance |
 | Telegram | Code done and tested against a mocked Bot API (connect code, webhook, posts, edits, reminders, taps). No bot token is set on the test server, so nothing is posted; the incident page shows exactly what the group would get |
 | Google sign in | Code done and tested; off on the test server (no keys). Visitors use Try the demo; the operator can issue a sign in link |
@@ -45,9 +45,9 @@ link to their sources, listed again at the end.
 | Required deliverable | Where |
 | --- | --- |
 | Technical report: problem, users, architecture, OpenCV 5, AWS, evaluation, limitations, responsible use | This file, sections 1 to 12 |
-| Repository with pinned dependencies and build, deploy and test instructions | not set yet; the [README](../README.md); `requirements.lock`, `web/package-lock.json` |
+| Repository with pinned dependencies and build, deploy and test instructions | https://github.com/inventionsbyhamid/pehra; the [README](../README.md); `requirements.lock`, `web/package-lock.json` |
 | Architecture diagram with the OpenCV 5, AWS, COOL and agent parts | [architecture.svg](architecture.svg) and [agent-workflow.svg](agent-workflow.svg), with their Mermaid sources beside them |
-| Working web endpoint | https://arising-draw-database-kelkoo.trycloudflare.com |
+| Working web endpoint | https://pehra.dijmo.com |
 | Video of five minutes or less | not set yet; the plan is in [video-script.md](video-script.md) |
 | Evaluation evidence with failure cases | [Section 8](#8-evaluation), `eval/results/`, the failure pictures in `eval/results/failures/` |
 

@@ -1,169 +1,186 @@
 # Pehra
 
-Every camera in your society, watched. Pehra (पहरा, "the watch") is an AI control room for the CCTV cameras an Indian
-housing society already has. OpenCV 5 watches every camera live; anyone can add a watch in plain words and see
-honestly what it will and will not watch; an agent checks each flagged moment with OpenCV tools; and the society's
-Telegram group gets a graded alert with faces blurred, a gate log of every vehicle and a register of staff arrivals.
-
-Built for the OpenCV AI Competition 2026 with OpenCV 5 and AWS by Hamid Mahmood Siddiqui. The full write up is in
-[docs/report.md](docs/report.md), with the [architecture](docs/architecture.svg) and the
-[agent workflow](docs/agent-workflow.svg).
+Pehra (पहरा, "the watch") is an AI control room for the CCTV cameras an Indian housing society already has.
 
 <!-- try start -->
 ## Try it
 
-* Live demo: https://arising-draw-database-kelkoo.trycloudflare.com
-  Press Try the demo for a private sandbox society for a day. It opens the control room with the Plaza demo camera
-  (OpenCV's sample clip), an open critical incident with its picture and the Telegram message the society's group
-  would get. Add your laptop or phone as a camera from the demo bar, type a watch such as "someone in front of the
-  camera", and see it fire.
+* Live demo: https://pehra.dijmo.com. Press Try the demo and you get a private sandbox society for a day, no sign in. It opens
+  the control room with the Plaza demo camera (OpenCV's sample clip) and an open critical incident, with the Telegram
+  message the society's group would get. Add your laptop or phone as a camera from the demo bar, type a watch such as
+  "someone in front of the camera", and see it fire.
 * Video: not set yet
-* Website: not set yet
-* Code: not set yet
+* Code: https://github.com/inventionsbyhamid/pehra
 
-The demo runs on our test server today (see "Run it on our test server" below). The AWS deployment is described below
-and in the report.
+The live demo runs on our own server, with stock OpenCV and an OpenRouter model. The AWS stack below is built and
+tested but not deployed yet.
 <!-- try end -->
+
+<p align="center">
+  <img src="docs/overview.svg" width="100%" alt="Pehra at a glance: cameras feed ingest and OpenCV perception (detect, track, zones and lines, faces at entries, plates, camera health). Watches in plain words flag moments, an AI check looks at them, and incidents reach the control room and Telegram. Perception also fills the gate log and staff register. It runs on AWS (EC2 Graviton, S3, Bedrock, SSM, CloudWatch, SNS, CloudFormation) or self hosted with Docker.">
+</p>
 
 ## What it does
 
-* **Control room:** a wall of camera tiles with a health dot each, and one alert feed.
-* **Any watch in plain words:** "someone in the water after pool hours", "gate left open after 11 PM", "log every
-  cab". Pehra compiles the words into general OpenCV signals and shows a card first: what it will watch and how
-  reliably, what it cannot and the nearest alternative, the setup it needs, and how often it would have fired in the
-  last 24 hours.
-* **Graded alerts on Telegram:** critical alerts go out at once, before the AI check, as one message per incident,
-  edited as things change, with Acknowledge and False alarm buttons. Stills only, with the faces of anyone not
-  enrolled blurred.
-* **A verifier agent with OpenCV tools:** zoom, brighten, optical flow, pose history and the path walked; it raises
-  the alert with a grade, dismisses it, or asks a person. The AI never watches the stream.
-* **Gate log** with plate text and colour, in and out paired by plate; **staff register** from consenting adult
-  staff only; **camera health** for offline, covered, turned or blurred cameras.
-* **Cameras in:** RTSP from Hikvision, CP Plus and Dahua recorders, the Pehra bridge for recorders behind a router,
-  any laptop or phone as a camera (faces blurred in the browser by OpenCV.js before sending), and uploads.
+Most societies record every camera all day and nobody watches. Pehra watches all of them live with OpenCV 5 and tells
+the security team what matters.
 
-<!-- pricing start -->
-## Pricing
+Anyone on the committee can add a watch in plain words, like "someone in the water after pool hours" or "gate left
+open after 11 PM". Before it is saved, Pehra shows what it will watch, what it cannot, and how often it would have
+fired over the last day. When OpenCV flags a moment, an AI agent takes a closer look using OpenCV tools. If it is
+real, the society's Telegram group gets an alert with a still picture, faces blurred, and Acknowledge and False alarm
+buttons.
 
-Pehra is sold to housing societies in India per watched camera, charged in rupees through Polar, our merchant of
-record. A society picks which of its cameras Pehra watches. Prices exclude GST. Dollar amounts are approximate, at
-[₹94.94](backend/watchful/data/plans.json "usd_inr.rate") to the dollar (RBI reference rate, [23 October 2026](backend/watchful/data/plans.json "usd_inr.date")); the site shows them to visitors outside India.
+Pehra also keeps a gate log of vehicles by plate and a register of staff who agreed to be enrolled, and it raises an
+alert when a camera goes offline, is covered, turned or blurred.
 
-| Plan | A month | A year | Watched cameras | Footage kept |
-| --- | --- | --- | --- | --- |
-| Free | [₹0](backend/watchful/data/plans.json "plans.free.price_month_inr") | | [2](backend/watchful/data/plans.json "plans.free.limits.watched_cameras") | [7](backend/watchful/data/plans.json "plans.free.limits.retention_days") days |
-| Society | [₹699](backend/watchful/data/plans.json "plans.society.price_month_inr") a camera (about [$7](backend/watchful/data/plans.json "plans.society.price_month_inr in plans.json over usd_inr.rate in plans.json")) | [₹6,990](backend/watchful/data/plans.json "plans.society.price_year_inr") a camera (about [$74](backend/watchful/data/plans.json "plans.society.price_year_inr in plans.json over usd_inr.rate in plans.json")) | up to [49](backend/watchful/data/plans.json "plans.society.limits.watched_cameras") | [30](backend/watchful/data/plans.json "plans.society.limits.retention_days") days |
-| Large sites | By agreement | | [50](backend/watchful/data/plans.json "plans.large.limits.min_cameras") or more | by agreement |
+## How it works
 
-Every plan has the control room, any watch in plain words (with the watch log) and graded Telegram alerts. The gate
-log, the staff register and the daily summary come with the Society plan and above, as the pricing page lists them;
-a free society is told so where they would be, with the way to change its plan.
+1. Cameras come in over RTSP from recorders, through a small bridge program for recorders behind a router, from a
+   phone or laptop browser, or as an uploaded video.
+2. OpenCV finds people and vehicles, tracks them, and checks the zones and lines drawn on each camera. It also reads
+   plates at gates, recognises enrolled staff at entries and watches each camera's health.
+3. The AI turns a watch written in plain words, once, into simple signals. A rule engine checks those signals on every
+   analysed frame.
+4. When a rule fires, the AI agent looks at a few stills of that moment, never the stream, and decides.
+5. The incident shows up in the control room and, if it matters, on Telegram.
 
-What one camera costs us on AWS is not measured yet (report section 6); running the instance is estimated at about
-[$105.00](eval/results/build_measurements.json "estimates.aws_month_usd") (about [₹10,000](eval/results/build_measurements.json "estimates.aws_month_usd in build_measurements.json times usd_inr.rate in plans.json")) a month (report section 5).
-<!-- pricing end -->
+Each replaceable part (detector, AI, storage, alerts) is picked by a setting. The [detailed
+architecture](docs/architecture.svg) and the [agent workflow](docs/agent-workflow.svg) show the full picture.
 
-## Run it on your computer
+## How OpenCV is used
 
-You need Docker and about 4 GB of free disk for the models.
+| What | OpenCV | Why |
+| --- | --- | --- |
+| Reading cameras | `VideoCapture` with FFmpeg | RTSP streams, uploads and the demo clip |
+| Skipping still scenes | `createBackgroundSubtractorMOG2` | The detector runs only when something moves |
+| Night | `createCLAHE` | Dark frames are brightened first |
+| People and vehicles | YOLOX nano on `cv2.dnn` | Every analysed frame |
+| Tracking | `KalmanFilter` | Steady ids for time in a zone and line crossings |
+| Zones and lines | `pointPolygonTest` | Inside, entering, crossing in a direction |
+| Falls | MediaPipe pose on `cv2.dnn` | Torso angle over time |
+| Still in the water | `DISOpticalFlow` | A body that stops moving while the water moves |
+| Faces | `FaceDetectorYN` (YuNet), `FaceRecognizerSF` (SFace) | Blur everyone; recognise consenting staff at entries |
+| Plates | `LPD-YuNet` and PP-OCR on `cv2.dnn`, `warpPerspective` | The gate log |
+| Camera health | ORB, `findHomography` with `USAC_MAGSAC`, `Laplacian` | Turned, blurred or covered cameras |
+| Gate open or closed | `Sobel`, `matchTemplate` | A zone compared with example pictures |
+| The agent's tools | zoom, `createCLAHE`, `fastNlMeansDenoisingColored`, DIS flow | A closer look at a flagged moment |
+| A phone as a camera | OpenCV.js `FaceDetectorYN` | Faces blurred before a picture leaves the phone |
 
-```
-docker build -f deploy/Dockerfile.dev -t pehra-dev .
-docker run --rm -it -p 8000:8000 -v "$PWD":/app -w /app pehra-dev bash
-```
+One model is not run by OpenCV by default. SigLIP 2, which matches looks described in words, runs on ONNX Runtime
+because it needs far less memory there; OpenCV still prepares every crop, and `EMBEDDER_RUNTIME=opencv` moves it to
+`cv2.dnn`.
 
-Inside the container:
+## The AI check
 
-```
-python scripts/fetch_assets.py      # every model and the sample clips, each checked by SHA 256
-cp .env.example .env                # then set SESSION_SECRET and DATA_KEY, see below
-(cd web && npm ci && npm run build)
-PYTHONPATH=backend uvicorn watchful.api:create_app --factory --host 0.0.0.0 --port 8000
-```
+The AI never watches video. It has three jobs: turn a watch written in plain words into signals OpenCV can check;
+look at a flagged moment and decide; and answer questions about what happened.
 
-Make the two secrets for `.env` with `python -c "import secrets; print(secrets.token_hex(32))"`, once each.
-`DATA_KEY` seals camera addresses; keep it, since addresses sealed with a lost key cannot be read.
+To check a moment, the agent can ask for more frames, zoom in, brighten or denoise, measure optical flow inside the
+box, read the person's pose over time, or draw the path they walked. Each of those is an OpenCV call. It then raises
+the alert with a grade, dismisses it, asks a person, or says it cannot judge, which is what it must say about anyone's
+age.
 
-Open http://localhost:8000 and press Try the demo for a private sandbox society with the Plaza demo camera (OpenCV's
-`vtest.avi`). To sign in as yourself without Google keys, print a single use link on the server:
+Some things it never decides. A critical alert goes to Telegram at once, before the check. If the AI is down or the
+day's limit is used up, the moment is still filed, marked as not checked. Camera health and staff faces are measured by
+OpenCV alone. On AWS the model is Claude Haiku 5.5 on Amazon Bedrock; the live demo uses DeepSeek V4.1 Flash through
+OpenRouter.
 
-```
-PYTHONPATH=backend python -m watchful.auth signin-link you@example.com --workspace "Green Park"
-```
+<!-- aws start -->
+## AWS
 
-Browsers allow the camera on localhost; anywhere else the site needs https. Set `OPENROUTER_API_KEY` in `.env` for
-the AI (writing watches, checking flagged moments, answering questions); without it a critical moment still alerts,
-marked unverified. Telegram needs `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and an https `PUBLIC_BASE_URL`;
-then Settings, Telegram gives the code to send in the society's group. Every other setting, and what it does, is in
-`.env.example`. The Python package is called `watchful`, after the project Pehra grew out of; the product name comes
-from `brand.json`.
+We built the production deployment for AWS in Mumbai (`ap-south-1`): one CloudFormation stack around one Graviton
+instance. It has not run on AWS yet. We test the template with `cfn-lint`, moto and a fake `aws` command.
 
-## Run it on our test server
+| Service | What it does for Pehra |
+| --- | --- |
+| EC2 c8g (Graviton4), from the COOL image | Runs everything, with OpenCV 5 built for Graviton |
+| S3 | Pictures and clips, incident clips under Object Lock, and a Litestream copy of the database |
+| Bedrock | Claude Haiku 5.5, for the AI check, writing watches and answering questions |
+| SSM Parameter Store | Settings and secrets |
+| CloudWatch | Logs, metrics, a dashboard and alarms |
+| SNS | Alarm emails |
+| CloudFormation | The whole stack, with a budget alarm |
 
-The live demo runs on our own server (ioflood) in one Docker container, `watchful-app`, built from the same dev
-image. `../wapp` (a helper outside this repository) copies the code there, builds the web app and recreates the
-container. Visitors reach it through a Cloudflare tunnel (`watchful-tunnel`): a named tunnel on `pehra.dijmo.com`
-once its token is on the server, a quick tunnel on a random address until then; `../wapp url` prints the current one,
-and `docs/links.json` holds the one the documents show. The test server keeps files on its own disk, runs stock
-OpenCV on x86, and calls the AI through OpenRouter.
-
-Before deploying a new version, give the societies that need more than the free plan's cameras a comp, or the plan
-check at start switches their newest cameras off:
-`python -m watchful.billing comp <society id> society --cameras N --until 2026-11-30`.
-
-## Deploy it to AWS
-
-Everything runs in Mumbai (`ap-south-1`) on one Graviton instance (c8g.xlarge by default) from the COOL image, from
-`deploy/cloudformation.yaml`. Not yet run on AWS: the stack is tested with `cfn-lint`, moto and a fake `aws`.
-
-1. An AWS account on the Paid plan (the Free plan cannot launch c8g or Marketplace images), and the AWS CLI with a
-   profile named `pehra`.
-2. In AWS Marketplace, subscribe to COOL for Graviton4 (`prodview-fdvbfiewzuehs`) and copy its image id for Mumbai.
-3. In the Bedrock console, turn on access to Claude Haiku 5.5.
-4. For Google sign in, add `https://<your domain>/auth/google/callback` to the OAuth client. For Polar, point the
-   webhook at `https://<your domain>/api/billing/webhook`. For Telegram, make a bot with BotFather.
-5. `cp deploy/params.env.example deploy/params.env && chmod 600 deploy/params.env`, then fill in the COOL image id,
-   an alert email and the keys you have. Leave `SESSION_SECRET`, `DATA_KEY` and `TELEGRAM_WEBHOOK_SECRET` blank to
-   have them made once and kept.
-6. Commit what should ship (only committed code is deployed), run `deploy/deploy.sh --dry-run`, read it, then run
-   `deploy/deploy.sh`.
-7. Point the domain's A record at the address it prints. `https://<your domain>/healthz` should answer.
-
-The deploy checks itself: it fails unless `cv2` is loaded from COOL's install under `/opt/cool` with KleidiCV in the
-build and decodes H.264 and H.265, and if the app uses more memory than its budget. It ends by writing
-`eval/results/aws.json` with what it checked, for the documents. To run a command on the server later:
-`deploy/deploy.sh --run '<command>'`.
-
-## Tests
-
-In the dev container:
+To deploy, subscribe to COOL for Graviton4 in AWS Marketplace, turn on Claude Haiku 5.5 in Bedrock (the account
+needs the Paid plan for both), then:
 
 ```
-PYTHONPATH=backend pytest -q              # the backend tests (slow ones are left out by default)
-PYTHONPATH=backend pytest -q -m slow      # only the slow checks
-cd web && npx playwright test             # browser tests against a running server (see web/e2e/signin.ts)
-cfn-lint deploy/cloudformation.yaml
-python3 docs/fill.py --check              # which numbers in the documents are still waiting
+cp deploy/params.env.example deploy/params.env && chmod 600 deploy/params.env   # COOL image id, alert email, keys
+deploy/deploy.sh --dry-run
+deploy/deploy.sh
 ```
 
-## Evaluation and benchmark
+Point your domain at the address it prints. The deploy checks itself and fails unless OpenCV is loaded from COOL with
+KleidiCV and decodes H.264 and H.265. How much COOL speeds Pehra up on Graviton is not measured yet:
+the benchmark is ready (`eval/bench_aws.sh`) and waits for the AWS run.
+<!-- aws end -->
+
+<!-- selfhost start -->
+## Self hosting
+
+Pehra runs on any 64 bit Linux machine with Docker, in the society's office or in a cloud. One container holds the
+whole app and one volume holds its data. The image is [4,254 MB](eval/results/build_measurements.json "selfhost.image_mb"), most of it models. For a sense of
+memory and CPU: our old dev box (a 2013 Xeon) ran [8](eval/results/bench-devbox_no_text.json "scenario.cameras") cameras on
+[2](eval/results/bench-devbox_no_text.json "scenario.vcpus") CPUs in [2,416 MB](eval/results/bench-devbox_no_text.json "memory_mb.total_median"), analysing
+[0.51 frames a second](eval/results/bench-devbox_no_text.json "fps.per_camera.median") per camera.
 
 ```
-python eval/evaluate.py eval/labels/plaza.csv --fps 10,2,1   # the live engine on a labelled clip
-python eval/bench.py --setup devbox --cameras 8 --cpus 2       # the live camera pool: frames a second, memory, cost
-eval/bench_aws.sh                                              # the COOL benchmark plan and its cost; starts nothing
-eval/bench_aws.sh --yes-spend                                  # runs it on temporary AWS instances
-python3 docs/fill.py                                           # every measured number into the documents
+git clone https://github.com/inventionsbyhamid/pehra.git
+cd pehra
+cp .env.example .env        # then fill in the settings below
+docker compose up -d --build
 ```
 
-How to record the society clips the evaluation is waiting for is in `eval/record_checklist.md`.
+The first build downloads every model and checks it by SHA 256. These are the settings you set in `.env`; every other
+one is explained in `.env.example`.
+
+| Setting | What to put there |
+| --- | --- |
+| `SESSION_SECRET`, `DATA_KEY` | Two random strings: `python3 -c "import secrets; print(secrets.token_hex(32))"`, once each. Keep `DATA_KEY` safe: camera addresses sealed with a lost key cannot be read. |
+| `PUBLIC_BASE_URL` | The https address people will open. |
+| `OPENROUTER_API_KEY` | For the AI. Or `AI_PROVIDER=bedrock` with `BEDROCK_MODEL` and AWS credentials. Without either, critical moments still alert, marked unverified. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` | Your bot's token from BotFather, and one more random string. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional Google sign in. |
+| `ALLOW_PRIVATE_STREAMS` | `true` only when the machine sits inside the society's network. |
+
+The app listens on port 8000 of the machine itself. For https, any reverse proxy or a Cloudflare Tunnel works.
+
+Sign in the first time with a link printed on the server. It creates the society and makes you its owner:
+
+```
+docker compose exec pehra python -m watchful.auth signin-link you@example.com --workspace "Green Park"
+```
+
+Then add cameras from the control room. To connect Telegram, open Settings, Telegram, Connect a group, add your bot
+to the group and send it the `/connect` code shown there.
+
+Everything Pehra keeps (the database, pictures and clips) is in the `pehra-data` volume. To back it up, and to
+upgrade (the database migrates itself on start):
+
+```
+docker compose stop pehra
+docker compose run --rm --no-deps --user root -v "$PWD:/backup" pehra tar czf /backup/pehra-data.tgz -C /app/data .
+docker compose start pehra
+
+git pull && docker compose up -d --build
+```
+<!-- selfhost end -->
+
+## Privacy and safety
+
+Pehra never enrols, identifies or estimates the age of children, and it refuses any watch about age. Faces are
+recognised only for adult staff who agreed, and only on entry, gate and service door cameras. Everyone else is a
+person, a car or a cab. Telegram gets still pictures with faces blurred, and a phone used as a camera blurs faces before
+anything leaves it. Clips stay behind sign in, footage is deleted on a schedule, and nobody can search footage with a
+photo of someone's face.
 
 <!-- results start -->
 ## Results
 
-From the evaluation on OpenCV's Plaza clip, labelled by eye by us (one labeller), at 2 analysed frames a
-second; the plate reader on real photos; and the camera pool on our x86 dev box. The COOL benchmark on AWS Graviton
-has not run yet. Each number links to its file in [eval/results](eval/results); one not measured yet says so.
+We ran the live engine on OpenCV's Plaza sample clip, which we labelled by eye ourselves, at 2 analysed frames a
+second. We also tested the plate reader on real photos and the camera pool on our x86 dev box. Each number links to
+its file in [eval/results](eval/results); anything we have not measured says so.
 
 | Plaza clip, 2 fps | Labelled | Matched | False alarms | Missed | Precision | Recall |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -181,44 +198,51 @@ has not run yet. Each number links to its file in [eval/results](eval/results); 
 | COOL over stock OpenCV on the same Graviton instance | not measured yet |
 | Memory of the whole app on the dev box, 8 cameras, median | [2,416 MB](eval/results/bench-devbox_no_text.json "memory_mb.total_median") |
 
-Failure cases and limitations are in sections 8.6, 11 and 12 of the [report](docs/report.md).
+What goes wrong, so far: people walking close together, seen from above, merge into one box and one of them is
+missed; at very low frame rates two similar people can swap ids; a plate box that cuts characters can give a wrong but
+valid read; and the age guard also refuses some harmless phrases, such as "a person pushing a stroller". The first
+false alarm and first miss of each watch are saved as pictures in
+[eval/results/failures](eval/results/failures). One labelled clip is a small sample of one scene, and we have no
+society footage labelled yet. The [report](docs/report.md) has the details.
 <!-- results end -->
 
-## Models and their licences
+## Tests
 
-Every model allows a paid service. `scripts/fetch_assets.py` downloads them and checks each SHA 256 listed in
-`backend/watchful/vision/models.py`.
+In the dev container (`deploy/Dockerfile.dev`, after `python scripts/fetch_assets.py`):
+
+```
+PYTHONPATH=backend pytest -q                                   # the backend
+cd web && npm ci && npm run build && npx playwright test       # the browser tests
+cfn-lint deploy/cloudformation.yaml                            # the AWS template
+python eval/evaluate.py eval/labels/plaza.csv --fps 10,2,1     # the evaluation above
+python3 docs/fill.py --check --strict                          # every number in the documents has a source
+```
+
+## Models and licences
+
+Every model allows a paid service. `scripts/fetch_assets.py` downloads each one and checks its SHA 256.
 
 | Model | What it does here | Licence |
 | --- | --- | --- |
 | YOLOX nano (Megvii) | People and vehicles | Apache 2.0 |
-| MediaPipe pose (OpenCV Model Zoo) | Falls, hands, where a head is for blurring | Apache 2.0 |
-| YuNet and SFace (OpenCV Model Zoo) | Faces to blur; templates of consenting staff | MIT and Apache 2.0 |
-| `LPD-YuNet` (OpenCV Model Zoo) | Number plate boxes | Apache 2.0 |
-| `PP-OCRv3` detection and CRNN (OpenCV Model Zoo), `PP-OCRv5` recognition (PaddlePaddle) | Reading plates | Apache 2.0 |
-| SigLIP 2 base patch32 (ONNX by `onnx-community`), on ONNX Runtime (MIT) by default | Looks described in words, zone pictures, search | Apache 2.0 |
-| OpenCV.js 5.0 (`@techstark/opencv-js`) | Face blur on the device page | Apache 2.0 |
+| MediaPipe pose (OpenCV Model Zoo) | Falls, posture | Apache 2.0 |
+| YuNet and SFace (OpenCV Model Zoo) | Faces to blur; consenting staff | MIT and Apache 2.0 |
+| `LPD-YuNet` (OpenCV Model Zoo) | Plate boxes | Apache 2.0 |
+| `PP-OCRv3` detection (OpenCV Model Zoo), `PP-OCRv5` recognition (PaddlePaddle) | Reading plates | Apache 2.0 |
+| SigLIP 2 base patch32 (ONNX by `onnx-community`) | Looks described in words | Apache 2.0 |
+| OpenCV.js 5.0 (`@techstark/opencv-js`) | Face blur on the phone | Apache 2.0 |
 
-Ultralytics YOLO (AGPL) is not used. The sample clip `vtest.avi` and the test pictures come from OpenCV's samples.
+We do not use Ultralytics YOLO (AGPL). The sample clip `vtest.avi` comes from OpenCV's samples.
 
-## Pinned dependencies
-
-* Python 3.12. Every Python package is pinned in `requirements.lock` (from `requirements.in`), among them
-  `opencv-python-headless` 5.0.0.93, FastAPI 0.161.1, uvicorn 0.54.0, NumPy 2.5.4, SQLAlchemy 2.1.6, Alembic 1.20.1,
-  httpx 0.28.1, boto3 1.43.118, onnxruntime 1.23.2 and `polar-sdk` 1.0.2.
-* Web packages are pinned in `web/package-lock.json`: React 18.3.1, React Router 6.30.6, Vite 7.3.7, TypeScript 5.9.3,
-  `@techstark/opencv-js 5.0.0-release.1`, Playwright 1.64.1 and axe 4.14.0.
-* The dev image (`deploy/Dockerfile.dev`) is Python 3.12 on Debian bookworm with Node 22 and FFmpeg.
-* On AWS: OpenCV comes from the COOL image; Node 22.23.4 and Litestream 0.5.17 are checked by SHA 256 in
-  `deploy/remote_setup.sh`.
+Python 3.12 and every package are pinned in `requirements.lock` (OpenCV is `opencv-python-headless` 5.0.0.93); the
+web app's packages are pinned in `web/package-lock.json`.
 
 ## Documents
 
 * [Technical report](docs/report.md)
-* [Architecture](docs/architecture.svg) and [agent workflow](docs/agent-workflow.svg), with their Mermaid sources
-  ([architecture.mmd](docs/architecture.mmd), [agent-workflow.mmd](docs/agent-workflow.mmd))
-* [Video script](docs/video-script.md) and [Devpost text](docs/devpost.md)
+* [Detailed architecture](docs/architecture.svg) and [agent workflow](docs/agent-workflow.svg)
 * The bridge for recorders behind a router: [bridge/README.md](bridge/README.md)
+* Website docs (getting started, privacy, self hosting): https://pehra.dijmo.com/docs
 
 ## Licence
 

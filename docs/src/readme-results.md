@@ -1,8 +1,8 @@
 ## Results
 
-From the evaluation on OpenCV's Plaza clip, labelled by eye by us (one labeller), at {{say:2 analysed frames a
-second}}; the plate reader on real photos; and the camera pool on our x86 dev box. The COOL benchmark on AWS Graviton
-has not run yet. Each number links to its file in [eval/results](eval/results); one not measured yet says so.
+We ran the live engine on OpenCV's Plaza sample clip, which we labelled by eye ourselves, at {{say:2 analysed frames a
+second}}. We also tested the plate reader on real photos and the camera pool on our x86 dev box. Each number links to
+its file in [eval/results](eval/results); anything we have not measured says so.
 
 | Plaza clip, {{say:2 fps}} | Labelled | Matched | False alarms | Missed | Precision | Recall |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -20,4 +20,9 @@ has not run yet. Each number links to its file in [eval/results](eval/results); 
 | COOL over stock OpenCV on the same Graviton instance | {{bench.speedup.cool_over_stock_no_text}} |
 | Memory of the whole app on the dev box, 8 cameras, median | {{bench.devbox_no_text.memory_total}} |
 
-Failure cases and limitations are in sections 8.6, 11 and 12 of the [report](docs/report.md).
+What goes wrong, so far: people walking close together, seen from above, merge into one box and one of them is
+missed; at very low frame rates two similar people can swap ids; a plate box that cuts characters can give a wrong but
+valid read; and the age guard also refuses some harmless phrases, such as "a person pushing a stroller". The first
+false alarm and first miss of each watch are saved as pictures in
+[eval/results/failures](eval/results/failures). One labelled clip is a small sample of one scene, and we have no
+society footage labelled yet. The [report](docs/report.md) has the details.

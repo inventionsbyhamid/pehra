@@ -10,7 +10,7 @@ line that reads "not measured yet" is cut, never guessed.
 
 ## What to have ready
 
-* **The live demo** at https://arising-draw-database-kelkoo.trycloudflare.com, freshly deployed, in a browser at desktop width with sound off. Press Try the demo
+* **The live demo** at https://pehra.dijmo.com, freshly deployed, in a browser at desktop width with sound off. Press Try the demo
   once beforehand to check the Plaza camera loads.
 * **A phone** with its camera free, to scan the QR code. The owner's face is the only face on it, and it is blurred on
   the phone before sending.
@@ -42,7 +42,7 @@ line that reads "not measured yet" is cut, never guessed.
 | 3:55 to 4:15 | Architecture and the agent | `architecture.svg`, then `agent-workflow.svg` with its lettered dots | "Every pixel step runs on OpenCV 5. Each dot is an OpenCV result that changes what happens next." | The diagrams |
 | 4:15 to 4:35 | Evaluation and failure cases | The report's section 8 tables, then one failure picture from `eval/results/failures/` | Only the numbers below, each as filled; then "Our labels, made by eye, on OpenCV's sample clip: not yet a society camera." | The filled report |
 | 4:35 to 4:50 | AWS | If deployed: the deploy output with "COOL yes" and the CloudWatch dashboard. If not: the dry run and the stack's tests passing | Deployed: "On AWS Graviton with COOL, in Mumbai." Not deployed: "The AWS deployment is built and tested; it has not run yet." | AWS, if deployed |
-| 4:50 to 4:55 | End | The demo address and the repository | "Try it: https://arising-draw-database-kelkoo.trycloudflare.com" | |
+| 4:50 to 4:55 | End | The demo address and the repository | "Try it: https://pehra.dijmo.com" | |
 
 ## Numbers for the results card
 

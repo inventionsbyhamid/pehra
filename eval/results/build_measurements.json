@@ -438,5 +438,21 @@
    "source": "task-9-report.md, Tests and measurements",
    "date": "2026-10-25"
   }
+ },
+ "selfhost": {
+  "image_mb": {
+   "value": 4254,
+   "unit": "mb",
+   "what": "size of the self hosting image built from the root Dockerfile on x86 (Python packages from requirements.lock, the built web app, every model and sample clip), as docker image inspect reports it",
+   "source": "docs-site-report.md, self host verification (the root Dockerfile built and run on the ioflood host as watchful-selfhost-test)",
+   "date": "2026-10-26"
+  },
+  "models_mb": {
+   "value": 3088,
+   "unit": "mb",
+   "what": "the models folder inside that image, every model scripts/fetch_assets.py fetches and checks (du)",
+   "source": "docs-site-report.md, self host verification (the root Dockerfile built and run on the ioflood host as watchful-selfhost-test)",
+   "date": "2026-10-26"
+  }
  }
 }
