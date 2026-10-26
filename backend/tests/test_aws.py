@@ -557,16 +557,22 @@ def test_cfn_lint_is_clean():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_cfn_lint_is_clean_with_a_blank_cool_ami(tmp_path):
+@pytest.mark.parametrize("ami", ["", "ami-0c00100000000000a", "bogus"])
+def test_cfn_lint_is_clean_with_a_blank_cool_ami_and_with_the_cool_ami(tmp_path, ami):
+    """cfn-lint with the values deploy.sh passes: a blank CoolAmiId (stock) and a COOL AMI lint clean, and the
+    check is real: a value that is no AMI id is flagged."""
     if shutil.which("cfn-lint") is None:
         pytest.skip("cfn-lint is not installed")
-    text = (DEPLOY / "cloudformation.yaml").read_text()
-    stock = text.replace('  CoolAmiId:\n    Type: String\n    Default: ""\n',
-                         '  CoolAmiId:\n    Type: String\n    Default: ""\n    AllowedValues: [""]\n', 1)
-    assert stock != text
-    (tmp_path / "stock.yaml").write_text(stock)
-    result = subprocess.run(["cfn-lint", str(tmp_path / "stock.yaml")], capture_output=True, text=True)
-    assert result.returncode == 0, result.stdout + result.stderr
+    values = {"Prefix": STACK, "BrandName": BRAND["name"], "Domain": DOMAIN, "VpcId": "vpc-12345678",
+              "AlertEmail": "ops@example.com", "CoolAmiId": ami}
+    (tmp_path / "params.json").write_text(json.dumps([{"ParameterKey": k, "ParameterValue": v}
+                                                      for k, v in values.items()]))
+    result = subprocess.run(["cfn-lint", str(DEPLOY / "cloudformation.yaml"), "--parameter-files",
+                             str(tmp_path / "params.json")], capture_output=True, text=True)
+    if ami == "bogus":
+        assert result.returncode != 0 and "CoolAmiId" in result.stdout, result.stdout + result.stderr
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 # ---- settings and secrets from SSM ----
@@ -922,10 +928,10 @@ def test_remote_setup_stock_mode_without_cool(tmp_path):
     # no COOL library path in the instance's settings
     env_file, _ = instance_env_file(tmp_path)
     assert "LD_LIBRARY_PATH=/opt/cool/lib" in env_file.read_text()
-    drop = re.search(r"^\[ -n \"\$COOL_LIB\" \] \|\| (sed -i '/\^LD_LIBRARY_PATH=/d') /etc/watchful/watchful\.env", setup,
+    drop = re.search(r"^\[ -n \"\$COOL_LIB\" \] \|\| sed -i '(/\^LD_LIBRARY_PATH=/d)' /etc/watchful/watchful\.env", setup,
                      re.M)
-    subprocess.run(["bash", "-c", f'{drop.group(1)} "$1"', "-", env_file], check=True)
-    assert "LD_LIBRARY_PATH" not in env_file.read_text() and "OPENCV_FFMPEG_CAPTURE_OPTIONS" in env_file.read_text()
+    left = subprocess.run(["sed", drop.group(1), env_file], capture_output=True, text=True, check=True).stdout
+    assert "LD_LIBRARY_PATH" not in left and "OPENCV_FFMPEG_CAPTURE_OPTIONS" in left
     assert 'env ${COOL_LIB:+LD_LIBRARY_PATH="$COOL_LIB"} "$PY"' in setup
 
     # pinned downloads, and Caddy's unit runs the binary where the setup puts it
