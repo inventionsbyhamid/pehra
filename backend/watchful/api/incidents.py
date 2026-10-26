@@ -82,20 +82,35 @@ def make_router(ctx) -> APIRouter:
         named = titles(r)
         return [incident_json(ctx.blobs, i, named.get(i.watch_id or "")) for i in rows]
 
+    @router.get("/api/checks/today")
+    def checks_today(member: CurrentMember = Depends(current_member)):
+        """Today's AI checks against the plan's day (a sandbox's are the demo's own): once used up, moments are filed
+        unchecked until midnight, and the control room says so."""
+        from watchful.billing.limits import CHECKS, ai_used, daily_ai_cap
+        from watchful.demo import ai_limit
+        r = repo(member)
+        used = ai_used(r, CHECKS)
+        day = ai_limit(r, ctx.settings, ctx.tuning) or daily_ai_cap(r, ctx.settings.ai_daily_call_limit)
+        return {"used": used, "day": day, "reached": used >= day}
+
     @router.get("/api/incidents/precision")
     def precision(member: CurrentMember = Depends(current_member)):
         return incidents_.precision_by_watch(repo(member))
 
     @router.get("/api/incidents/{incident_id}")
     def incident(incident_id: str, member: CurrentMember = Depends(current_member)):
-        """One incident for its page; alert_id names the checked alert whose clip /api/alerts/{id}/clip plays."""
+        """One incident for its page; alert_id names the checked alert whose clip /api/alerts/{id}/clip plays, and
+        clip says whether it has one (a camera health moment shows nothing, so none is kept)."""
         r = repo(member)
         inc = incidents_.get_incident(r, incident_id)
         if inc is None:
             raise HTTPException(404, "No such incident.")
         alert_id = (inc.agent_json or {}).get("alert_id")
         alert = r.get_alert(alert_id) if alert_id else None
-        return {**as_json(r, inc), "timeline": timeline(r, inc), "alert_id": alert.id if alert else None}
+        cam = r.get_camera(inc.camera_id) if alert and inc.camera_id else None
+        clip = bool(alert and (alert.clip_key or (cam is not None and cam.kind == "file")))  # an upload cuts its own
+        return {**as_json(r, inc), "timeline": timeline(r, inc), "alert_id": alert.id if alert else None,
+                "clip": clip}
 
     def act(fn, incident_id: str, member: CurrentMember) -> dict:
         r = repo(member)

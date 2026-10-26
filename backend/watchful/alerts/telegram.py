@@ -345,7 +345,8 @@ def status_line(inc: m.Incident, tz: ZoneInfo) -> str:
 
 
 def told(inc: m.Incident) -> str:
-    """The incident's reason as people are told it: what the AI saw stays a possibility (they decide)."""
+    """The incident's reason as people are told it: what the AI saw stays a possibility (they decide). What OpenCV
+    measured (a camera's own state, an enrolled face) is said as it is."""
     reason = inc.reason or ""
     if (inc.agent_json or {}).get("verdict") == "alert" and reason and not reason.lower().startswith("possible"):
         return f"Possible: {reason}"

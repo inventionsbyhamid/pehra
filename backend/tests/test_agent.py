@@ -90,7 +90,7 @@ def test_critical_timeout_is_unverified(tmp_path):
 
 def test_step_limit_falls_back(tmp_path):
     v = verify(cand("info"), ctx(tmp_path), FakeLLM([step("pose_history", seconds=6)] * 6), max_steps=3)
-    assert v.status == "dismissed" and len(v.trace) == 3
+    assert v.status == "unverified" and len(v.trace) == 3 and "Not checked by the AI" in v.summary
 
 
 def test_invalid_twice_falls_back(tmp_path):
@@ -106,7 +106,7 @@ def test_ask_human(tmp_path):
 def test_face_match_skips_ai(tmp_path):
     llm = FakeLLM([])
     v = verify(cand(method="face"), ctx(tmp_path), llm)
-    assert v.status == "alert" and llm.calls == []
+    assert v.status == "measured" and llm.calls == []
 
 
 class Sent:

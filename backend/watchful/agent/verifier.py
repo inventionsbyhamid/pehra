@@ -28,18 +28,23 @@ class TraceStep:
 
 @dataclass
 class Verdict:
-    status: Literal["alert", "dismissed", "awaiting_human", "unverified"]
+    # measured: the camera's own state or an enrolled face, measured by OpenCV; no AI looks at those
+    status: Literal["alert", "dismissed", "awaiting_human", "unverified", "measured"]
     summary: str
     trace: list[TraceStep] = field(default_factory=list)
     severity: str | None = None  # the agent's grade of a real moment: critical, warning or info
     reason: str = ""  # why that grade
 
 
+LIMIT, UNREACHED = "daily limit reached", "the AI could not be reached"
+MEASURED = ("camera", "face")  # Candidate evidence methods OpenCV measures itself; no AI checks them
+
+
 def _fallback(c: Candidate, trace: list[TraceStep], why: str) -> Verdict:
+    """A moment the AI could not check is still filed, whatever its severity, saying why it was not checked: past
+    the daily cap or in an outage a warning or a note must not vanish."""
     seen = "; ".join(c.evidence.get("reasons", [])) or "OpenCV flagged it"
-    if c.severity == "critical":
-        return Verdict("unverified", plain(f"{c.watch_name}: {seen}. Not checked by the AI ({why})."), trace)
-    return Verdict("dismissed", f"Not verified ({why}).", trace)
+    return Verdict("unverified", plain(f"{c.watch_name}: {seen}. Not checked by the AI: {why}."), trace)
 
 
 def _opening(c: Candidate, ctx: ToolContext) -> tuple[str, list[str]]:
@@ -70,10 +75,10 @@ def _places(ctx: ToolContext) -> list[str]:
 
 def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadline_s: float = 45) -> Verdict:
     if c.evidence.get("method") == "face":
-        return Verdict("alert", f"{c.watch_name}: recognised by face.")
+        return Verdict("measured", f"{c.watch_name}: recognised by face.")
     if c.evidence.get("method") == "camera":
         seen = "; ".join(c.evidence.get("reasons", [])) or "the camera is not seeing properly"
-        return Verdict("alert", plain(f"{c.watch_name}: {seen}."))
+        return Verdict("measured", plain(f"{c.watch_name}: {seen}."))
     llm = llm.check() if hasattr(llm, "check") else llm  # one check counts once against the plan, whatever its steps
     start = time.monotonic()
     system = render("verify", tools=describe_tools())
@@ -84,15 +89,15 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
     for n in range(1, max_steps + 1):
         left = deadline_s - (time.monotonic() - start)
         if left <= 0:
-            return _fallback(c, trace, "out of time")
+            return _fallback(c, trace, "the AI took too long")
         images = [ctx.images[r] for r in list(ctx.images)[-MAX_IMAGES:]]
         t0 = time.monotonic()
         try:
             raw = llm.complete(system, messages, images=images, json_schema=SCHEMA, timeout_s=min(20.0, left))
         except AILimitReached:
-            return _fallback(c, trace, "daily AI limit reached")
+            return _fallback(c, trace, LIMIT)
         except Exception:  # timeouts, refused connections, provider errors: the alert must not be lost
-            return _fallback(c, trace, "the AI did not answer")
+            return _fallback(c, trace, UNREACHED)
         try:
             step = parse_json(raw)
             tool, args, why = str(step["tool"]), step.get("args"), str(step.get("why", ""))
@@ -125,7 +130,7 @@ def verify(c: Candidate, ctx: ToolContext, llm: LLM, max_steps: int = 6, deadlin
         trace.append(TraceStep(n, tool, args, why, result.text, int((time.monotonic() - t0) * 1000)))
         note = f"Result: {result.text}" + (f" New images: {', '.join(result.images)}." if result.images else "")
         messages += [Msg("assistant", raw), Msg("user", note)]
-    return _fallback(c, trace, "step limit reached")
+    return _fallback(c, trace, "the AI took too long")
 
 
 def verify_many(candidates: list[Candidate], ctx_for: Callable[[Candidate], ToolContext], llm: LLM,

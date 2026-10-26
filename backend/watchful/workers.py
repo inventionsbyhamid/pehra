@@ -12,7 +12,7 @@ import time
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 
-from watchful.agent.verifier import Verdict, _fallback, verify
+from watchful.agent.verifier import MEASURED, Verdict, _fallback, verify
 from watchful.alerts import incidents as incidents_
 from watchful.alerts.checks import CheckPool
 from watchful.alerts.crops import frame_still
@@ -570,7 +570,7 @@ class WorkerManager:
             incidents_.open_or_touch_incident(repo, c.camera_id, c.watch_id, c.severity, "",
                                               c.keyframe_keys[0] if c.keyframe_keys else None, c.ts, tuning=t)
             return True, None
-        if c.severity != "critical":
+        if c.severity != "critical" or c.evidence.get("method") in MEASURED:  # those are filed at once, measured
             return False, None
         key, box = self._picture(repo, pack)
         return False, incidents_.open_before_check(repo, c, key, box, tuning=t).id
@@ -588,9 +588,10 @@ class WorkerManager:
             with self._lock:
                 self._inflight.discard(c.fingerprint)
             return
-        if c.evidence.get("method") == "camera":  # nothing for the AI to check: filed now, never behind AI checks
+        if c.evidence.get("method") in MEASURED:  # nothing for the AI to check: filed now, never behind AI checks
             self._verify_and_store(pack, early, True)
-            self._settle_health(pack)
+            if c.evidence.get("method") == "camera":
+                self._settle_health(pack)
             return
         self.verifiers.submit(self._verify_and_store, pack, early, True)
 

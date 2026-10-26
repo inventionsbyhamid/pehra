@@ -135,3 +135,78 @@ def test_a_client_save_of_a_watch_that_can_never_fire_is_refused_in_plain_words(
     with pytest.raises(Invalid) as e:
         check_watch(spec, "someone falls", CompileContext())
     assert "posture" in str(e.value) and "is, !=, contains or in" in str(e.value)
+
+
+# I3: camera health and face incidents are measured by OpenCV, not checked by the AI, and say so
+
+def _tool_ctx(tmp_path):
+    import cv2
+    from watchful.agent.tools import ToolContext
+    from watchful.store.blobs import LocalBlobStore
+    from watchful.store.db import SqliteRepository
+    jpg = cv2.imencode(".jpg", np.full((240, 320, 3), 60, np.uint8))[1].tobytes()
+    return ToolContext(SqliteRepository(tmp_path / "w.db"), LocalBlobStore(tmp_path), "cam",
+                       frames=lambda t0, t1, n: [jpg] * n, crops=lambda tid, ts: jpg, poses=lambda tid, s: [])
+
+
+def _cand(severity="warning", watch="Gate", reasons=("came into gate",), **evidence):
+    from watchful.rules.engine import Candidate
+    return Candidate("w1", "cam", 100.0, 1, severity, {"reasons": list(reasons), **evidence}, [], "fp", watch, "?")
+
+
+@pytest.mark.parametrize("method", ["camera", "face"])
+def test_measured_watches_say_no_ai_ran(tmp_path, method):
+    from watchful.agent.verifier import verify
+    llm = FakeLLM([])
+    v = verify(_cand(method=method, reasons=["camera covered"]), _tool_ctx(tmp_path), llm)
+    assert v.status == "measured" and llm.calls == []
+
+
+def test_a_measured_incident_is_not_told_as_a_possibility(tmp_path):
+    from telegram_fakes import T0, make_env
+    from watchful.agent.verifier import verify
+    from watchful.alerts import incidents as inc_
+    from watchful.alerts.telegram import told
+    env = make_env(tmp_path)
+    c = _cand("warning", "A camera is offline, covered, turned or blurred", ["camera covered"], method="camera")
+    c.camera_id, c.ts = env.cams["gate"], T0.timestamp()
+    inc = inc_.after_check(env.a, c, verify(c, _tool_ctx(tmp_path), FakeLLM([])), "alt_1")
+    assert inc.agent_json["verdict"] == "measured"
+    assert told(inc) == "A camera is offline, covered, turned or blurred: camera covered."
+    face = _cand("critical", "Ravi at the gate", [], method="face")
+    face.watch_id, face.camera_id, face.ts, face.fingerprint = "w2", env.cams["pool"], T0.timestamp(), "fp2"
+    after = inc_.after_check(env.a, face, verify(face, _tool_ctx(tmp_path), FakeLLM([])), "alt_2")
+    assert after.agent_json["verdict"] == "measured" and told(after) == "Ravi at the gate: recognised by face."
+
+
+# I6: past the daily AI cap or in an AI outage, warning and info triggers are filed, not lost
+
+@pytest.mark.parametrize("severity", ["warning", "info"])
+@pytest.mark.parametrize("failure,words", [("limit", "daily limit reached"),
+                                           ("down", "the AI could not be reached")])
+def test_unchecked_triggers_are_filed_as_unverified(tmp_path, severity, failure, words):
+    from watchful.agent.llm import AILimitReached
+    from watchful.agent.verifier import verify
+    from telegram_fakes import T0, make_env
+    from watchful.alerts import incidents as inc_
+    error = AILimitReached("daily AI limit reached") if failure == "limit" else ConnectionError("refused")
+    v = verify(_cand(severity), _tool_ctx(tmp_path), FakeLLM([error]))
+    assert v.status == "unverified" and v.summary == f"Gate: came into gate. Not checked by the AI: {words}."
+    env = make_env(tmp_path)
+    for i in range(3):
+        c = _cand(severity)
+        c.camera_id, c.ts, c.fingerprint = env.cams["gate"], T0.timestamp() + i, f"fp{i}"
+        inc = inc_.after_check(env.a, c, v, f"alt_{i}")
+    assert inc is not None and inc.count == 3 and inc.severity == severity  # grouped like any other
+    assert inc.agent_json["verdict"] == "unverified" and words in inc.reason
+
+
+def test_the_control_room_hears_when_todays_ai_checks_are_used_up(app):
+    from accounts import SOCIETY, browser
+    c = browser(app)
+    repo = app.state.ctx.repo_for(SOCIETY)
+    first = c.get("/api/checks/today").json()
+    assert first["reached"] is False and first["day"] > 0
+    for _ in range(first["day"]):
+        repo.record_ai_call("verify")
+    assert c.get("/api/checks/today").json() == {"used": first["day"], "day": first["day"], "reached": True}

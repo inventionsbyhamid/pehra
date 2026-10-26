@@ -25,6 +25,7 @@ SYNC, ESCALATE, RETENTION, RELEASE = "telegram.sync", "incident.escalate", "inci
 CHECKING, NOT_CHECKED = "Checking now.", "Not checked by the AI yet."
 WARNINGS_KEY = "telegram_warnings"  # Meta: "on" when the society wants warnings on Telegram too
 AI_CHECK = "the AI check"  # agent_json closed_by of an incident the AI check cleared
+REAL = ("alert", "measured")  # verdicts that found the moment real: the AI check's, or OpenCV's own measurement
 
 _lock = threading.RLock()  # grouping is check then write; one writer at a time in this process
 
@@ -285,7 +286,7 @@ def record_verdict(repo, incident_id: str, status: str, severity: str | None, su
             return None
         prior = (inc.agent_json or {}).get("verdict")
         if inc.status not in ACTIVE:
-            if status == "dismissed" or (status != "alert" and _tapped_quiet(inc, now, t)):
+            if status == "dismissed" or (status not in REAL and _tapped_quiet(inc, now, t)):
                 return inc
             fresh = _open_or_touch(s, inc.workspace_id, inc.camera_id, inc.watch_id,
                                    graded_severity(inc.severity, severity), summary or inc.reason, inc.keyframe_key,
@@ -297,7 +298,7 @@ def record_verdict(repo, incident_id: str, status: str, severity: str | None, su
             if notify:
                 _notify(s, fresh, now, t, urgent=True, escalate=True)
             return fresh
-        if status == "dismissed" and prior == "alert":
+        if status == "dismissed" and prior in REAL:
             return inc  # another check found this situation real: a later dismissal does not clear it
         held = bool((inc.agent_json or {}).get("held"))
         inc.agent_json = {**(inc.agent_json or {}), **verdict}
@@ -338,7 +339,7 @@ def after_check(repo, candidate, verdict, alert_id: str | None = None, incident_
     severity = graded_severity(candidate.severity, getattr(verdict, "severity", None))
     at, fingerprint = when(now if now is not None else candidate.ts), getattr(candidate, "fingerprint", None)
     with _lock, repo.tx() as s:
-        if verdict.status != "alert" and fingerprint and (quiet := _quiet(
+        if verdict.status not in REAL and fingerprint and (quiet := _quiet(
                 s, repo.workspace_id, candidate.camera_id, candidate.watch_id, fingerprint, at, t)) is not None:
             return quiet
         inc = _open_or_touch(s, repo.workspace_id, candidate.camera_id, candidate.watch_id, severity,

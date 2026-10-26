@@ -140,7 +140,7 @@ def test_a_covered_camera_raises_exactly_one_alert(tmp_path):
         assert wait(lambda: repo.list_alerts(cam.id), 10)
         send(3, covered=True)
         alerts = repo.list_alerts(cam.id)
-        assert len(alerts) == 1 and "covered" in alerts[0].summary and alerts[0].status == "alert"
+        assert len(alerts) == 1 and "covered" in alerts[0].summary and alerts[0].status == "measured"
         assert wait(lambda: m.status(cam.id).health == "covered", 5)
         assert repo.get_camera(cam.id).status == "covered"
         send(3)
