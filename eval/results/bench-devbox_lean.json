@@ -1,0 +1,361 @@
+{
+ "setup": "devbox_lean",
+ "label": "dev box (2013 Xeon, no AVX2, shared host)",
+ "target": false,
+ "instance": null,
+ "date": "2026-10-26T03:00:36+00:00",
+ "code": "14b5746",
+ "engine": "c75b3f9",
+ "machine": {
+  "host": "e141bd4fa725",
+  "arch": "x86_64",
+  "cpu": "Intel(R) Xeon(R) CPU E5-2680 v2 @ 2.80GHz",
+  "avx2": false,
+  "cpus_available": 6,
+  "host_cores": 40,
+  "python": "3.12.15",
+  "opencv": "5.0.0",
+  "kleidicv": false,
+  "cool": false
+ },
+ "scenario": {
+  "cameras": 8,
+  "processes": 2,
+  "vcpus": 2,
+  "cores": [
+   30,
+   35
+  ],
+  "clip": "data/samples/vtest_x4.avi",
+  "watches": [
+   "enters",
+   "too_many",
+   "fall"
+  ],
+  "index_embeddings": false,
+  "scan_pool_at_start": true,
+  "ai": "stand in: every check real, answered at once",
+  "analysis_fps": 5.0,
+  "camera_threads": 1,
+  "malloc_arena_max": "2",
+  "command": "python eval/bench.py --setup devbox_lean --cameras 8 --cpus 2 --seconds 60 --no-text --no-index --label dev_box_indexing_off_no_description_watch"
+ },
+ "fps": {
+  "per_camera": {
+   "n": 8,
+   "median": 0.91,
+   "min": 0.9,
+   "max": 0.93
+  },
+  "total": 7.32,
+  "per_vcpu": 3.66,
+  "per_cpu_used": 4.41
+ },
+ "latency_ms": {
+  "p50": 367.0,
+  "p95": 563.0,
+  "p95_worst_camera": 597.0
+ },
+ "memory_mb": {
+  "total_median": 1574,
+  "total_max": 1711,
+  "total_max_whole_run": 1711,
+  "app_median": 172,
+  "camera_process_max": 485,
+  "processes": [
+   {
+    "pid": 711808,
+    "role": "app",
+    "max_mb": 172
+   },
+   {
+    "pid": 712142,
+    "role": "camera process",
+    "max_mb": 483
+   },
+   {
+    "pid": 712185,
+    "role": "camera process",
+    "max_mb": 485
+   },
+   {
+    "pid": 713016,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713057,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713059,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713100,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713250,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713251,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713252,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713253,
+    "role": "clip encoder",
+    "max_mb": 89
+   },
+   {
+    "pid": 713260,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713261,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713262,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713263,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713264,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713265,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713266,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713272,
+    "role": "clip encoder",
+    "max_mb": 89
+   },
+   {
+    "pid": 713279,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713280,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713283,
+    "role": "clip encoder",
+    "max_mb": 89
+   },
+   {
+    "pid": 713284,
+    "role": "clip encoder",
+    "max_mb": 89
+   },
+   {
+    "pid": 713285,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713286,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713293,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 713294,
+    "role": "clip encoder",
+    "max_mb": 72
+   },
+   {
+    "pid": 713401,
+    "role": "clip encoder",
+    "max_mb": 18
+   },
+   {
+    "pid": 712085,
+    "role": "multiprocessing helper",
+    "max_mb": 12
+   },
+   {
+    "pid": 712094,
+    "role": "scan worker",
+    "max_mb": 120
+   },
+   {
+    "pid": 712102,
+    "role": "scan worker",
+    "max_mb": 120
+   }
+  ]
+ },
+ "capacity": {
+  "at_2fps": 3,
+  "at_5fps": 1
+ },
+ "cost": {
+  "at_2fps": {
+   "c8g_large": {
+    "instance": "c8g.large",
+    "vcpus": 2,
+    "cameras": 3,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 46.7,
+    "usd_per_camera_month": 15.57,
+    "inr_per_camera_month": 1478,
+    "measured": false
+   },
+   "c8g_xlarge": {
+    "instance": "c8g.xlarge",
+    "vcpus": 4,
+    "cameras": 7,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 86.11,
+    "usd_per_camera_month": 12.3,
+    "inr_per_camera_month": 1168,
+    "measured": false
+   },
+   "c7i_large": {
+    "instance": "c7i.large",
+    "vcpus": 2,
+    "cameras": 3,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 72.45,
+    "usd_per_camera_month": 24.15,
+    "inr_per_camera_month": 2293,
+    "measured": false
+   },
+   "c7i_xlarge": {
+    "instance": "c7i.xlarge",
+    "vcpus": 4,
+    "cameras": 7,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 137.6,
+    "usd_per_camera_month": 19.66,
+    "inr_per_camera_month": 1866,
+    "measured": false
+   }
+  },
+  "at_5fps": {
+   "c8g_large": {
+    "instance": "c8g.large",
+    "vcpus": 2,
+    "cameras": 1,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 46.7,
+    "usd_per_camera_month": 46.7,
+    "inr_per_camera_month": 4434,
+    "measured": false
+   },
+   "c8g_xlarge": {
+    "instance": "c8g.xlarge",
+    "vcpus": 4,
+    "cameras": 2,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 86.11,
+    "usd_per_camera_month": 43.05,
+    "inr_per_camera_month": 4088,
+    "measured": false
+   },
+   "c7i_large": {
+    "instance": "c7i.large",
+    "vcpus": 2,
+    "cameras": 1,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 72.45,
+    "usd_per_camera_month": 72.45,
+    "inr_per_camera_month": 6879,
+    "measured": false
+   },
+   "c7i_xlarge": {
+    "instance": "c7i.xlarge",
+    "vcpus": 4,
+    "cameras": 2,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 137.6,
+    "usd_per_camera_month": 68.8,
+    "inr_per_camera_month": 6532,
+    "measured": false
+   }
+  }
+ },
+ "timing": {
+  "warmup_s": 10.7,
+  "settle_s": 10,
+  "measured_s": 60.0
+ },
+ "host": {
+  "load_1m": {
+   "n": 36,
+   "median": 16.23,
+   "min": 14.06,
+   "max": 18.34
+  },
+  "host_cores": 40,
+  "window_s": 58.1,
+  "cpus_used": {
+   "app": 0.07,
+   "camera process": 1.56,
+   "clip encoder": 0.03,
+   "multiprocessing helper": 0.0,
+   "scan worker": 0.0
+  },
+  "throttled_s": 6.2
+ },
+ "models_loaded": {
+  "1": {
+   "detector": 1,
+   "pose": 1
+  },
+  "0": {
+   "detector": 1,
+   "pose": 1
+  }
+ },
+ "ai": {
+  "checks": 8,
+  "checks_per_camera_hour": 60.0,
+  "note": "the same busy plaza on every camera, so this count is of that clip, not of a society camera"
+ },
+ "prices": {
+  "file": "eval/prices.json",
+  "usd_inr": 94.9432,
+  "checked": {
+   "c8g.large": "2026-10-26",
+   "c8g.xlarge": "2026-10-26",
+   "c7i.large": "2026-10-26",
+   "c7i.xlarge": "2026-10-26"
+  }
+ }
+}

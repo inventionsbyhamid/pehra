@@ -1,0 +1,14 @@
+# The plate reader on 8 Wikimedia Commons photos (CC BY, CC BY-SA or public domain), run once at default settings by
+# Task 6a on 25 Oct 2026 (task-6a-report.md, "Real photos"); its fix round (13e6bf6) left text and colour unchanged.
+# Handheld daylight photos, not gate CCTV: two whole cars cropped to the car as a detector would, six plate close ups.
+# The photos were not kept, so these rows are the reads that run printed, copied here; eval/plates.py --photos reads
+# new photos itself.
+photo,truth,read,colour_truth,colour_read,light,in_grammar
+Ambassador car Kolkata,WB04C3337,WB04C3337,yellow,yellow,day,yes
+Skoda car Kolkata,WB086787,WB086787,white,white,day,yes
+KA 19 P 8488 close up,KA19P8488,KA19P8488,white,white,day,yes
+KL 47 F 7878 close up,KL47F7878,KL47F7878,white,white,day,yes
+DL 2S N 6252 worn,DL2SN6252,DL2SN6252,white,white,day,yes
+KA 19 EQ 1316 two line close up,KA19EQ1316,KA1SE0131,white,white,day,yes
+DL 1V B 1008 angled about 30 degrees and dim,DL1VB1008,,yellow,unknown,day,yes
+KL 6D 827 old three digit plate,KL6D827,,yellow,yellow,day,no

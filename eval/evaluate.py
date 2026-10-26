@@ -10,7 +10,8 @@ A candidate matches a label of its watch's event within the tolerance (2 s), one
 Per watch and rate: precision and recall with Wilson 95% intervals (and the rule of three when nothing failed), the
 delay from the labelled moment to the candidate (median and p90), false alarms per camera hour; per rate: AI checks
 and incidents, distinct person ids, and what a plain motion alarm would have sent. The first false alarm and the first
-miss of each watch are saved as pictures with the tracker's boxes. Results: eval/results/eval-<clip>.json.
+miss of each watch are saved as pictures with the tracker's boxes (eval/results/failures/). Results:
+eval/results/eval-<clip>.json.
 
   python eval/evaluate.py eval/labels/plaza.csv --fps 10,2,1
 """
@@ -65,16 +66,18 @@ def load_setup(labels: Path) -> dict:
 
 def score(fired: list[float], truth: list[float], tolerance_s: float, lo: float = 0.0,
           hi: float = float("inf")) -> dict:
-    """One watch at one rate: candidate times against labelled times, scored between lo and hi. A candidate just
-    outside that window may still match a label inside it; one that matches nothing there is not counted."""
-    truth = sorted(t for t in truth if lo <= t <= hi)
+    """One watch at one rate: candidate times against labelled times, scored between lo and hi. Matching looks a
+    tolerance past both ends, so a moment just outside the window is neither a false alarm nor a miss inside it."""
+    truth = sorted(t for t in truth if lo - tolerance_s <= t <= hi + tolerance_s)
     fired = sorted(t for t in fired if lo - tolerance_s <= t <= hi + tolerance_s)
     pairs = match_events(fired, truth, tolerance_s)
-    tp = len(pairs)
-    delays = [fired[i] - truth[j] for i, j in pairs]
+    inside = [(i, j) for i, j in pairs if lo <= truth[j] <= hi]
+    tp = len(inside)
+    delays = [fired[i] - truth[j] for i, j in inside]
     paired_f, paired_t = {i for i, _ in pairs}, {j for _, j in pairs}
     false = [t for i, t in enumerate(fired) if i not in paired_f and lo <= t <= hi]
-    missed = [t for j, t in enumerate(truth) if j not in paired_t]
+    missed = [t for j, t in enumerate(truth) if j not in paired_t and lo <= t <= hi]
+    truth = [t for t in truth if lo <= t <= hi]
     hours = (hi - lo) / 3600 if hi != float("inf") else None
     return {"truth": len(truth), "fired": tp + len(false), "tp": tp, "fp": len(false), "fn": len(truth) - tp,
             "precision": proportion(tp, tp + len(false)), "recall": proportion(tp, len(truth)),
@@ -185,7 +188,7 @@ def picture(clip: Path, t: float, setup: dict, ticks: list, title: str, track: i
     cv2.putText(img, title, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
     dest.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(dest), img, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    return dest.relative_to(ROOT).as_posix() if dest.is_relative_to(ROOT) else str(dest)
+    return dest.relative_to(dest.parents[1]).as_posix()  # beside the results file: failures/<name>.jpg
 
 
 def evaluate(labels_path: Path, rates: list[float], out: Path, name: str) -> dict:
@@ -220,8 +223,7 @@ def evaluate(labels_path: Path, rates: list[float], out: Path, name: str) -> dic
             shutil.rmtree(work, ignore_errors=True)
         tag = f"fps_{fps:g}"
         run = {"analysis_fps": fps, "frames": r["frames"], "wall_s": round(r["wall_s"], 1),
-               "ms_per_frame": round(1000 * r["wall_s"] / max(r["frames"], 1)), "person_ids": r["person_ids"],
-               "watches": {}}
+               "person_ids": r["person_ids"], "watches": {}}
         totals = [0, 0, 0]
         for (wid, watch), spec in zip(r["watches"], setup["watches"]):
             event = spec["event"]

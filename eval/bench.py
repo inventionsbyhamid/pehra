@@ -73,6 +73,30 @@ def spread(values: list[float], digits: int = 2) -> dict:
             "min": round(min(values), digits), "max": round(max(values), digits)}
 
 
+def costs(total_fps: float, vcpus: int, prices: dict, instance: str | None, cool: bool) -> tuple[dict, dict]:
+    """Cameras per instance at each floor, and the cost per camera a month on every priced instance."""
+    capacities, cost = {}, {}
+    for floor in FLOORS:
+        key = f"at_{floor:g}fps"
+        capacities[key] = capacity(total_fps, vcpus, vcpus, floor)
+        rows = {}
+        for name, inst in prices["instances"].items():
+            n = capacity(total_fps, vcpus, inst["vcpus"], floor)
+            here = name == instance  # elsewhere, as deployed: Graviton with COOL
+            rows[name.replace(".", "_")] = {**instance_cost(prices, name, n, cool if here else True), "measured": here}
+        cost[key] = rows
+    return capacities, cost
+
+
+def recost(result: dict, prices: dict) -> dict:
+    """A results file's capacity and cost again from its measured throughput, with today's prices."""
+    capacities, cost = costs(result["fps"]["total"], result["scenario"]["vcpus"], prices, result.get("instance"),
+                             bool(result["machine"].get("cool")))
+    return {**result, "capacity": capacities, "cost": cost,
+            "prices": {"file": "eval/prices.json", "usd_inr": prices["usd_inr"]["rate"],
+                       "checked": {k: v["checked"] for k, v in prices["instances"].items()}}}
+
+
 def summarize(frames0: dict, frames1: dict, elapsed_s: float, latency: dict, memory: dict, vcpus: int,
               prices: dict, instance: str | None, cool: bool) -> dict:
     """The measured window as the results file holds it. frames0 and frames1: analysed frames per camera at the
@@ -88,16 +112,8 @@ def summarize(frames0: dict, frames1: dict, elapsed_s: float, latency: dict, mem
                 "per_vcpu": None if per_vcpu is None else round(per_vcpu, 2)},
         "latency_ms": {"p50": spread(p50, 0)["median"], "p95": spread(p95, 0)["median"],
                        "p95_worst_camera": spread(p95, 0)["max"]},
-        "memory_mb": memory,
-        "capacity": {}, "cost": {}}
-    for floor in FLOORS:
-        key = f"at_{floor:g}fps"
-        out["capacity"][key] = capacity(total, vcpus, vcpus, floor)
-        rows = {}
-        for name, inst in prices["instances"].items():
-            n = capacity(total, vcpus, inst["vcpus"], floor)
-            rows[name.replace(".", "_")] = {**instance_cost(prices, name, n, cool), "measured": name == instance}
-        out["cost"][key] = rows
+        "memory_mb": memory}
+    out["capacity"], out["cost"] = costs(total, vcpus, prices, instance, cool)
     return out
 
 
@@ -297,7 +313,7 @@ def run(cameras: int, processes: int, cpus: int, seconds: float, clip: Path, wor
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--setup", required=True, help="names the results file: devbox, c8g_cool, c8g_stock, c7i_stock")
+    ap.add_argument("--setup", help="names the results file: devbox, c8g_cool, c8g_stock, c7i_stock")
     ap.add_argument("--label", default=None, help="how the docs name the machine")
     ap.add_argument("--instance", default=None, help="the priced instance this runs on (none on the dev box)")
     ap.add_argument("--cameras", type=int, default=8)
@@ -312,7 +328,16 @@ def main(argv: list[str] | None = None) -> None:
                     help="run again with the cameras the first run says fit at 2 frames a second, and report what "
                          "each got")
     ap.add_argument("--out", default=str(ROOT / "eval" / "results"))
+    ap.add_argument("--recost", metavar="RESULTS", help="only work out a results file's capacity and cost again "
+                                                          "from its measured rate and today's prices")
     a = ap.parse_args(argv)
+    if a.recost:
+        path = Path(a.recost)
+        path.write_text(json.dumps(recost(json.loads(path.read_text()), load_prices()), indent=1) + "\n")
+        print(f"wrote {path}")
+        return
+    if not a.setup:
+        ap.error("--setup is required")
     if argv is None and os.environ.get("MALLOC_ARENA_MAX") is None:  # as the systemd units run the app
         os.execve(sys.executable, [sys.executable, *sys.argv], {**os.environ, "MALLOC_ARENA_MAX": "2"})
     import logging
@@ -323,10 +348,10 @@ def main(argv: list[str] | None = None) -> None:
     processes = a.processes or cpus
     prices = load_prices()
     info = machine()
-    cool = bool(info["cool"]) and a.setup.lower().endswith("cool")
+    cool = bool(info["cool"])  # cv2 loaded from COOL: its fee is in the cost
     clip = loop_clip(ROOT / a.clip)
     work = Path(tempfile.mkdtemp(prefix="bench-", dir=os.environ.get("DATA_DIR") or None))
-    label = a.label or (DEVBOX if a.setup == "devbox" else a.setup)
+    label = a.label or (DEVBOX if a.setup.startswith("devbox") else a.setup)
     result = {"setup": a.setup, "label": label, "target": a.instance is not None, "instance": a.instance,
               "date": datetime.now(timezone.utc).isoformat(timespec="seconds"), "code": git_sha(),
               "engine": engine_sha(),

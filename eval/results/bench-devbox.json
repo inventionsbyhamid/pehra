@@ -1,0 +1,314 @@
+{
+ "setup": "devbox",
+ "label": "dev box (2013 Xeon, no AVX2, shared host)",
+ "target": false,
+ "instance": null,
+ "date": "2026-10-26T02:57:22+00:00",
+ "code": "14b5746",
+ "engine": "c75b3f9",
+ "machine": {
+  "host": "e141bd4fa725",
+  "arch": "x86_64",
+  "cpu": "Intel(R) Xeon(R) CPU E5-2680 v2 @ 2.80GHz",
+  "avx2": false,
+  "cpus_available": 6,
+  "host_cores": 40,
+  "python": "3.12.15",
+  "opencv": "5.0.0",
+  "kleidicv": false,
+  "cool": false
+ },
+ "scenario": {
+  "cameras": 8,
+  "processes": 2,
+  "vcpus": 2,
+  "cores": [
+   2,
+   16
+  ],
+  "clip": "data/samples/vtest_x4.avi",
+  "watches": [
+   "enters",
+   "too_many",
+   "fall",
+   "lookout with a description"
+  ],
+  "index_embeddings": true,
+  "scan_pool_at_start": true,
+  "ai": "stand in: every check real, answered at once",
+  "analysis_fps": 5.0,
+  "camera_threads": 1,
+  "malloc_arena_max": "2",
+  "command": "python eval/bench.py --setup devbox --cameras 8 --cpus 2 --seconds 60"
+ },
+ "fps": {
+  "per_camera": {
+   "n": 8,
+   "median": 0.05,
+   "min": 0.05,
+   "max": 0.05
+  },
+  "total": 0.4,
+  "per_vcpu": 0.2,
+  "per_cpu_used": 0.23
+ },
+ "latency_ms": {
+  "p50": 4388.0,
+  "p95": 6555.0,
+  "p95_worst_camera": 8293.0
+ },
+ "memory_mb": {
+  "total_median": 5369,
+  "total_max": 5471,
+  "total_max_whole_run": 5471,
+  "app_median": 2562,
+  "camera_process_max": 1175,
+  "processes": [
+   {
+    "pid": 708446,
+    "role": "app",
+    "max_mb": 2562
+   },
+   {
+    "pid": 708730,
+    "role": "camera process",
+    "max_mb": 1175
+   },
+   {
+    "pid": 708732,
+    "role": "camera process",
+    "max_mb": 1144
+   },
+   {
+    "pid": 708870,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 708872,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 708874,
+    "role": "clip encoder",
+    "max_mb": 89
+   },
+   {
+    "pid": 708888,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 709027,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 709134,
+    "role": "clip encoder",
+    "max_mb": 89
+   },
+   {
+    "pid": 709209,
+    "role": "clip encoder",
+    "max_mb": 89
+   },
+   {
+    "pid": 709231,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 709237,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 709579,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 709716,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 709880,
+    "role": "clip encoder",
+    "max_mb": 89
+   },
+   {
+    "pid": 709881,
+    "role": "clip encoder",
+    "max_mb": 88
+   },
+   {
+    "pid": 710306,
+    "role": "clip encoder",
+    "max_mb": 25
+   },
+   {
+    "pid": 710307,
+    "role": "clip encoder",
+    "max_mb": 14
+   },
+   {
+    "pid": 708607,
+    "role": "multiprocessing helper",
+    "max_mb": 12
+   },
+   {
+    "pid": 708616,
+    "role": "scan worker",
+    "max_mb": 120
+   },
+   {
+    "pid": 708625,
+    "role": "scan worker",
+    "max_mb": 120
+   }
+  ]
+ },
+ "capacity": {
+  "at_2fps": 0,
+  "at_5fps": 0
+ },
+ "cost": {
+  "at_2fps": {
+   "c8g_large": {
+    "instance": "c8g.large",
+    "vcpus": 2,
+    "cameras": 0,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 46.7,
+    "usd_per_camera_month": null,
+    "inr_per_camera_month": null,
+    "measured": false
+   },
+   "c8g_xlarge": {
+    "instance": "c8g.xlarge",
+    "vcpus": 4,
+    "cameras": 0,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 86.11,
+    "usd_per_camera_month": null,
+    "inr_per_camera_month": null,
+    "measured": false
+   },
+   "c7i_large": {
+    "instance": "c7i.large",
+    "vcpus": 2,
+    "cameras": 0,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 72.45,
+    "usd_per_camera_month": null,
+    "inr_per_camera_month": null,
+    "measured": false
+   },
+   "c7i_xlarge": {
+    "instance": "c7i.xlarge",
+    "vcpus": 4,
+    "cameras": 0,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 137.6,
+    "usd_per_camera_month": null,
+    "inr_per_camera_month": null,
+    "measured": false
+   }
+  },
+  "at_5fps": {
+   "c8g_large": {
+    "instance": "c8g.large",
+    "vcpus": 2,
+    "cameras": 0,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 46.7,
+    "usd_per_camera_month": null,
+    "inr_per_camera_month": null,
+    "measured": false
+   },
+   "c8g_xlarge": {
+    "instance": "c8g.xlarge",
+    "vcpus": 4,
+    "cameras": 0,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 86.11,
+    "usd_per_camera_month": null,
+    "inr_per_camera_month": null,
+    "measured": false
+   },
+   "c7i_large": {
+    "instance": "c7i.large",
+    "vcpus": 2,
+    "cameras": 0,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 72.45,
+    "usd_per_camera_month": null,
+    "inr_per_camera_month": null,
+    "measured": false
+   },
+   "c7i_xlarge": {
+    "instance": "c7i.xlarge",
+    "vcpus": 4,
+    "cameras": 0,
+    "cool_fee_usd_per_hour": 0.0,
+    "usd_per_month": 137.6,
+    "usd_per_camera_month": null,
+    "inr_per_camera_month": null,
+    "measured": false
+   }
+  }
+ },
+ "timing": {
+  "warmup_s": 17.4,
+  "settle_s": 10,
+  "measured_s": 60.0
+ },
+ "host": {
+  "load_1m": {
+   "n": 38,
+   "median": 9.33,
+   "min": 7.27,
+   "max": 11.34
+  },
+  "host_cores": 40,
+  "window_s": 56.5,
+  "cpus_used": {
+   "app": 0.34,
+   "camera process": 1.34,
+   "clip encoder": 0.03,
+   "multiprocessing helper": 0.0,
+   "scan worker": 0.0
+  },
+  "throttled_s": 54.8
+ },
+ "models_loaded": {
+  "0": {
+   "detector": 1,
+   "embedder": 1,
+   "pose": 1
+  },
+  "1": {
+   "detector": 1,
+   "embedder": 1,
+   "pose": 1
+  }
+ },
+ "ai": {
+  "checks": 14,
+  "checks_per_camera_hour": 105.0,
+  "note": "the same busy plaza on every camera, so this count is of that clip, not of a society camera"
+ },
+ "prices": {
+  "file": "eval/prices.json",
+  "usd_inr": 94.9432,
+  "checked": {
+   "c8g.large": "2026-10-26",
+   "c8g.xlarge": "2026-10-26",
+   "c7i.large": "2026-10-26",
+   "c7i.xlarge": "2026-10-26"
+  }
+ }
+}

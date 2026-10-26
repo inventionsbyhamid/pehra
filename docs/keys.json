@@ -1,0 +1,641 @@
+{
+ "eval.*.date": {
+  "from": "eval-{1}",
+  "path": "date",
+  "unit": "day",
+  "means": "the day the clip was scored"
+ },
+ "eval.*.code": {
+  "from": "eval-{1}",
+  "path": "code",
+  "unit": "text",
+  "means": "the commit that scored it"
+ },
+ "eval.*.engine": {
+  "from": "eval-{1}",
+  "path": "engine",
+  "unit": "text",
+  "means": "the last commit that changed the engine it scored"
+ },
+ "eval.*.duration_s": {
+  "from": "eval-{1}",
+  "path": "duration_s",
+  "unit": "s",
+  "means": "the clip's length"
+ },
+ "eval.*.scored_s": {
+  "from": "eval-{1}",
+  "path": "scored_s",
+  "unit": "s",
+  "means": "the part of the clip that is scored"
+ },
+ "eval.*.tolerance_s": {
+  "from": "eval-{1}",
+  "path": "tolerance_s",
+  "unit": "s",
+  "means": "how far a candidate may be from its label and still match"
+ },
+ "eval.*.truth.*": {
+  "from": "eval-{1}",
+  "path": "truth.{2}",
+  "unit": "int",
+  "means": "labelled events of this kind in the scored part"
+ },
+ "eval.*.fps_*.frames": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.frames",
+  "unit": "int",
+  "means": "frames analysed at this rate"
+ },
+ "eval.*.fps_*.ms_per_frame": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.ms_per_frame",
+  "unit": "ms",
+  "means": "wall time per analysed frame on the machine that scored it"
+ },
+ "eval.*.fps_*.person_ids": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.person_ids",
+  "unit": "int",
+  "means": "distinct person track ids at this rate (fewer is steadier)"
+ },
+ "eval.*.fps_*.motion_alarm_alerts": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.motion_alarm_alerts",
+  "unit": "int",
+  "means": "alerts a plain motion alarm sends"
+ },
+ "eval.*.fps_*.ai.candidates": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.ai.candidates",
+  "unit": "int",
+  "means": "candidates the rules raised"
+ },
+ "eval.*.fps_*.ai.checks": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.ai.checks",
+  "unit": "int",
+  "means": "AI checks the app would make (after dedupe and incidents)"
+ },
+ "eval.*.fps_*.ai.incidents": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.ai.incidents",
+  "unit": "int",
+  "means": "incidents the app filed"
+ },
+ "eval.*.fps_*.ai.per_camera_hour": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.ai.checks_per_camera_hour",
+  "unit": "num",
+  "means": "AI checks per camera hour on this clip"
+ },
+ "eval.*.fps_*.all.precision": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.all.precision.value",
+  "unit": "pct",
+  "means": "precision, every watch together"
+ },
+ "eval.*.fps_*.all.precision_ci": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.all.precision.wilson95",
+  "unit": "interval",
+  "means": "precision's Wilson 95% interval, every watch together"
+ },
+ "eval.*.fps_*.all.recall": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.all.recall.value",
+  "unit": "pct",
+  "means": "recall, every watch together"
+ },
+ "eval.*.fps_*.all.recall_ci": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.all.recall.wilson95",
+  "unit": "interval",
+  "means": "recall's Wilson 95% interval, every watch together"
+ },
+ "eval.*.fps_*.all.recall_failures_at_most": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.all.recall.failures_at_most",
+  "unit": "pct",
+  "means": "with no miss, the rule of three bound on the miss rate, every watch together"
+ },
+ "eval.*.fps_*.all.precision_failures_at_most": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.all.precision.failures_at_most",
+  "unit": "pct",
+  "means": "with no false alarm, the rule of three bound on the false alarm share, every watch together"
+ },
+ "eval.*.fps_*.all.tp": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.all.tp",
+  "unit": "int",
+  "means": "matched, every watch together"
+ },
+ "eval.*.fps_*.all.fp": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.all.fp",
+  "unit": "int",
+  "means": "false alarms, every watch together"
+ },
+ "eval.*.fps_*.all.fn": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.all.fn",
+  "unit": "int",
+  "means": "misses, every watch together"
+ },
+ "eval.*.fps_*.all.false_alarms_per_hour": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.all.false_alarms_per_camera_hour",
+  "unit": "num",
+  "means": "false alarms per camera hour, every watch together"
+ },
+ "eval.*.fps_*.*.precision": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.precision.value",
+  "unit": "pct",
+  "means": "precision, this watch"
+ },
+ "eval.*.fps_*.*.precision_ci": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.precision.wilson95",
+  "unit": "interval",
+  "means": "precision's Wilson 95% interval, this watch"
+ },
+ "eval.*.fps_*.*.recall": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.recall.value",
+  "unit": "pct",
+  "means": "recall, this watch"
+ },
+ "eval.*.fps_*.*.recall_ci": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.recall.wilson95",
+  "unit": "interval",
+  "means": "recall's Wilson 95% interval, this watch"
+ },
+ "eval.*.fps_*.*.recall_failures_at_most": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.recall.failures_at_most",
+  "unit": "pct",
+  "means": "with no miss, the rule of three bound on the miss rate, this watch"
+ },
+ "eval.*.fps_*.*.precision_failures_at_most": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.precision.failures_at_most",
+  "unit": "pct",
+  "means": "with no false alarm, the rule of three bound on the false alarm share, this watch"
+ },
+ "eval.*.fps_*.*.tp": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.tp",
+  "unit": "int",
+  "means": "matched, this watch"
+ },
+ "eval.*.fps_*.*.fp": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.fp",
+  "unit": "int",
+  "means": "false alarms, this watch"
+ },
+ "eval.*.fps_*.*.fn": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.fn",
+  "unit": "int",
+  "means": "misses, this watch"
+ },
+ "eval.*.fps_*.*.false_alarms_per_hour": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.false_alarms_per_camera_hour",
+  "unit": "num",
+  "means": "false alarms per camera hour, this watch"
+ },
+ "eval.*.fps_*.*.truth": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.truth",
+  "unit": "int",
+  "means": "labelled events for this watch"
+ },
+ "eval.*.fps_*.*.fired": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.fired",
+  "unit": "int",
+  "means": "candidates this watch raised in the scored part"
+ },
+ "eval.*.fps_*.*.delay_median": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.delay_s.median",
+  "unit": "s",
+  "means": "median time from the labelled moment to the candidate"
+ },
+ "eval.*.fps_*.*.delay_p90": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.delay_s.p90",
+  "unit": "s",
+  "means": "90th percentile time from the labelled moment to the candidate"
+ },
+ "eval.*.fps_*.*.first_false_alarm_at": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.first_false_alarm.t_s",
+  "unit": "s",
+  "means": "when the first false alarm came (its picture is in eval/results/failures)"
+ },
+ "eval.*.fps_*.*.first_miss_at": {
+  "from": "eval-{1}",
+  "path": "runs.fps_{2}.watches.{3}.first_miss.t_s",
+  "unit": "s",
+  "means": "when the first missed event was (its picture is in eval/results/failures)"
+ },
+ "bench.*.label": {
+  "from": "bench:{1}",
+  "path": "label",
+  "unit": "text",
+  "means": "how the machine is named"
+ },
+ "bench.*.instance": {
+  "from": "bench:{1}",
+  "path": "instance",
+  "unit": "text",
+  "means": "the AWS instance type it ran on (none on the dev box)"
+ },
+ "bench.*.date": {
+  "from": "bench:{1}",
+  "path": "date",
+  "unit": "day",
+  "means": "the day it ran"
+ },
+ "bench.*.code": {
+  "from": "bench:{1}",
+  "path": "code",
+  "unit": "text",
+  "means": "the commit it ran"
+ },
+ "bench.*.engine": {
+  "from": "bench:{1}",
+  "path": "engine",
+  "unit": "text",
+  "means": "the last commit that changed the engine it measured"
+ },
+ "bench.*.opencv": {
+  "from": "bench:{1}",
+  "path": "machine.opencv",
+  "unit": "text",
+  "means": "the OpenCV version it loaded"
+ },
+ "bench.*.cool": {
+  "from": "bench:{1}",
+  "path": "machine.cool",
+  "unit": "bool",
+  "means": "whether it loaded COOL's OpenCV"
+ },
+ "bench.*.cameras": {
+  "from": "bench:{1}",
+  "path": "scenario.cameras",
+  "unit": "int",
+  "means": "cameras in the run"
+ },
+ "bench.*.vcpus": {
+  "from": "bench:{1}",
+  "path": "scenario.vcpus",
+  "unit": "int",
+  "means": "vCPUs the run had"
+ },
+ "bench.*.seconds": {
+  "from": "bench:{1}",
+  "path": "timing.measured_s",
+  "unit": "s",
+  "means": "the measured window"
+ },
+ "bench.*.fps_per_camera": {
+  "from": "bench:{1}",
+  "path": "fps.per_camera.median",
+  "unit": "fps",
+  "means": "analysed frames a second per camera, median"
+ },
+ "bench.*.fps_per_camera_min": {
+  "from": "bench:{1}",
+  "path": "fps.per_camera.min",
+  "unit": "fps",
+  "means": "analysed frames a second of the slowest camera"
+ },
+ "bench.*.fps_total": {
+  "from": "bench:{1}",
+  "path": "fps.total",
+  "unit": "fps",
+  "means": "analysed frames a second, every camera together"
+ },
+ "bench.*.fps_per_vcpu": {
+  "from": "bench:{1}",
+  "path": "fps.per_vcpu",
+  "unit": "fps",
+  "means": "analysed frames a second per vCPU"
+ },
+ "bench.*.fps_per_cpu_used": {
+  "from": "bench:{1}",
+  "path": "fps.per_cpu_used",
+  "unit": "fps",
+  "means": "analysed frames a second per CPU the run actually got"
+ },
+ "bench.*.latency_p50": {
+  "from": "bench:{1}",
+  "path": "latency_ms.p50",
+  "unit": "ms",
+  "means": "frame latency median (frame in to rules done)"
+ },
+ "bench.*.latency_p95": {
+  "from": "bench:{1}",
+  "path": "latency_ms.p95",
+  "unit": "ms",
+  "means": "frame latency 95th percentile"
+ },
+ "bench.*.memory_total": {
+  "from": "bench:{1}",
+  "path": "memory_mb.total_median",
+  "unit": "mb",
+  "means": "memory of the app and every process it started, median"
+ },
+ "bench.*.memory_peak": {
+  "from": "bench:{1}",
+  "path": "memory_mb.total_max_whole_run",
+  "unit": "mb",
+  "means": "the same, its peak over the whole run"
+ },
+ "bench.*.memory_app": {
+  "from": "bench:{1}",
+  "path": "memory_mb.app_median",
+  "unit": "mb",
+  "means": "the app process alone, median"
+ },
+ "bench.*.memory_camera_process": {
+  "from": "bench:{1}",
+  "path": "memory_mb.camera_process_max",
+  "unit": "mb",
+  "means": "the largest camera process, peak"
+ },
+ "bench.*.cameras_at_2fps": {
+  "from": "bench:{1}",
+  "path": "capacity.at_2fps",
+  "unit": "int",
+  "means": "cameras this machine can give 2 analysed frames a second"
+ },
+ "bench.*.cameras_at_5fps": {
+  "from": "bench:{1}",
+  "path": "capacity.at_5fps",
+  "unit": "int",
+  "means": "cameras this machine can give 5 analysed frames a second"
+ },
+ "bench.*.host_load": {
+  "from": "bench:{1}",
+  "path": "host.load_1m.median",
+  "unit": "num",
+  "means": "the host's 1 minute load during the run, median"
+ },
+ "bench.*.host_cores": {
+  "from": "bench:{1}",
+  "path": "host.host_cores",
+  "unit": "int",
+  "means": "the host's cores"
+ },
+ "bench.*.throttled_s": {
+  "from": "bench:{1}",
+  "path": "host.throttled_s",
+  "unit": "s",
+  "means": "time the container's CPU quota held the run back"
+ },
+ "bench.*.ai_checks_per_camera_hour": {
+  "from": "bench:{1}",
+  "path": "ai.checks_per_camera_hour",
+  "unit": "num",
+  "means": "AI checks per camera hour in the run"
+ },
+ "bench.*.cost.*.at_2fps.cameras": {
+  "from": "bench:{1}",
+  "path": "cost.at_2fps.{2}.cameras",
+  "unit": "int",
+  "means": "cameras one instance takes at 2 analysed frames a second, from this run's rate per vCPU"
+ },
+ "bench.*.cost.*.at_2fps.inr": {
+  "from": "bench:{1}",
+  "path": "cost.at_2fps.{2}.inr_per_camera_month",
+  "unit": "inr_whole",
+  "means": "compute cost per camera a month at 2 frames a second, in rupees"
+ },
+ "bench.*.cost.*.at_2fps.usd": {
+  "from": "bench:{1}",
+  "path": "cost.at_2fps.{2}.usd_per_camera_month",
+  "unit": "usd",
+  "means": "compute cost per camera a month at 2 frames a second, in dollars"
+ },
+ "bench.*.cost.*.at_2fps.measured": {
+  "from": "bench:{1}",
+  "path": "cost.at_2fps.{2}.measured",
+  "unit": "bool",
+  "means": "whether the run was on that instance (else this machine's rate applied to it)"
+ },
+ "bench.*.cost.*.at_5fps.cameras": {
+  "from": "bench:{1}",
+  "path": "cost.at_5fps.{2}.cameras",
+  "unit": "int",
+  "means": "cameras one instance takes at 5 analysed frames a second, from this run's rate per vCPU"
+ },
+ "bench.*.cost.*.at_5fps.inr": {
+  "from": "bench:{1}",
+  "path": "cost.at_5fps.{2}.inr_per_camera_month",
+  "unit": "inr_whole",
+  "means": "compute cost per camera a month at 5 frames a second, in rupees"
+ },
+ "bench.*.cost.*.at_5fps.usd": {
+  "from": "bench:{1}",
+  "path": "cost.at_5fps.{2}.usd_per_camera_month",
+  "unit": "usd",
+  "means": "compute cost per camera a month at 5 frames a second, in dollars"
+ },
+ "bench.*.cost.*.at_5fps.measured": {
+  "from": "bench:{1}",
+  "path": "cost.at_5fps.{2}.measured",
+  "unit": "bool",
+  "means": "whether the run was on that instance (else this machine's rate applied to it)"
+ },
+ "bench.*.confirm.cameras": {
+  "from": "bench:{1}",
+  "path": "confirm.cameras",
+  "unit": "int",
+  "means": "cameras in the confirming run",
+  "optional": true
+ },
+ "bench.*.confirm.fps_min": {
+  "from": "bench:{1}",
+  "path": "confirm.fps.per_camera.min",
+  "unit": "fps",
+  "means": "the slowest camera's analysed frames a second in the confirming run",
+  "optional": true
+ },
+ "bench.*.confirm.meets_2fps": {
+  "from": "bench:{1}",
+  "path": "confirm.meets_2fps",
+  "unit": "bool",
+  "means": "whether every camera got 2 frames a second in the confirming run",
+  "optional": true
+ },
+ "bench.speedup.cool_over_stock": {
+  "ratio": [
+   "bench.c8g_cool.fps_total",
+   "bench.c8g_stock.fps_total"
+  ],
+  "unit": "times",
+  "means": "COOL's throughput over stock OpenCV's on the same Graviton instance"
+ },
+ "bench.speedup.graviton_over_x86": {
+  "ratio": [
+   "bench.c8g_cool.fps_total",
+   "bench.c7i_stock.fps_total"
+  ],
+  "unit": "times",
+  "means": "c8g with COOL over c7i with stock OpenCV, same size"
+ },
+ "plates.*.photos": {
+  "from": "plates-{1}",
+  "path": "all.photos",
+  "unit": "int",
+  "means": "photos read"
+ },
+ "plates.*.plates": {
+  "from": "plates-{1}",
+  "path": "all.plates",
+  "unit": "int",
+  "means": "plates the grammar covers"
+ },
+ "plates.*.exact": {
+  "from": "plates-{1}",
+  "path": "all.exact",
+  "unit": "int",
+  "means": "plates read exactly"
+ },
+ "plates.*.wrong": {
+  "from": "plates-{1}",
+  "path": "all.wrong",
+  "unit": "int",
+  "means": "plates read wrong"
+ },
+ "plates.*.unread": {
+  "from": "plates-{1}",
+  "path": "all.unread",
+  "unit": "int",
+  "means": "plates left unread"
+ },
+ "plates.*.exact_share": {
+  "from": "plates-{1}",
+  "path": "all.exact_share.value",
+  "unit": "pct",
+  "means": "share read exactly"
+ },
+ "plates.*.exact_ci": {
+  "from": "plates-{1}",
+  "path": "all.exact_share.wilson95",
+  "unit": "interval",
+  "means": "its Wilson 95% interval"
+ },
+ "plates.*.wrong_share": {
+  "from": "plates-{1}",
+  "path": "all.wrong_share.value",
+  "unit": "pct",
+  "means": "share read wrong"
+ },
+ "plates.*.outside_grammar": {
+  "from": "plates-{1}",
+  "path": "all.outside_grammar.photos",
+  "unit": "int",
+  "means": "plates outside the grammar (old or special)"
+ },
+ "plates.*.outside_grammar_unread": {
+  "from": "plates-{1}",
+  "path": "all.outside_grammar.unread",
+  "unit": "int",
+  "means": "of those, left unread as they should be"
+ },
+ "plates.*.colour_photos": {
+  "from": "plates-{1}",
+  "path": "all.colour.photos",
+  "unit": "int",
+  "means": "photos with a known plate colour"
+ },
+ "plates.*.colour_right": {
+  "from": "plates-{1}",
+  "path": "all.colour.right",
+  "unit": "int",
+  "means": "plate colour right"
+ },
+ "plates.*.colour_unknown": {
+  "from": "plates-{1}",
+  "path": "all.colour.unknown",
+  "unit": "int",
+  "means": "plate colour unknown"
+ },
+ "plates.*.colour_wrong": {
+  "from": "plates-{1}",
+  "path": "all.colour.wrong",
+  "unit": "int",
+  "means": "plate colour wrong"
+ },
+ "plates.*.colour_accuracy": {
+  "from": "plates-{1}",
+  "path": "all.colour.accuracy.value",
+  "unit": "pct",
+  "means": "plate colour right, share"
+ },
+ "plates.*.colour_ci": {
+  "from": "plates-{1}",
+  "path": "all.colour.accuracy.wilson95",
+  "unit": "interval",
+  "means": "its Wilson 95% interval"
+ },
+ "plans.free.month": {
+  "from": "plans",
+  "path": "plans.free.price_month_inr",
+  "unit": "inr_whole",
+  "means": "the free plan a month"
+ },
+ "plans.free.cameras": {
+  "from": "plans",
+  "path": "plans.free.limits.watched_cameras",
+  "unit": "int",
+  "means": "watched cameras in the free plan"
+ },
+ "plans.society.month": {
+  "from": "plans",
+  "path": "plans.society.price_month_inr",
+  "unit": "inr_whole",
+  "means": "the society plan a month"
+ },
+ "plans.society.cameras": {
+  "from": "plans",
+  "path": "plans.society.limits.watched_cameras",
+  "unit": "int",
+  "means": "watched cameras in the society plan"
+ },
+ "plans.society.year": {
+  "from": "plans",
+  "path": "plans.society.price_year_inr",
+  "unit": "inr_whole",
+  "means": "the society plan a year"
+ },
+ "plans.rate": {
+  "from": "plans",
+  "path": "usd_inr.rate",
+  "unit": "inr",
+  "means": "rupees for one dollar"
+ },
+ "plans.rate.date": {
+  "from": "plans",
+  "path": "usd_inr.date",
+  "unit": "day",
+  "means": "the day of that rate"
+ },
+ "plans.society.month_usd": {
+  "ratio": [
+   "plans.society.month",
+   "plans.rate"
+  ],
+  "unit": "usd_about",
+  "means": "the society plan a month in dollars, about"
+ }
+}

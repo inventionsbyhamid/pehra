@@ -103,9 +103,11 @@ def machine() -> dict:
     except OSError:
         flags = []
     info = cv2.getBuildInformation()
+    cool_root = os.path.realpath(os.environ.get("COOL_ROOT", "/opt/cool"))  # as deploy/cv2_info.py tells COOL
     return {"host": socket.gethostname(), "arch": platform.machine(), "cpu": cpu, "avx2": "avx2" in flags,
             "cpus_available": available_cpus(), "host_cores": os.cpu_count(), "python": platform.python_version(),
-            "opencv": cv2.__version__, "kleidicv": "kleidicv" in info.lower(), "cool": Path("/opt/cool").exists()}
+            "opencv": cv2.__version__, "kleidicv": "kleidicv" in info.lower(),
+            "cool": os.path.realpath(cv2.__file__).startswith(cool_root)}
 
 
 def clip_path(name: str) -> Path:
